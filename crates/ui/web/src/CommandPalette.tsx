@@ -28,7 +28,13 @@ export function CommandPalette() {
     const report = () => send({ cmd: "palette_resize", height: Math.ceil(el.getBoundingClientRect().height) });
     const ro = new ResizeObserver(report);
     ro.observe(el);
-    return () => ro.disconnect();
+    // Again once the window changed size: of two reports in quick succession
+    // the later one can get lost on Linux, and the window would stay too short.
+    window.addEventListener("resize", report);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", report);
+    };
   }, [state]);
   const close = () => send({ cmd: "palette_close" });
   return (
