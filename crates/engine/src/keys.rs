@@ -46,6 +46,8 @@ pub fn shortcut_for_key(event: &KeyEvent) -> Option<Shortcut> {
     let upper = |c: char| c as i32;
     match (mods, key) {
         (m, k) if m == CMD && k == upper('T') => Some(Shortcut::NewTab),
+        (m, k) if m == CMD && k == upper('N') => Some(Shortcut::NewWindow),
+        (m, k) if m == (CMD | SHIFT) && k == upper('W') => Some(Shortcut::CloseWindow),
         (m, k) if m == CMD && k == upper('W') => Some(Shortcut::CloseTab),
         (m, k) if m == CMD && k == upper('L') => Some(Shortcut::FocusAddress),
         (m, k) if m == (CMD | SHIFT) && k == upper('T') => Some(Shortcut::ReopenClosed),
@@ -108,9 +110,9 @@ pub fn peek_shortcut(event: &KeyEvent) -> Option<Shortcut> {
 pub fn shortcut_for_chrome_command(command_id: i32) -> Option<Shortcut> {
     const TABLE: &[(&str, Shortcut)] = &[
         ("IDC_NEW_TAB", Shortcut::NewTab),
-        ("IDC_NEW_WINDOW", Shortcut::NewTab),
+        ("IDC_NEW_WINDOW", Shortcut::NewWindow),
         ("IDC_CLOSE_TAB", Shortcut::CloseTab),
-        ("IDC_CLOSE_WINDOW", Shortcut::CloseTab),
+        ("IDC_CLOSE_WINDOW", Shortcut::CloseWindow),
         ("IDC_FOCUS_LOCATION", Shortcut::FocusAddress),
         ("IDC_FOCUS_SEARCH", Shortcut::FocusAddress),
         ("IDC_SAVE_PAGE", Shortcut::ToggleSidebar),

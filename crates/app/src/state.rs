@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use magnetite_core::split::SplitNode;
 use magnetite_core::{Id, SidebarSnapshot, Space, TabItem, UnixSeconds};
-use magnetite_engine::ContentId;
+use magnetite_engine::{ContentId, WindowId};
 use serde::{Deserialize, Serialize};
 
 mod adopt;
@@ -22,6 +22,7 @@ mod splits;
 mod tabs;
 #[cfg(test)]
 mod testing;
+mod windows;
 
 pub(crate) use folders::folder_in_tree_mut;
 pub use history::{History, Visit};
@@ -146,6 +147,13 @@ pub enum ArcImport {
 
 pub struct AppState {
     pub sidebar: SidebarSnapshot,
+    /// The window `active_space`, `active_tab`, `peek` and `sidebar_visible`
+    /// are of: the current one (`windows.rs`).
+    pub window: WindowId,
+    /// What the other windows show.
+    pub views: HashMap<WindowId, windows::View>,
+    /// The other windows of the last run, opened again at start.
+    pub reopen: Vec<windows::SavedWindow>,
     pub active_space: Id,
     /// Active tab per space.
     pub active_tab: HashMap<Id, Id>,

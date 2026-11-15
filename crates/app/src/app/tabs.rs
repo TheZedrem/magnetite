@@ -7,7 +7,7 @@ use magnetite_engine::{ContentId, Engine, MemoryPressure, host_of};
 use crate::state::{AppState, folder_in_tree_mut, now};
 use crate::{lock, trace, url_policy};
 
-use super::{MagnetiteApp, WELCOME_URL};
+use super::{DOWNLOADS_URL, MagnetiteApp, WELCOME_URL};
 
 /// Drag and drop: put tab `id` at `index` of `section` (of space
 /// `space_id`); `folder` places it inside a pinned folder of that space.
@@ -124,13 +124,71 @@ impl MagnetiteApp {
         self.present(engine);
     }
 
-    /// Make the content windows match the state: create windows for the
-    /// visible panes, lay them out, hide everything else.
+    /// Make the content windows match the state: the current window shows
+    /// its panes, and a window that showed one of them until now (a tab is
+    /// on screen in one window at most) shows what it has left.
     pub(super) fn present(&self, engine: &Engine) {
+        let before = self.on_screen();
+        let robbed = self.with_state(AppState::claim_panes);
+        // The current window first: a page that moves leaves the other
+        // window by being shown here.
+        self.present_window(engine);
+        for win in robbed {
+            engine.in_window(win, || self.present_window(engine));
+        }
+        let shown = self.on_screen();
+        // A page that leaves the screen was in use until now: its unload and
+        // auto-archive periods start here, not when it was selected.
+        let left: Vec<ContentId> = (before.iter())
+            .filter(|c| !shown.contains(c))
+            .copied()
+            .collect();
+        if !left.is_empty() {
+            self.with_state(|s| {
+                let now = now();
+                for c in left {
+                    if let Some(id) = s.content_to_tab.get(&c).cloned()
+                        && let Some(t) = s.find_tab_mut(&id)
+                    {
+                        t.last_active_at = Some(now);
+                    }
+                }
+            });
+        }
+        self.follow_pictures(engine, &before, &shown);
+        // A capture never moves to another tab: drop it if its page left the screen.
+        let stale = {
+            let state = lock(&self.capture);
+            state
+                .session
+                .as_ref()
+                .is_some_and(|(c, _)| !shown.contains(c))
+        };
+        if stale {
+            engine.close_overlay();
+            lock(&self.capture).session = None;
+        }
+        self.push_state(engine);
+    }
+
+    /// The current window's part of `present`: create windows for its
+    /// panes, lay them out, hide its other pages.
+    fn present_window(&self, engine: &Engine) {
+        let win = engine.current_window();
         let panes = self.with_state(|s| s.visible_panes());
         let mut contents = Vec::new();
         for tab_id in &panes {
-            let c = if let Some(c) = self.content_of(tab_id) {
+            // A page in another window comes over as it is where the engine
+            // can move it; elsewhere it is closed there and made again here.
+            let kept = self.content_of(tab_id).filter(|c| {
+                let movable = engine.content_window(*c) == win || engine.can_move_pages();
+                if !movable {
+                    self.with_state(|s| s.detach_content(tab_id));
+                    engine.close_content(*c);
+                }
+                movable
+            });
+            let c = if let Some(c) = kept {
                 c
             } else {
                 let (url, home, profile) = self.with_state(|s| {
@@ -158,11 +216,12 @@ impl MagnetiteApp {
             };
             contents.push(c);
         }
+        // The pages of the other windows are theirs to show or hide.
         let others: Vec<ContentId> = self.with_state(|s| {
             s.runtime
                 .values()
                 .filter_map(|r| r.content)
-                .filter(|c| !contents.contains(c))
+                .filter(|c| !contents.contains(c) && engine.content_window(*c) == win)
                 .collect()
         });
         for c in others {
@@ -173,45 +232,19 @@ impl MagnetiteApp {
             (Some((tree, focus)), _) => engine.show_split(&tree, focus),
             (None, [one, ..]) => engine.show_content(*one),
         }
-        // A page that leaves the screen was in use until now: its unload and
-        // auto-archive periods start here, not when it was selected.
-        let left: Vec<ContentId> = lock(&self.visible)
-            .iter()
-            .filter(|c| !contents.contains(c))
-            .copied()
-            .collect();
-        if !left.is_empty() {
-            self.with_state(|s| {
-                let now = now();
-                for c in left {
-                    if let Some(id) = s.content_to_tab.get(&c).cloned()
-                        && let Some(t) = s.find_tab_mut(&id)
-                    {
-                        t.last_active_at = Some(now);
-                    }
-                }
-            });
-        }
-        self.follow_pictures(engine, &contents);
-        // A capture never moves to another tab: drop it if its page left the screen.
-        let stale = {
-            let state = lock(&self.capture);
-            state
-                .session
-                .as_ref()
-                .is_some_and(|(c, _)| !contents.contains(c))
-        };
-        if stale {
-            engine.close_overlay();
-            lock(&self.capture).session = None;
-        }
-        self.push_state(engine);
+        lock(&self.visible).insert(win, contents);
     }
 
     /// Pop-out: a video playing in a tab that just got hidden goes
     /// picture-in-picture; coming back to its tab ends picture-in-picture.
-    pub(super) fn follow_pictures(&self, engine: &Engine, shown: &[ContentId]) {
-        let previous = std::mem::replace(&mut *lock(&self.visible), shown.to_vec());
+    /// `previous` and `shown` are the pages on screen before and now, in
+    /// any window: a page that moves to another window stays on screen.
+    pub(super) fn follow_pictures(
+        &self,
+        engine: &Engine,
+        previous: &[ContentId],
+        shown: &[ContentId],
+    ) {
         let (auto_pip, media) = self.with_state(|s| {
             let media: std::collections::HashMap<ContentId, magnetite_engine::MediaState> = s
                 .content_to_tab
@@ -310,6 +343,8 @@ impl MagnetiteApp {
             "Settings".to_string()
         } else if url.starts_with(WELCOME_URL) {
             "Welcome".to_string()
+        } else if url.starts_with(DOWNLOADS_URL) {
+            "Downloads".to_string()
         } else {
             url.clone()
         };
@@ -556,5 +591,49 @@ impl MagnetiteApp {
         } else {
             self.save_soon();
         }
+    }
+}
+
+impl MagnetiteApp {
+    /// Another window on the same sidebar: the same space in front, no tab
+    /// yet. It is the current window from here on.
+    pub(super) fn new_window(&self, engine: &Engine) {
+        let win = engine.create_frame();
+        self.with_state(|s| {
+            s.open_window(win);
+            s.persist_later();
+        });
+    }
+
+    /// At start: the windows of the last run besides the first one open
+    /// again, each showing what it showed, if several windows are on
+    /// (Settings); else they are forgotten.
+    pub(super) fn reopen_windows(&self, engine: &Engine) {
+        let (reopen, on) =
+            self.with_state(|s| (std::mem::take(&mut s.reopen), s.settings.several_windows));
+        if !on {
+            return;
+        }
+        for saved in reopen {
+            let win = engine.create_frame();
+            self.with_state(|s| s.reopen_window(win, saved));
+        }
+    }
+
+    /// Window `win` closed, one of several: its view goes. Its pages went
+    /// to another window or closed with it (`Engine::close_window`).
+    pub(super) fn window_closed(&self, engine: &Engine, win: magnetite_engine::WindowId) {
+        // Quitting closes every window; each one stays in the state, so any
+        // save from here on keeps them all for the next start.
+        if engine.is_quitting() {
+            return;
+        }
+        let next = engine.current_window();
+        self.with_state(|s| {
+            s.close_window(win, next);
+            s.persist_later();
+        });
+        lock(&self.visible).remove(&win);
+        self.push_state(engine);
     }
 }

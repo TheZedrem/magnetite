@@ -24,6 +24,14 @@ use super::{
 /// The largest bookmarks file `ImportBookmarks` reads: 16 MiB.
 const MAX_BOOKMARKS_FILE: usize = 16 << 20;
 
+/// What `CopyDownload` puts on the clipboard.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum DownloadCopy {
+    File,
+    Path,
+}
+
 /// Chromium's own pages for what its password manager and autofill hold.
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -538,6 +546,11 @@ pub(super) enum UiCommand {
         #[serde(default)]
         reveal: bool,
     },
+    /// Put download `id`'s file, or its path as text, on the clipboard.
+    CopyDownload {
+        id: String,
+        what: DownloadCopy,
+    },
     ClearDownloads,
     /// "Downloads" from the palette: show the list in the sidebar.
     ShowDownloads,
@@ -653,13 +666,18 @@ impl MagnetiteApp {
                     engine.remove_profile_dirs(&deleted);
                 });
                 // Initial activation: restore the active tab of the active space.
+                // A further window starts without a tab: the space's first
+                // one may be on screen in another window, which would lose it.
                 self.smart_refresh_due(engine);
-                let target = self.with_state(|s| s.active_tab_id().map(str::to_owned));
+                let (target, first_window) =
+                    self.with_state(|s| (s.active_tab_id().map(str::to_owned), s.views.is_empty()));
                 if let Some(t) = target {
                     self.activate_tab(engine, &t);
-                } else {
+                } else if first_window {
                     let space = self.with_state(|s| s.active_space.clone());
                     self.activate_space(engine, &space);
+                } else {
+                    self.present(engine);
                 }
                 // Once: `Ready` repeats when the sidebar reloads.
                 static OPENED: std::sync::Once = std::sync::Once::new();
@@ -1507,6 +1525,22 @@ impl MagnetiteApp {
                     Self::ui_call(engine, "notice", &json!({ "text": text }));
                     self.show_downloads(engine);
                 }
+            }
+            UiCommand::CopyDownload { id, what } => {
+                let file = self.with_state(|s| s.downloads.file(&id).map(Path::to_path_buf));
+                // The path of a file that is gone is of no use either.
+                let text = match (file.filter(|f| f.exists()), what) {
+                    (None, _) => {
+                        self.show_downloads(engine);
+                        "That file was moved or deleted."
+                    }
+                    (Some(f), DownloadCopy::File) if engine.copy_file(&f) => "File copied",
+                    (Some(f), DownloadCopy::Path) if engine.copy_text(&f.to_string_lossy()) => {
+                        "Path copied"
+                    }
+                    (Some(_), _) => "Could not copy",
+                };
+                Self::ui_call(engine, "notice", &json!({ "text": text }));
             }
             UiCommand::ClearDownloads => {
                 self.with_state(|s| {

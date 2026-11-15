@@ -34,7 +34,7 @@ pub use default_browser::{handles, set_handler};
 pub use hotkey::set_quick_search_hotkey;
 pub use pill::{hide_status_pill, set_status_pill};
 pub use pressure::watch_memory_pressure;
-pub use share::{copy_png, copy_text, save_png, share_png, show_share_picker};
+pub use share::{copy_file, copy_png, copy_text, save_png, share_png, show_share_picker};
 
 use crate::engine::Engine;
 use crate::events::EngineEvent;
@@ -710,6 +710,11 @@ pub fn attach_child(frame: cef::sys::cef_window_handle_t, child: cef::sys::cef_w
     if let (Some(parent), Some(window)) = (frame.window(), child.window())
         && window.parentWindow().as_ref() != Some(&parent)
     {
+        // A page that moves here from another of our windows leaves that one.
+        // TODO(macos): untested (see `cef_app::can_reparent`).
+        if let Some(before) = window.parentWindow() {
+            before.removeChildWindow(&window);
+        }
         attach_above(&parent, &window);
     }
 }

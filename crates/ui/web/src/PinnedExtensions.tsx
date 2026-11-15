@@ -1,7 +1,7 @@
 // Pinned extensions in the sidebar's top row, or in the top bar. A click
 // opens the extension (its popup) for the page in front; right-click offers
-// its options and taking it out of the sidebar. All extensions are in the
-// menu bar too.
+// its options and taking it out of the sidebar or the top bar. All extensions
+// are in the menu bar too.
 import { useEffect, useState } from "react";
 import type { MenuItem } from "./ContextMenu";
 import { extensionIcon, send, type ExtensionInfo, type UiState } from "./bridge";
@@ -11,21 +11,21 @@ import { extensionIcon, send, type ExtensionInfo, type UiState } from "./bridge"
 const OPENING_MS = 5000;
 
 /** Room per icon in the top row (button plus gap), in points. */
-const SLOT = 30;
+export const SLOT = 30;
 /** What the rest of the row takes: traffic lights, sidebar toggle, back, forward, reload, padding. */
 const RESERVED = 86 + 28 + 3 * 30 + 12;
 
 type OpenMenu = (x: number, y: number, items: MenuItem[]) => void;
 
-/** `popups`: in the top bar, which has room for all of them and opens
- * menus as windows below itself. */
-export function PinnedExtensions({ state, openMenu, popups = false }: { state: UiState; openMenu: OpenMenu; popups?: boolean }) {
+/** `popups`: in the top bar, which opens menus as windows below itself.
+ * `room`: how many icons fit there; the sidebar works it out from its width. */
+export function PinnedExtensions({ state, openMenu, popups = false, room }: { state: UiState; openMenu: OpenMenu; popups?: boolean; room?: number }) {
   const installed = new Map(state.extensions.map((e) => [e.id, e]));
   const pinned = state.settings.pinned_extensions.flatMap((id) => installed.get(id) ?? []);
   // Those that do not fit stay in the menu bar's Extensions menu. The row
   // grows with the text size, the sidebar's width in points does not.
   const { sidebar_width, text_scale } = state.settings.appearance;
-  const room = popups ? pinned.length : Math.max(0, Math.floor((sidebar_width / (text_scale / 100) - RESERVED) / SLOT));
+  room ??= Math.max(0, Math.floor((sidebar_width / (text_scale / 100) - RESERVED) / SLOT));
   return (
     <>
       {pinned.slice(0, room).map((e) => (
@@ -35,11 +35,11 @@ export function PinnedExtensions({ state, openMenu, popups = false }: { state: U
   );
 }
 
-/** The items of extension `e`'s menu. */
-export function extensionMenu(e: ExtensionInfo): MenuItem[] {
+/** The items of extension `e`'s menu; `place` names where its icon sits. */
+export function extensionMenu(e: ExtensionInfo, place: "Sidebar" | "Top Bar"): MenuItem[] {
   return [
     ...(e.options_url ? [{ label: "Options", onClick: () => send({ cmd: "extension_options", id: e.id }) }] : []),
-    { label: "Remove from Sidebar", onClick: () => send({ cmd: "pin_extension", id: e.id, pinned: false }) },
+    { label: `Remove from ${place}`, onClick: () => send({ cmd: "pin_extension", id: e.id, pinned: false }) },
   ];
 }
 
@@ -59,7 +59,7 @@ function ExtensionButton({ extension: e, openMenu, popups }: { extension: Extens
     };
   }, [opening]);
   const menu = (x: number, y: number) => {
-    const items = extensionMenu(e);
+    const items = extensionMenu(e, popups ? "Top Bar" : "Sidebar");
     if (popups) send({ cmd: "top_bar_popup", popup: "extension", id: e.id, x, y, width: 208, height: 8 + items.length * 28 });
     else openMenu(x, y, items);
   };

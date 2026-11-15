@@ -6,7 +6,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { extensionMenu } from "./PinnedExtensions";
 import { SitePanel } from "./SitePanel";
-import { applyAppearance, findTab, send, subscribe, type LinkVariant, type UiState } from "./bridge";
+import { accentCss, applyAppearance, findTab, send, subscribe, type LinkVariant, type UiState } from "./bridge";
 
 const params = new URLSearchParams(location.search);
 const KIND = params.get("kind");
@@ -32,6 +32,11 @@ export function TopBarPopup() {
   useLayoutEffect(() => {
     if (appearance) applyAppearance(appearance);
   }, [appearance]);
+  // Focus rings take the active space's colour, as in the sidebar.
+  const accent = state && accentCss(state.sidebar.spaces.find((s) => s.id === state.active_space)?.accent);
+  useLayoutEffect(() => {
+    if (accent) document.documentElement.style.setProperty("--space", accent);
+  }, [accent]);
   // The window fits what it shows (the site panel's rows change with the page).
   useLayoutEffect(() => {
     const el = root.current;
@@ -53,7 +58,7 @@ export function TopBarPopup() {
     );
   }
   const extension = KIND === "extension" ? state.extensions.find((e) => e.id === ID) : undefined;
-  const items = KIND === "copy" ? COPY_ITEMS : extension ? extensionMenu(extension) : [];
+  const items = KIND === "copy" ? COPY_ITEMS : extension ? extensionMenu(extension, "Top Bar") : [];
   return (
     <div ref={root}>
       <ContextMenu x={0} y={0} items={items} onClose={close} />

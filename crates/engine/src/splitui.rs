@@ -21,7 +21,7 @@ impl Engine {
             .filter(|t| t.pane_count() > 1)
             .map(|t| t.dividers(self.split_area(), SPLIT_GAP))
             .unwrap_or_default();
-        self.lock().split_dividers = dividers;
+        self.lock().win.split_dividers = dividers;
         self.show_dividers();
     }
 
@@ -34,7 +34,7 @@ impl Engine {
             let (wanted, frame) = {
                 let inner = self.lock();
                 let row = inner.devtools_dock != crate::DevToolsDock::Bottom;
-                let split = inner.split_dividers.iter().map(|d| {
+                let split = inner.win.split_dividers.iter().map(|d| {
                     let key = crate::mac::DividerKey::Split {
                         row: d.axis == Axis::Row,
                         path: d.path.clone(),
@@ -61,7 +61,7 @@ impl Engine {
                             .map(move |(r, edge)| (r.clone(), key(*edge)))
                     });
                 let wanted: Vec<_> = split.chain(devtools).chain(handles).collect();
-                (wanted, inner.frame.as_ref().map(|f| f.window.clone()))
+                (wanted, inner.win.frame.as_ref().map(|f| f.window.clone()))
             };
             if let Some(frame) = frame {
                 crate::mac::set_dividers(frame.window_handle(), &wanted);
@@ -92,12 +92,12 @@ impl Engine {
         let area = self.content_rect();
         let ids: Vec<ContentId> = {
             let inner = self.lock();
-            match inner.split.as_ref() {
+            match inner.win.split.as_ref() {
                 Some(t) if t.pane_count() > 1 => t.ids(),
                 _ => inner
                     .contents
                     .iter()
-                    .filter(|(_, c)| c.mini.is_none())
+                    .filter(|(_, c)| c.mini.is_none() && c.home == inner.current)
                     .filter(|(_, c)| c.window.as_ref().is_some_and(|w| w.is_visible() != 0))
                     .map(|(id, _)| *id)
                     .collect(),
