@@ -760,24 +760,30 @@ wrap_drag_handler! {
     }
     impl DragHandler {
         /// `-webkit-app-region: drag` areas of the sidebar and the top bar
-        /// page become the frame window's draggable regions.
+        /// page become their frame window's draggable regions.
         fn on_draggable_regions_changed(
             &self,
-            _browser: Option<&mut Browser>,
+            browser: Option<&mut Browser>,
             frame: Option<&mut Frame>,
             regions: Option<&[DraggableRegion]>,
         ) {
-            if frame.is_some_and(|f| f.is_main() == 0) {
+            if frame.is_some_and(|f| f.is_main() == 0) || !matches!(self.kind, Kind::Sidebar | Kind::TopBar) {
                 return;
             }
             let regions = regions.map(<[DraggableRegion]>::to_vec).unwrap_or_default();
             let engine = Engine::global();
-            match self.kind {
-                Kind::Sidebar => engine.lock().win.sidebar_drag = regions,
-                Kind::TopBar => engine.lock().win.top_bar_drag = regions,
-                _ => return,
-            }
-            engine.apply_drag_regions();
+            // The window whose sidebar or top bar this is, current or not.
+            let win = browser
+                .and_then(|b| engine.window_of_browser(b.identifier()))
+                .unwrap_or_else(|| engine.current_window());
+            engine.in_window(win, || {
+                if self.kind == Kind::Sidebar {
+                    engine.lock().win.sidebar_drag = regions;
+                } else {
+                    engine.lock().win.top_bar_drag = regions;
+                }
+                engine.apply_drag_regions();
+            });
         }
     }
 }

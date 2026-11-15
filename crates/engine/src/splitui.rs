@@ -97,7 +97,7 @@ impl Engine {
                 _ => inner
                     .contents
                     .iter()
-                    .filter(|(_, c)| c.mini.is_none())
+                    .filter(|(_, c)| c.mini.is_none() && c.home == inner.current)
                     .filter(|(_, c)| c.window.as_ref().is_some_and(|w| w.is_visible() != 0))
                     .map(|(id, _)| *id)
                     .collect(),

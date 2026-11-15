@@ -40,6 +40,8 @@ pub(crate) struct QueuedContent {
     pub profile: crate::ContextProfile,
     /// For a mini window.
     pub mini: bool,
+    /// The window that asked for the page: it lives there.
+    pub home: crate::WindowId,
 }
 
 /// Space between split pages (and around docked `DevTools`).
@@ -91,11 +93,14 @@ impl Engine {
         let context = self.request_context(profile);
         let waiting = profile.filter(|_| !self.context_is_ready(profile));
         if let Some(profile) = waiting {
-            self.lock().queued.push(QueuedContent {
+            let mut inner = self.lock();
+            let home = inner.current;
+            inner.queued.push(QueuedContent {
                 id,
                 url: url.to_string(),
                 profile: profile.clone(),
                 mini,
+                home,
             });
         } else {
             self.build_content(id, url, profile, context, mini);
@@ -120,9 +125,16 @@ impl Engine {
                 .collect()
         };
         for page in waiting {
-            let context = self.request_context(Some(&page.profile));
-            self.build_content(page.id, &page.url, Some(&page.profile), context, page.mini);
-            self.show_late(page.id);
+            // In the window that asked for it; in the current one if that
+            // window closed meanwhile.
+            let build = || {
+                let context = self.request_context(Some(&page.profile));
+                self.build_content(page.id, &page.url, Some(&page.profile), context, page.mini);
+                self.show_late(page.id);
+            };
+            if self.in_window(page.home, build).is_none() {
+                build();
+            }
         }
     }
 
@@ -414,6 +426,7 @@ impl Engine {
         };
         self.place(id, &peek_rect(&self.content_rect()));
         window.show();
+        self.keep_attached(id, &window);
         window.bring_to_top();
         self.show_docked(id, true);
         self.update_peek_backdrop();
@@ -611,9 +624,11 @@ impl Engine {
                     .is_some_and(|t| t.pane_count() > 1 && t.contains(&id))
             };
             let focus = focus.filter(|f| in_split(*f));
+            // This window's pages only: the others keep their rings.
             let pages: Vec<(Window, bool)> = inner
                 .contents
                 .iter()
+                .filter(|(_, c)| c.home == inner.current)
                 .filter_map(|(id, c)| Some((c.window.clone()?, Some(*id) == focus)))
                 .collect();
             inner.win.focused_pane = focus;

@@ -49,7 +49,25 @@ impl AppState {
         self.swap_view(&mut view);
         let before = std::mem::replace(&mut self.window, win);
         self.views.insert(before, view);
+        self.repair_view();
         true
+    }
+
+    /// While a window waited, its space or front tabs may have gone (a
+    /// deleted space, a sidebar from sync): it keeps what is left, the
+    /// first space for a space.
+    fn repair_view(&mut self) {
+        if !self
+            .sidebar
+            .spaces
+            .iter()
+            .any(|s| s.id == self.active_space)
+        {
+            self.active_space.clone_from(&self.sidebar.spaces[0].id);
+        }
+        let mut active_tab = std::mem::take(&mut self.active_tab);
+        active_tab.retain(|_, tab| self.find_tab(tab).is_some());
+        self.active_tab = active_tab;
     }
 
     /// A new window `win`, which is the current one from here on: the same
@@ -150,9 +168,11 @@ impl AppState {
 
 #[cfg(test)]
 mod tests {
+    use magnetite_core::Space;
     use magnetite_core::split::Side;
 
-    use super::super::testing::state;
+    use super::super::AppState;
+    use super::super::testing::{state, tab};
 
     #[test]
     fn a_new_window_starts_in_the_same_space_without_a_tab() {
@@ -229,5 +249,46 @@ mod tests {
         s.close_window(2, 1);
         let after: Vec<String> = s.sidebar.all_tabs().map(|t| t.id.clone()).collect();
         assert_eq!(after, tabs);
+    }
+
+    /// A second space "two" with a Today tab "t".
+    fn with_second_space(s: &mut AppState) {
+        s.sidebar.spaces.push(Space {
+            id: "two".into(),
+            pinned: vec![],
+            today: vec![tab("t")],
+            ..s.sidebar.spaces[0].clone()
+        });
+    }
+
+    #[test]
+    fn a_window_whose_space_was_deleted_meanwhile_shows_the_first_space() {
+        let mut s = state();
+        let first = s.active_space.clone();
+        with_second_space(&mut s);
+        s.open_window(2);
+        s.active_space = "two".into();
+        s.active_tab.insert("two".into(), "t".into());
+        s.enter(1);
+        s.delete_space("two");
+        assert!(s.enter(2));
+        assert_eq!(s.active_space, first);
+        assert_eq!(s.active_space().id, first);
+        assert_eq!(s.active_tab.get("two"), None);
+    }
+
+    #[test]
+    fn a_window_keeps_only_the_front_tabs_still_there_when_it_comes_back() {
+        let mut s = state();
+        let first = s.active_space.clone();
+        with_second_space(&mut s);
+        s.open_window(2);
+        s.active_tab.insert(first.clone(), "a".into());
+        s.active_tab.insert("two".into(), "t".into());
+        s.enter(1);
+        s.archive_tab("a");
+        assert!(s.enter(2));
+        assert_eq!(s.active_tab_id(), None);
+        assert_eq!(s.active_tab.get("two").map(String::as_str), Some("t"));
     }
 }
