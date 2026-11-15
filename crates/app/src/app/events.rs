@@ -49,8 +49,10 @@ impl EngineDelegate for MagnetiteApp {
                     );
                 }
                 engine.create_frame();
+                self.reopen_windows(engine);
             }
-            EngineEvent::FrameCreated
+            EngineEvent::WindowClosed { win } => self.window_closed(engine, win),
+            EngineEvent::FrameCreated { .. }
             | EngineEvent::FrameBoundsChanged
             | EngineEvent::ContentCreated { .. } => {}
             EngineEvent::SidebarLoaded => self.push_state(engine),

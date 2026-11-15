@@ -32,7 +32,7 @@ impl MagnetiteApp {
     /// The prompts of the pages on screen (tabs, split panes, the peek) for
     /// the notification panel, newest first.
     pub(super) fn prompts_json(&self) -> Value {
-        let mut on_screen = lock(&self.visible).clone();
+        let mut on_screen = self.on_screen();
         on_screen.extend(self.with_state(|s| s.peek.as_ref().map(|p| p.content)));
         let items: Vec<Value> = self.with_prompts(|p| {
             p.open

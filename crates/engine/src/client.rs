@@ -288,6 +288,9 @@ wrap_focus_handler! {
                 .content_id_for(browser.as_deref())
                 .or_else(|| engine.devtools_owner(browser.as_deref()));
             if let Some(id) = page {
+                // The window of the page the user turns to is the current one.
+                let home = engine.lock().home_of(id);
+                engine.enter(home);
                 // The outline follows the keyboard at once, before the app hears of it.
                 engine.update_focus_ring(Some(id));
                 engine.emit(EngineEvent::ContentFocused { id });
@@ -770,8 +773,8 @@ wrap_drag_handler! {
             let regions = regions.map(<[DraggableRegion]>::to_vec).unwrap_or_default();
             let engine = Engine::global();
             match self.kind {
-                Kind::Sidebar => engine.lock().sidebar_drag = regions,
-                Kind::TopBar => engine.lock().top_bar_drag = regions,
+                Kind::Sidebar => engine.lock().win.sidebar_drag = regions,
+                Kind::TopBar => engine.lock().win.top_bar_drag = regions,
                 _ => return,
             }
             engine.apply_drag_regions();

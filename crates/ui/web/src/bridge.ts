@@ -237,6 +237,7 @@ export interface Settings {
   chrome_toolbar: boolean;
   appearance: Appearance;
   auto_pip: boolean;
+  several_windows: boolean;
   strip_trackers: boolean;
   devtools_dock: "right" | "bottom" | "window";
   sync: SyncSettings;

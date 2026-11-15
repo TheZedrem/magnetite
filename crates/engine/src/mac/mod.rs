@@ -710,6 +710,11 @@ pub fn attach_child(frame: cef::sys::cef_window_handle_t, child: cef::sys::cef_w
     if let (Some(parent), Some(window)) = (frame.window(), child.window())
         && window.parentWindow().as_ref() != Some(&parent)
     {
+        // A page that moves here from another of our windows leaves that one.
+        // TODO(macos): untested (see `cef_app::can_reparent`).
+        if let Some(before) = window.parentWindow() {
+            before.removeChildWindow(&window);
+        }
         attach_above(&parent, &window);
     }
 }

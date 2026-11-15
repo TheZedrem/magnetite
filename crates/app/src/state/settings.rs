@@ -51,6 +51,9 @@ pub struct Settings {
     pub appearance: Appearance,
     /// Pop a playing video out (picture-in-picture) when leaving its tab.
     pub auto_pip: bool,
+    /// Several windows on one sidebar (New Window, ⌘N; `state/windows.rs`).
+    /// Off unless turned on: it is new, and untested on macOS and Windows.
+    pub several_windows: bool,
     /// Remove tracking parameters (utm_*, fbclid, …) when copying links.
     pub strip_trackers: bool,
     /// Where DevTools open: right of or below the page, or a separate window.
@@ -360,6 +363,7 @@ impl Default for Settings {
             chrome_toolbar: false,
             appearance: Appearance::default(),
             auto_pip: true,
+            several_windows: false,
             strip_trackers: true,
             devtools_dock: magnetite_engine::DevToolsDock::Right,
             devtools_size: magnetite_engine::DevToolsSize::default(),

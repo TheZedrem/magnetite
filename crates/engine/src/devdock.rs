@@ -563,7 +563,8 @@ wrap_window_delegate! {
             if self.separate {
                 return None;
             }
-            Engine::global().frame_window()
+            // They move with their page (`ContentWindowDelegate::parent_window`).
+            Engine::global().home_frame(self.id)
         }
         fn is_frameless(&self, _window: Option<&mut Window>) -> ::std::os::raw::c_int { (!self.separate).into() }
         fn with_standard_window_buttons(&self, _window: Option<&mut Window>) -> ::std::os::raw::c_int { self.separate.into() }

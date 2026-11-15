@@ -997,7 +997,7 @@ fn create_panel(mtm: MainThreadMarker) -> Panel {
                 inner.setFont(Some(&NSFont::systemFontOfSize_weight(12.0, weight)));
                 inner.sizeToFit();
                 if let Some(i) = Button::ALL.iter().position(|b| *b == button) {
-                    labelled[i] = inner.frame().size.width + 2.0 * PILL_PADDING;
+                    labelled[i] = inner.win.frame().size.width + 2.0 * PILL_PADDING;
                 }
                 PILL_RADIUS
             } else if button == Button::PlayPause {

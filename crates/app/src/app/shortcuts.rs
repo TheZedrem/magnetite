@@ -106,6 +106,24 @@ impl MagnetiteApp {
                 Self::ui_call(engine, "openSitePanel", &json!({}));
             }
             Shortcut::NewTab => Self::open_palette(engine, PaletteMode::New, None, None),
+            // Without several windows (Settings) the key keeps what it did
+            // before: a new tab.
+            Shortcut::NewWindow => {
+                if self.with_state(|s| s.settings.several_windows) {
+                    self.new_window(engine);
+                } else {
+                    self.handle_shortcut(engine, Shortcut::NewTab);
+                }
+            }
+            Shortcut::CloseWindow => {
+                // With one window the key keeps what it did before there
+                // were several: it closes the tab.
+                if engine.windows().len() > 1 {
+                    engine.close_window(engine.current_window());
+                } else {
+                    self.handle_shortcut(engine, Shortcut::CloseTab);
+                }
+            }
             Shortcut::FocusAddress => {
                 let has_tab = self.with_state(|s| s.active_tab_id().is_some());
                 let mode = if has_tab {

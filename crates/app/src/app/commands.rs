@@ -666,13 +666,18 @@ impl MagnetiteApp {
                     engine.remove_profile_dirs(&deleted);
                 });
                 // Initial activation: restore the active tab of the active space.
+                // A further window starts without a tab: the space's first
+                // one may be on screen in another window, which would lose it.
                 self.smart_refresh_due(engine);
-                let target = self.with_state(|s| s.active_tab_id().map(str::to_owned));
+                let (target, first_window) =
+                    self.with_state(|s| (s.active_tab_id().map(str::to_owned), s.views.is_empty()));
                 if let Some(t) = target {
                     self.activate_tab(engine, &t);
-                } else {
+                } else if first_window {
                     let space = self.with_state(|s| s.active_space.clone());
                     self.activate_space(engine, &space);
+                } else {
+                    self.present(engine);
                 }
                 // Once: `Ready` repeats when the sidebar reloads.
                 static OPENED: std::sync::Once = std::sync::Once::new();

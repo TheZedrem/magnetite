@@ -33,7 +33,7 @@ impl Engine {
         let Some(bounds) = self.float_bounds() else {
             return;
         };
-        let existing = self.lock().float_bar.as_ref().map(|f| f.window.clone());
+        let existing = self.lock().win.float_bar.as_ref().map(|f| f.window.clone());
         match existing {
             Some(Some(window)) => {
                 if show {
@@ -48,19 +48,20 @@ impl Engine {
             // `shown` says so), or nothing to hide.
             _ => {}
         }
-        if let Some(f) = self.lock().float_bar.as_mut() {
+        if let Some(f) = self.lock().win.float_bar.as_mut() {
             f.shown = show;
         }
     }
 
     /// Whether the floating sidebar is out.
     pub fn float_sidebar_shown(&self) -> bool {
-        self.lock().float_bar.as_ref().is_some_and(|f| f.shown)
+        self.lock().win.float_bar.as_ref().is_some_and(|f| f.shown)
     }
 
     /// The floating sidebar's page, once it exists.
     pub(crate) fn float_sidebar_browser(&self) -> Option<Browser> {
         self.lock()
+            .win
             .float_bar
             .as_ref()
             .and_then(|f| f.view.browser())
@@ -70,6 +71,7 @@ impl Engine {
     pub(crate) fn focus_float_sidebar(&self) {
         let handles = self
             .lock()
+            .win
             .float_bar
             .as_ref()
             .and_then(|f| Some((f.window.clone()?, f.view.clone())));
@@ -117,7 +119,7 @@ impl Engine {
             Some(&mut client),
             Some(&CefString::from("magnetite://ui/?float")),
             Some(&BrowserSettings {
-                background_color: self.lock().chrome_color,
+                background_color: self.lock().win.chrome_color,
                 ..Default::default()
             }),
             None,
@@ -126,7 +128,7 @@ impl Engine {
         ) else {
             return;
         };
-        self.lock().float_bar = Some(FloatBar {
+        self.lock().win.float_bar = Some(FloatBar {
             window: None,
             view: view.clone(),
             shown: true,
@@ -178,7 +180,7 @@ wrap_window_delegate! {
             let engine = Engine::global();
             let show = {
                 let mut inner = engine.lock();
-                let bar = inner.float_bar.as_mut();
+                let bar = inner.win.float_bar.as_mut();
                 bar.map(|f| {
                     f.window = Some(window.clone());
                     f.shown
@@ -189,7 +191,7 @@ wrap_window_delegate! {
             }
         }
         fn on_window_destroyed(&self, _window: Option<&mut Window>) {
-            Engine::global().lock().float_bar = None;
+            Engine::global().lock().win.float_bar = None;
         }
         fn parent_window(
             &self,

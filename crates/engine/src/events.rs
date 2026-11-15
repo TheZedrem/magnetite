@@ -8,6 +8,10 @@ pub type ContentId = u64;
 #[serde(rename_all = "snake_case")]
 pub enum Shortcut {
     NewTab,
+    /// `Cmd+N`: another window on the same sidebar.
+    NewWindow,
+    /// `Cmd+Shift+W`: close the window (the last one quits).
+    CloseWindow,
     CloseTab,
     FocusAddress,
     ToggleSidebar,
@@ -165,7 +169,15 @@ pub enum EngineEvent {
     /// CEF is initialised; the delegate may create the frame now.
     Ready,
     /// The frame window and the sidebar view exist.
-    FrameCreated,
+    /// Window `win` has its frame: its sidebar loads, pages can be shown.
+    FrameCreated {
+        win: crate::WindowId,
+    },
+    /// Window `win` closed, one of several; its pages report their own
+    /// closing (`ContentClosed`).
+    WindowClosed {
+        win: crate::WindowId,
+    },
     /// The sidebar page finished loading (safe to push state).
     SidebarLoaded,
     FrameBoundsChanged,
@@ -286,7 +298,8 @@ impl EngineEvent {
             Self::SplitDivider { .. } => "SplitDivider",
             Self::DevToolsResized(_) => "DevToolsResized",
             Self::Ready => "Ready",
-            Self::FrameCreated => "FrameCreated",
+            Self::FrameCreated { .. } => "FrameCreated",
+            Self::WindowClosed { .. } => "WindowClosed",
             Self::SidebarLoaded => "SidebarLoaded",
             Self::FrameBoundsChanged => "FrameBoundsChanged",
             Self::ContentCreated { .. } => "ContentCreated",
