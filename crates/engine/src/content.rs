@@ -256,8 +256,15 @@ impl Engine {
     /// parent the next time it is shown.
     fn bring_home(&self, id: ContentId) {
         let (home, current) = {
-            let inner = self.lock();
-            (inner.home_of(id), inner.current)
+            let mut inner = self.lock();
+            // Still waiting for its profile's context: it is made here
+            // (`context_ready`).
+            let current = inner.current;
+            if let Some(q) = inner.queued.iter_mut().find(|q| q.id == id) {
+                q.home = current;
+                return;
+            }
+            (inner.home_of(id), current)
         };
         if home == current {
             return;
