@@ -19,7 +19,7 @@
 </p>
 
 > [!NOTE]
-> **This is a fork.** Its `main` is [upstream](https://github.com/magnetite-browser/magnetite)'s `main` with all of my patches merged in: fixes and features that wait for review upstream, together in one build to use and test.
+> **This is a fork, and it aims to be a replacement for [Zen](https://zen-browser.app):** Zen's workflow on Linux, on the Chromium engine. Its `main` is [upstream](https://github.com/magnetite-browser/magnetite)'s `main` with all of my patches merged in: fixes and features that wait for review upstream, together in one build to use and test.
 >
 > - Every fix or feature is a branch of its own, made from upstream's `main`. It goes upstream as its own pull request.
 > - Each branch is tested on its own, then also merged into this `main` to test it together with the other patches.
