@@ -12,6 +12,8 @@ pub enum Shortcut {
     NewWindow,
     /// `Cmd+Shift+W`: close the window (the last one quits).
     CloseWindow,
+    /// A private window: a Magnetite of its own that keeps nothing.
+    NewPrivateWindow,
     CloseTab,
     FocusAddress,
     ToggleSidebar,

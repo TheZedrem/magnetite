@@ -22,6 +22,7 @@ export function useSidebarShortcuts(float: boolean, onEscape: () => void) {
       if (is("t", cmd)) return fire("new_tab");
       if (is("n", cmd)) return fire("new_window");
       if (is("w", { meta: true, shift: true })) return fire("close_window");
+      if (is("p", { meta: true, shift: true })) return fire("new_private_window");
       if (is("l", cmd)) return fire("focus_address");
       if (is("w", cmd)) return fire("close_tab");
       if (is("s", cmd)) return fire("toggle_sidebar");

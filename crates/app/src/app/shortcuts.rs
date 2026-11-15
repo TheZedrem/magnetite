@@ -124,6 +124,7 @@ impl MagnetiteApp {
                     self.handle_shortcut(engine, Shortcut::CloseTab);
                 }
             }
+            Shortcut::NewPrivateWindow => crate::private::open_window(),
             Shortcut::FocusAddress => {
                 let has_tab = self.with_state(|s| s.active_tab_id().is_some());
                 let mode = if has_tab {

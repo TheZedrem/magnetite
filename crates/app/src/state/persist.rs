@@ -250,6 +250,25 @@ impl AppState {
         state
     }
 
+    /// This instance is a private window (`private.rs`), on a new data
+    /// folder: its one space is called Private, and nothing reaches out or
+    /// keeps a record by itself.
+    pub fn make_private(&mut self) {
+        if let Some(space) = self.sidebar.spaces.first_mut() {
+            space.title = "Private".into();
+            space.icon = Some("🕶️".into());
+            space.accent = Some(magnetite_core::Color {
+                red: 0.55,
+                green: 0.45,
+                blue: 0.85,
+            });
+        }
+        // The system-wide key belongs to the Magnetite in use.
+        self.settings.quick_search = false;
+        self.settings.check_updates = false;
+        self.settings.history_days = 0;
+    }
+
     /// The saved state, if there is a usable one. A file that is there but
     /// cannot be used (unreadable, not text, damaged, or without spaces, which
     /// cannot be shown) is moved aside: starting fresh would overwrite it on
@@ -563,6 +582,24 @@ mod tests {
         assert_eq!(fresh.sidebar.all_tabs().count(), 0, "and it opens no site");
         fresh.persist();
         assert!(!AppState::load_or_default(&dir, ArcImport::Ask).first_start);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_private_window_has_one_private_space_and_reaches_out_or_keeps_nothing() {
+        let dir = crate::files::test_dir("private");
+        let mut s = AppState::load_or_default(&dir, ArcImport::Never);
+        s.make_private();
+        let titles: Vec<&str> = s
+            .sidebar
+            .spaces
+            .iter()
+            .map(|sp| sp.title.as_str())
+            .collect();
+        assert_eq!(titles, ["Private"]);
+        assert!(!s.settings.quick_search, "the key is the normal instance's");
+        assert!(!s.settings.check_updates);
+        assert_eq!(s.settings.history_days, 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

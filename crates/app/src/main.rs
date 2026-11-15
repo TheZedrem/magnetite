@@ -5,6 +5,7 @@ mod app;
 mod capture;
 mod downloads;
 mod files;
+mod private;
 mod smart;
 mod state;
 mod sync;
@@ -49,6 +50,10 @@ struct Cli {
     /// Open this URL as a new tab after start (also used by tests).
     #[arg(long)]
     open: Option<String>,
+    /// A private window: a Magnetite of its own on a new data folder that is
+    /// deleted when it quits (`private.rs`).
+    #[arg(long, conflicts_with_all = ["data_dir", "import_arc"])]
+    private: bool,
     /// Addresses or files to open, as links from another app (`%U` in the
     /// desktop entry).
     urls: Vec<String>,
@@ -89,7 +94,16 @@ fn parse_cli(args: impl IntoIterator<Item = String>) -> Result<Cli, clap::Error>
 fn main() {
     let cli = parse_cli(std::env::args()).unwrap_or_else(|e| e.exit());
 
-    let data_dir = cli.data_dir.unwrap_or_else(default_data_dir);
+    let private_dir = cli.private.then(|| {
+        private::PrivateDir::create().unwrap_or_else(|e| {
+            eprintln!("magnetite: cannot make a folder for the private window: {e}");
+            std::process::exit(1);
+        })
+    });
+    let data_dir = match &private_dir {
+        Some(dir) => dir.path().to_path_buf(),
+        None => cli.data_dir.unwrap_or_else(default_data_dir),
+    };
     // Sidebar, tokens and Chromium's profiles: the user's only.
     if let Err(e) = files::private_dir(&data_dir) {
         eprintln!("magnetite: cannot make {} private: {e}", data_dir.display());
@@ -104,14 +118,15 @@ fn main() {
         ui_dir,
         ui_url,
         sidebar_width: 264,
-        use_mock_keychain: keychain_mode(&data_dir, cli.mock_keychain),
+        // A private window keeps nothing: the keychain need not guard it.
+        use_mock_keychain: keychain_mode(&data_dir, cli.mock_keychain || cli.private),
         load_extensions: cli.load_extension,
         chrome_toolbar: cli.chrome_toolbar,
         helper: helper_path(),
     };
     let import = if cli.import_arc {
         state::ArcImport::Now
-    } else if cli.no_import {
+    } else if cli.no_import || cli.private {
         state::ArcImport::Never
     } else {
         state::ArcImport::Ask
@@ -125,9 +140,13 @@ fn main() {
         import,
         cli.open,
         launch_urls,
+        cli.private,
     ));
     app::install_global(&delegate);
-    std::process::exit(magnetite_engine::run(config, delegate));
+    let code = magnetite_engine::run(config, delegate);
+    // `exit` runs no destructors: the private folder goes first.
+    drop(private_dir);
+    std::process::exit(code);
 }
 
 /// Lock `m`, also after a panic elsewhere left it poisoned: the data behind
@@ -264,5 +283,26 @@ mod tests {
             parsed.data_dir.as_deref(),
             Some(std::path::Path::new("/tmp/d"))
         );
+    }
+
+    /// A private window has a data folder of its own and takes nothing from
+    /// Arc; anything else still goes with it.
+    #[test]
+    fn a_private_window_refuses_a_data_folder_and_an_arc_import_but_takes_the_rest() {
+        assert!(cli(&["magnetite", "--private", "--data-dir", "/x"]).is_err());
+        assert!(cli(&["magnetite", "--import-arc", "--private"]).is_err());
+        let parsed = cli(&[
+            "magnetite",
+            "--private",
+            "--no-import",
+            "--open",
+            "https://a.example/",
+            "--disable-gpu",
+            "page.html",
+        ])
+        .unwrap();
+        assert!(parsed.private && parsed.no_import);
+        assert_eq!(parsed.open.as_deref(), Some("https://a.example/"));
+        assert_eq!(parsed.urls, ["page.html"]);
     }
 }
