@@ -74,10 +74,18 @@ pub fn open_window() {
             std::thread::spawn(move || {
                 let _ = child.wait();
                 let dir = folder(child.id());
-                if dir.symlink_metadata().is_ok()
-                    && let Err(e) = std::fs::remove_dir_all(&dir)
-                {
-                    eprintln!("magnetite: cannot delete {}: {e}", dir.display());
+                // Chromium's helper processes outlive a killed instance for
+                // a moment and still write there: try again until they end.
+                for attempt in 1..=10 {
+                    match std::fs::remove_dir_all(&dir) {
+                        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                            if attempt == 10 {
+                                eprintln!("magnetite: cannot delete {}: {e}", dir.display());
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(500));
+                        }
+                        _ => break,
+                    }
                 }
             });
         }
