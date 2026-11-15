@@ -8,6 +8,8 @@ pub type ContentId = u64;
 #[serde(rename_all = "snake_case")]
 pub enum Shortcut {
     NewTab,
+    /// A private window: a Magnetite of its own that keeps nothing.
+    NewPrivateWindow,
     CloseTab,
     FocusAddress,
     ToggleSidebar,

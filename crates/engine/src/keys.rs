@@ -46,6 +46,7 @@ pub fn shortcut_for_key(event: &KeyEvent) -> Option<Shortcut> {
     let upper = |c: char| c as i32;
     match (mods, key) {
         (m, k) if m == CMD && k == upper('T') => Some(Shortcut::NewTab),
+        (m, k) if m == (CMD | SHIFT) && k == upper('P') => Some(Shortcut::NewPrivateWindow),
         (m, k) if m == CMD && k == upper('W') => Some(Shortcut::CloseTab),
         (m, k) if m == CMD && k == upper('L') => Some(Shortcut::FocusAddress),
         (m, k) if m == (CMD | SHIFT) && k == upper('T') => Some(Shortcut::ReopenClosed),

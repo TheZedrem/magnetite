@@ -199,8 +199,12 @@ impl MagnetiteApp {
         import: ArcImport,
         open_on_start: Option<String>,
         launch_urls: Vec<String>,
+        private: bool,
     ) -> Self {
-        let state = AppState::load_or_default(&data_dir, import);
+        let mut state = AppState::load_or_default(&data_dir, import);
+        if private {
+            state.make_private();
+        }
         let blocker = adblocking::Blocker::start(&data_dir, &state.settings.adblock);
         Self {
             state: Mutex::new(state),

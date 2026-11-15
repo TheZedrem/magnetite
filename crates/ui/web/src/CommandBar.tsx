@@ -18,6 +18,7 @@ type Action = { id: string; title: string; keywords: string[]; cmd: Command };
 
 const ACTIONS: Action[] = [
   { id: "new_space", title: "New space", keywords: ["space"], cmd: { cmd: "new_space", title: "" } },
+  { id: "private_window", title: "New private window", keywords: ["private", "incognito", "window"], cmd: { cmd: "shortcut", shortcut: "new_private_window" } },
   { id: "new_folder", title: "New folder", keywords: ["folder"], cmd: { cmd: "new_folder", title: "" } },
   { id: "archive_today", title: "Archive all Today tabs", keywords: ["clear", "archive"], cmd: { cmd: "archive_today" } },
   { id: "reopen", title: "Reopen last archived tab", keywords: ["restore", "closed"], cmd: { cmd: "reopen_closed" } },

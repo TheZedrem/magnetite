@@ -255,6 +255,7 @@ export function App() {
             [
               { id: "split", label: "New Split", Icon: SplitIcon, disabled: !activeItem, run: () => send({ cmd: "open_palette", mode: "split" }) },
               { id: "tab", label: "New Tab", Icon: TabPlus, shortcut: "⌘T", run: () => send({ cmd: "open_palette", mode: "new" }) },
+              { id: "private", label: "New Private Window", Icon: TabPlus, shortcut: "⇧⌘P", run: () => send({ cmd: "shortcut", shortcut: "new_private_window" }) },
             ],
           ]}
         />
