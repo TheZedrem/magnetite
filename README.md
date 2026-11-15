@@ -24,6 +24,14 @@
 > - Every fix or feature is a branch of its own, made from upstream's `main`. It goes upstream as its own pull request.
 > - Each branch is tested on its own, then also merged into this `main` to test it together with the other patches.
 > - This `main` is never merged into upstream. Changes go upstream through their own branches only.
+>
+> **Patches here that upstream does not have yet:**
+>
+> | Patch | Upstream | CEF it needs |
+> | --- | --- | --- |
+> | Several windows on one sidebar, as in Zen: choosing a tab in a window moves it there, still playing. Off by default: Settings → General → Several windows. | [#93](https://github.com/magnetite-browser/magnetite/pull/93) | Upstream's CEF build is enough (magnetite-cef 156.0.30 or later, with `window-reparent.patch`). With the official CEF it works, but a page that changes windows loads again. |
+>
+> None of them needs a CEF of my own: my [magnetite-cef fork](https://github.com/TheZedrem/magnetite-cef) has no patches upstream lacks.
 
 <p align="center">
   <img src="docs/assets/readme/window.webp" width="860" alt="The Magnetite window: the sidebar with favorites, a space with pinned tabs, a smart folder and today's tabs, next to a web page">
