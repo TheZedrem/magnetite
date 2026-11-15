@@ -30,7 +30,7 @@
 > | Patch | Upstream | CEF it needs |
 > | --- | --- | --- |
 > | Several windows on one sidebar, as in Zen: choosing a tab in a window moves it there, still playing. Off by default: Settings → General → Several windows. | [#93](https://github.com/magnetite-browser/magnetite/pull/93) | Upstream's CEF build is enough (magnetite-cef 156.0.30 or later, with `window-reparent.patch`). With the official CEF it works, but a page that changes windows loads again. |
-> | Private windows (⇧⌘P / Ctrl+Shift+P): a separate Magnetite on a new data folder in memory, deleted when it quits. Its sidebar has only its own tabs. | not yet, waits for my tests | Any CEF. |
+> | Private windows (⇧⌘P / Ctrl+Shift+P): a separate Magnetite on a new data folder in memory, deleted when it quits. Its sidebar has only its own tabs. | [#102](https://github.com/magnetite-browser/magnetite/pull/102) | Any CEF. |
 >
 > None of them needs a CEF of my own: my [magnetite-cef fork](https://github.com/TheZedrem/magnetite-cef) has no patches upstream lacks.
 
