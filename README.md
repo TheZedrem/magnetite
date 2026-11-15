@@ -18,6 +18,13 @@
   <a href="#documentation">Documentation</a>
 </p>
 
+> [!NOTE]
+> **This is a fork.** Its `main` is [upstream](https://github.com/magnetite-browser/magnetite)'s `main` with all of my patches merged in: fixes and features that wait for review upstream, together in one build to use and test.
+>
+> - Every fix or feature is a branch of its own, made from upstream's `main`. It goes upstream as its own pull request.
+> - Each branch is tested on its own, then also merged into this `main` to test it together with the other patches.
+> - This `main` is never merged into upstream. Changes go upstream through their own branches only.
+
 <p align="center">
   <img src="docs/assets/readme/window.webp" width="860" alt="The Magnetite window: the sidebar with favorites, a space with pinned tabs, a smart folder and today's tabs, next to a web page">
 </p>
