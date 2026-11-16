@@ -2,8 +2,8 @@
 # Fetch Magnetite's own build of CEF: CEF as its official builds are, plus
 # the H.264, AAC and HEVC decoders those leave out and our patches
 # (https://github.com/magnetite-browser/magnetite-cef). There is one for
-# macOS on Apple silicon only; every other system builds with the official
-# CEF, which the build downloads by itself.
+# macOS on Apple silicon and one for Linux on x86_64; every other system
+# builds with the official CEF, which the build downloads by itself.
 #
 #   scripts/cef.sh DIR
 #
@@ -17,17 +17,26 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-# The release this version of Magnetite builds with. A new one is pinned here
-# after it was checked (magnetite-cef's README, "Checking a release").
+# The release this version of Magnetite builds with, and its archive for
+# each system. A new one is pinned here after it was checked (magnetite-cef's
+# README, "Checking a release").
 RELEASE=156.0.30
-ARCHIVE="cef_binary_156.0.30+g6028375+chromium-156.0.8078.96_macosarm64_minimal.tar.bz2"
-SHA256=b1ff403e74e42904e23f25d6191dccb29d704535f565efc346ce613ad857725a
+NAME="cef_binary_156.0.30+g6028375+chromium-156.0.8078.96"
 
 case ${1:-} in
   "" | -h | --help) sed -n '/^set -euo/q; 2,$p' "$0"; exit 0 ;;
 esac
-[[ "$(host_os)-$(host_arch)" == macos-aarch64 ]] ||
-  die "Magnetite's own CEF build is for macOS on Apple silicon only"
+case "$(host_os)-$(host_arch)" in
+  macos-aarch64)
+    ARCHIVE="${NAME}_macosarm64_minimal.tar.bz2"
+    SHA256=b1ff403e74e42904e23f25d6191dccb29d704535f565efc346ce613ad857725a
+    ;;
+  linux-x86_64)
+    ARCHIVE="${NAME}_linux64_minimal.tar.bz2"
+    SHA256=074d77d4a222f003d6ed9f7af8a892176c2b6b18b8d592da0e8f68ccf31eeb78
+    ;;
+  *) die "Magnetite's own CEF build is for macOS on Apple silicon and Linux on x86_64 only" ;;
+esac
 
 # The CEF version the Rust bindings are made for: "156.5.0+156.0.30" -> 156.0.30.
 wanted="$(grep -A1 '^name = "cef-dll-sys"$' "$ROOT/Cargo.lock" | sed -n 's/^version = ".*+\(.*\)"$/\1/p')"
@@ -56,14 +65,18 @@ log "unpacking CEF $RELEASE"
 unpacked="$dir/archive/${ARCHIVE%.tar.bz2}"
 rm -rf "$unpacked"
 tar -xjf "$archive" -C "$dir/archive"
-# The layout cef-dll-sys makes of a download: the framework (the archive's
-# Release folder) next to the files the C++ wrapper library is built from.
-for item in "Chromium Embedded Framework.framework" CMakeLists.txt cmake include libcef_dll CREDITS.html; do
-  rm -rf "${dir:?}/$item"
-done
-mv "$unpacked/Release/Chromium Embedded Framework.framework" "$dir/"
-for item in CMakeLists.txt cmake include libcef_dll CREDITS.html; do
-  mv "$unpacked/$item" "$dir/"
+# The layout cef-dll-sys makes of a download: the runtime next to the files
+# the C++ wrapper library is built from. On macOS the runtime is the
+# framework (the archive's Release folder); on Linux it is everything in
+# Release (libcef.so, magnetite-patches.txt, ...) and Resources.
+if [[ $(host_os) == macos ]]; then
+  runtime=("$unpacked/Release/Chromium Embedded Framework.framework")
+else
+  runtime=("$unpacked"/Release/* "$unpacked"/Resources/*)
+fi
+for item in "${runtime[@]}" "$unpacked"/{CMakeLists.txt,cmake,include,libcef_dll,CREDITS.html}; do
+  rm -rf "${dir:?}/$(basename "$item")"
+  mv "$item" "$dir/"
 done
 rm -rf "$unpacked"
 # What cef-dll-sys writes for a download (it reads the version from the
@@ -72,7 +85,7 @@ cat >"$dir/archive.json" <<EOF
 {
   "type": "minimal",
   "name": "$ARCHIVE",
-  "sha1": "$(shasum -a 1 "$archive" | cut -d' ' -f1)",
+  "sha1": "$(sha1_of "$archive")",
   "sha256": "$SHA256"
 }
 EOF

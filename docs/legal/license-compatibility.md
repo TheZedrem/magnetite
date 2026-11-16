@@ -146,15 +146,15 @@ are not enough on their own. The full texts ship in `THIRD_PARTY_NOTICES.md`.
 ## CEF and Chromium
 
 We ship the CEF binary distribution unmodified, except on macOS with Apple
-silicon (below): the CEF library and its files next to it. On Windows these are `libcef.dll`, `chrome_elf.dll`,
+silicon and Linux on x86_64 (below): the CEF library and its files next to it. On Windows these are `libcef.dll`, `chrome_elf.dll`,
 `d3dcompiler_47.dll`, `dxcompiler.dll`, `vk_swiftshader.dll` and
 `vulkan-1.dll`. On Linux they are `libcef.so`, `libvk_swiftshader.so` and
 `libvulkan.so.1`. On macOS they are inside
 `Chromium Embedded Framework.framework`. Every platform also ships the `.pak`
 files, `icudtl.dat` and the V8 snapshot. Proprietary codecs are off, except
-on macOS with Apple silicon (next paragraph).
+on macOS with Apple silicon and Linux on x86_64 (next paragraph).
 
-**macOS on Apple silicon** ships a CEF we build ourselves from the same
+**macOS on Apple silicon and Linux on x86_64** ship a CEF we build ourselves from the same
 sources, in [magnetite-cef](https://github.com/magnetite-browser/magnetite-cef).
 It differs from the official build in two ways, both public there with the
 build script: the H.264, AAC and HEVC decoders are on (`proprietary_codecs`,
@@ -393,6 +393,8 @@ Source files for packaging:
 - [ ] Flatpak: the four files in `/app/share/licenses/<app-id>/`
 - [ ] No bundled system libraries (GTK, NSS, …). If any are bundled, add
       their notices and sources.
+- [ ] On x86_64, CEF from the magnetite-cef release pinned in
+      `scripts/cef.sh` (`magnetite-patches.txt` next to `libcef.so`)
 - [ ] Same About page as macOS
 
 **Source repository (GitHub)**:

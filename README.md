@@ -80,11 +80,11 @@ Magnetite started as a new home for the workflow of the Arc browser and has grow
 
 ## Status
 
-Magnetite is developed and used daily on macOS (Apple silicon). Linux builds start and pass the tests; in a Wayland session Magnetite runs as a Wayland client when built with Magnetite's CEF build, and through XWayland with the official CEF, as the Linux releases still are ([ADR-0012](docs/adr/0012-wayland.md)). Windows has not been built yet.
+Magnetite is developed and used daily on macOS (Apple silicon). Linux builds start and pass the tests; in a Wayland session Magnetite runs as a Wayland client when built with Magnetite's CEF build, and through XWayland with the official CEF, as the Linux aarch64 releases still are ([ADR-0012](docs/adr/0012-wayland.md)). Windows has not been built yet.
 
 There are no releases yet, so for now you [build it yourself](#build-it-yourself). Expect breaking changes, including to the data format on disk.
 
-Not there yet: moving a page between windows on macOS and Windows (to do: written for both, tested on neither), and H.264 or AAC playback on Linux and Intel Macs (the standard build of the engine comes without these codecs, so some video and music sites do not play; on Macs with Apple silicon, Magnetite uses [its own build](https://github.com/magnetite-browser/magnetite-cef) with them). Every spec in [`docs/spec/`](docs/spec/README.md) ends with what its feature still lacks.
+Not there yet: moving a page between windows on macOS and Windows (to do: written for both, tested on neither), and H.264 or AAC playback on Linux aarch64 and Intel Macs (the standard build of the engine comes without these codecs, so some video and music sites do not play; on Macs with Apple silicon and Linux x86_64, Magnetite uses [its own build](https://github.com/magnetite-browser/magnetite-cef) with them). Every spec in [`docs/spec/`](docs/spec/README.md) ends with what its feature still lacks.
 
 ## Install
 

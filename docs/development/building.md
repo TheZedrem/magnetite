@@ -20,9 +20,9 @@ export CEF_PATH="$HOME/.local/share/cef"
 ```
 
 The official CEF builds come without the H.264, AAC and HEVC decoders. On
-macOS with Apple silicon, releases and CI use
+macOS with Apple silicon and on Linux x86_64, releases and CI use
 [Magnetite's own CEF build](https://github.com/magnetite-browser/magnetite-cef)
-instead, which has them and one patch. `scripts/cef.sh` fetches it (135 MB),
+instead, which has them and our patches. `scripts/cef.sh` fetches it,
 checks its hash and unpacks it:
 
 ```sh
@@ -98,7 +98,8 @@ container: `scripts/linux-container.sh build` or `scripts/linux-container.sh tes
 In a Wayland session Magnetite runs as a Wayland client if its CEF has
 Magnetite's Wayland patch (`docs/adr/0012-wayland.md`): the package then
 holds `magnetite-patches.txt`, from Magnetite's CEF build, which names it.
-With the official CEF of the build above it runs as an X11 client, through
+The Linux x86_64 releases have it. With the official CEF (a build without
+`scripts/cef.sh`, or aarch64) it runs as an X11 client, through
 XWayland, and `--ozone-platform=wayland` stops it at the first page; a
 session without XWayland therefore needs Magnetite's CEF.
 `--ozone-platform=x11` or `=wayland` picks one by hand. To test

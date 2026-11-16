@@ -128,6 +128,15 @@ sha256_of() {
   fi
 }
 
+# Lowercase hex SHA-1 of a file.
+sha1_of() {
+  if command -v sha1sum >/dev/null; then
+    sha1sum "$1" | cut -d' ' -f1
+  else
+    shasum -a 1 "$1" | cut -d' ' -f1
+  fi
+}
+
 # Size of a file in bytes.
 size_of() { wc -c <"$1" | tr -d ' '; }
 
