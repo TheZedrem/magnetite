@@ -51,6 +51,9 @@ pub struct UiState<'a> {
     /// Ctrl is held: what the switcher's list shows.
     pub switcher: Option<&'a TabSwitch>,
     pub settings: &'a Settings,
+    /// The keys each shortcut has now (as `Combo` saves them), for the
+    /// hints beside buttons and menu entries; one without keys is left out.
+    pub keys: std::collections::BTreeMap<magnetite_engine::Action, String>,
     /// Chrome colour behind the page cards, `#rrggbb`, derived from the space accent.
     pub chrome: String,
     /// Connected smart folder accounts (never their tokens).
@@ -243,6 +246,7 @@ impl AppState {
             peek: self.peek.as_ref(),
             switcher: self.switcher.as_ref(),
             settings: &self.settings,
+            keys: self.settings.shortcut_keys().collect(),
             chrome: format!("#{:06x}", self.chrome_rgb()),
             accounts: self.accounts.list(),
             smart: &self.smart_status,

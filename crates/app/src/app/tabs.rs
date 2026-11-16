@@ -194,8 +194,9 @@ impl MagnetiteApp {
         }
     }
 
-    /// Look every `SWITCHER_WATCH_MS` whether Ctrl is still held, and end
-    /// the round of `Ctrl+Tab` once it is not. Where
+    /// Look every `SWITCHER_WATCH_MS` whether Ctrl (the modifiers of the
+    /// shortcut's keys, should the user have changed them) is still held,
+    /// and end the round of `Ctrl+Tab` once it is not. Where
     /// the system does not say, the round ends at once: every press
     /// switches to the tab used before.
     fn watch_tab_switch() {
@@ -206,7 +207,7 @@ impl MagnetiteApp {
                 if app.with_state(|s| s.switcher.is_none()) {
                     return;
                 }
-                if engine.control_key_held() == Some(true) {
+                if engine.tab_switch_keys_held() == Some(true) {
                     Self::watch_tab_switch();
                 } else {
                     app.end_tab_switch(engine);

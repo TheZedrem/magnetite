@@ -962,10 +962,22 @@ pub fn app_is_active() -> bool {
     MainThreadMarker::new().is_some_and(|mtm| NSApplication::sharedApplication(mtm).isActive())
 }
 
-/// Whether the Control key is down right now, whichever app has the
-/// keyboard (the keyboard's state, not that of the last event).
-pub fn control_key_held() -> bool {
-    NSEvent::modifierFlags_class().contains(objc2_app_kit::NSEventModifierFlags::Control)
+/// Whether those of Cmd, Control and Option that are asked for are all down
+/// right now, whichever app has the keyboard (the keyboard's state, not
+/// that of the last event).
+pub fn modifiers_held(command: bool, control: bool, option: bool) -> bool {
+    use objc2_app_kit::NSEventModifierFlags as Flags;
+    let mut wanted = Flags::empty();
+    for (asked, flag) in [
+        (command, Flags::Command),
+        (control, Flags::Control),
+        (option, Flags::Option),
+    ] {
+        if asked {
+            wanted |= flag;
+        }
+    }
+    NSEvent::modifierFlags_class().contains(wanted)
 }
 
 /// Hand the keyboard back to the app that was in front before Magnetite.

@@ -61,14 +61,22 @@ impl Engine {
         self.open_overlay_with(bounds, url, 14.0, true, false)
     }
 
-    /// Whether the Control key is held right now; `None` where the system
-    /// does not say (outside macOS). Chromium hands on no key-up after a
-    /// shortcut it took, so this is how the end of a round with Ctrl held
-    /// (the tab switcher) is seen.
+    /// Whether the modifiers of the keys for the next tab (`Ctrl+Tab` until
+    /// the user changes them; those for the previous tab if these have
+    /// none) are held right now. `None` where that cannot be said: outside
+    /// macOS, and for keys without Cmd, Ctrl or Option. Chromium hands on
+    /// no key-up after a shortcut it took, so this is how the end of a
+    /// round with the keys held (the tab switcher) is seen.
     #[allow(clippy::unused_self)] // an Engine method like its siblings
-    pub fn control_key_held(&self) -> Option<bool> {
+    pub fn tab_switch_keys_held(&self) -> Option<bool> {
         #[cfg(target_os = "macos")]
-        return Some(crate::mac::control_key_held());
+        {
+            use crate::keymap::Action;
+            let keys = crate::keys::combo_of(Action::NextTab)
+                .or_else(|| crate::keys::combo_of(Action::PrevTab))?;
+            (keys.primary || keys.ctrl || keys.alt)
+                .then(|| crate::mac::modifiers_held(keys.primary, keys.ctrl, keys.alt))
+        }
         #[cfg(not(target_os = "macos"))]
         None
     }

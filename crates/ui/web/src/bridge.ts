@@ -3,6 +3,7 @@
 // Rust -> JS: window.__magnetite.setState(state) and a few UI calls.
 // JS -> Rust: window.magnetiteQuery({request: JSON, onSuccess, onFailure}) (CEF message router).
 
+import type { ShortcutAction, ShortcutKeys } from "./settings/shortcutKeys";
 import type { Info } from "./settings/types";
 
 export type Id = string;
@@ -187,6 +188,8 @@ export interface UiState {
   /** While Ctrl+Tab goes through the tabs by last use: the tabs of the round and the place it stands on. */
   switcher: { tabs: Id[]; at: number } | null;
   settings: Settings;
+  /** The keys each shortcut has now (Settings → Shortcuts). */
+  keys: ShortcutKeys;
   chrome: string;
   /** Connected smart folder accounts. */
   accounts: Account[];
@@ -504,7 +507,10 @@ export type Command =
   | { cmd: "import_from"; key: string }
   /** The text of a bookmarks file (the HTML browsers export): its bookmarks join the current space's. */
   | { cmd: "import_bookmarks"; html: string }
-  | { cmd: "shortcut"; shortcut: string | { select_tab: number } | { select_space: number } };
+  | { cmd: "shortcut"; shortcut: string | { select_tab: number } | { select_space: number } }
+  | { cmd: "set_shortcut"; action: ShortcutAction; keys: string | null }
+  | { cmd: "reset_shortcut"; action?: ShortcutAction }
+  | { cmd: "record_shortcut"; on: boolean };
 
 /** A browser on this computer that Magnetite can import from. */
 export interface ImportSource {
@@ -576,6 +582,8 @@ export interface SplitDropFrame {
 interface Replies {
   get_state: UiState;
   get_settings: Info;
+  /** `error`: why these keys cannot be a shortcut; nothing changed. */
+  set_shortcut: { error?: string };
   search: { results: SearchResult[] };
   archive: { items: ArchiveItem[] };
   history: { items: Visit[] };
