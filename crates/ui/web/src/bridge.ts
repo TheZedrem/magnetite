@@ -223,6 +223,12 @@ export function splitIds(n: SplitNode): Id[] {
   return n.kind === "pane" ? [n.id] : n.children.flatMap(splitIds);
 }
 
+/** A link from another app to `site` (a host, or a host and the start of a path) opens in space `space`. */
+export interface LinkRule {
+  site: string;
+  space: Id;
+}
+
 /** CSS and JavaScript the user added to the pages of `site` (a host, standing for its subdomains too); `enabled` off keeps them unused. */
 export interface SiteCode {
   site: string;
@@ -242,6 +248,8 @@ export interface Settings {
   /** Keywords that search one site from the command bar (`gh rust`). */
   site_searches: SiteSearch[];
   external_links: "tab" | "peek" | "mini";
+  /** Which space a link from another app opens in, by its site. */
+  link_rules: LinkRule[];
   /** The user's own CSS and JavaScript per site (Settings → Custom CSS & JS). */
   site_code: SiteCode[];
   /** The system-wide quick search key (⌥⌘N) is on; this device's own choice. */

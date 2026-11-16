@@ -216,11 +216,28 @@ impl EngineDelegate for MagnetiteApp {
                     let from_mini = from.is_some_and(|c| s.minis.iter().any(|m| m.content == c));
                     (ask.target(&s.settings.external_links), from_mini)
                 });
+                // A link from another app to a site with a rule opens in the
+                // rule's space: as a tab there, or as a peek or mini window
+                // with that space's logins.
+                let ruled = (source == url_policy::Source::OtherApp)
+                    .then(|| self.link_rule_space(&url))
+                    .flatten();
+                let context = match &ruled {
+                    Some((_, profile)) => Some(profile.as_str()),
+                    None => context.as_deref(),
+                };
                 match target {
-                    Target::Peek => self.open_peek(engine, &url, source, context.as_deref()),
-                    Target::Mini => self.open_mini(engine, &url, source, context.as_deref()),
+                    Target::Peek => self.open_peek(engine, &url, source, context),
+                    Target::Mini => self.open_mini(engine, &url, source, context),
                     Target::Tab => {
-                        self.open_url_from(engine, &url, background, source, context.as_deref());
+                        if let Some((space, _)) = &ruled
+                            && self.with_state(|s| s.active_space != *space)
+                        {
+                            self.activate_space(engine, space);
+                        }
+                        // In the rule's space the tab takes that space's profile.
+                        let context = context.filter(|_| ruled.is_none());
+                        self.open_url_from(engine, &url, background, source, context);
                     }
                 }
                 // A link from another app, or what a mini window's page
@@ -416,17 +433,41 @@ impl EngineDelegate for MagnetiteApp {
 }
 
 impl MagnetiteApp {
+    /// The space a rule names for a link from another app to `url`
+    /// (Settings → General), with that space's profile: `(space, profile)`.
+    fn link_rule_space(&self, url: &str) -> Option<(String, String)> {
+        self.with_state(|s| {
+            let id = (s.settings).link_space(url, |id| s.space(id).is_some())?;
+            let space = s.space(id)?;
+            Some((space.id.clone(), space.profile_id.clone()))
+        })
+    }
+
     /// Open `urls` as links from another app: as macOS hands them over,
     /// following the setting for links from outside. There is one peek, and
     /// opening it closes the one before: of several addresses the last gets
     /// it, the others become background tabs.
     pub(super) fn open_from_other_app(&self, engine: &Engine, urls: Vec<String>) {
         let peek = self.with_state(|s| s.settings.external_links == "peek");
+        // The space in front when the links arrive: where those without a
+        // rule belong, also after one with a rule brought its space forward.
+        let front = self.with_state(|s| s.active_space.clone());
         let last = urls.len().saturating_sub(1);
         for (i, url) in urls.into_iter().enumerate() {
             if peek && i < last {
-                self.open_url_from(engine, &url, true, url_policy::Source::OtherApp, None);
+                // A background tab: in the space a rule names for its site,
+                // else in the one in front.
+                match self.link_rule_space(&url) {
+                    Some((space, _)) => self.open_background_in_space(engine, &url, &space),
+                    None => {
+                        self.open_url_from(engine, &url, true, url_policy::Source::OtherApp, None);
+                    }
+                }
                 continue;
+            }
+            if self.link_rule_space(&url).is_none() && self.with_state(|s| s.active_space != front)
+            {
+                self.activate_space(engine, &front);
             }
             self.on_event(
                 engine,
