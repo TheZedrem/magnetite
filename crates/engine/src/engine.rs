@@ -388,8 +388,9 @@ impl Engine {
         }
     }
 
-    /// Run `js` in every sidebar page and the top bar, shown or not, and in
-    /// the overlay (a pop-up of the top bar shows live state): state pushes.
+    /// Run `js` in every sidebar page, the top bar and the empty page, shown
+    /// or not, and in the overlay (a pop-up of the top bar shows live state):
+    /// state pushes.
     pub fn ui_eval_all(&self, js: &str) {
         let overlay = (self.lock().overlay.clone())
             .and_then(|w| w.child_view_at(0)?.as_browser_view()?.browser());
@@ -397,6 +398,7 @@ impl Engine {
             self.docked_sidebar_browser(),
             self.float_sidebar_browser(),
             self.top_bar_browser(),
+            self.empty_browser(),
             overlay,
         ]
         .into_iter()
@@ -648,7 +650,8 @@ fn schedule_tick(delay_ms: i64) {
     Engine::post_delayed(Box::new(tick), delay_ms);
 }
 
-/// Poll the signal flag often; emit the housekeeping tick once a minute.
+/// Poll the signal flag often, and on macOS look for pages wrongly marked
+/// covered; emit the housekeeping tick once a minute.
 fn tick() {
     let engine = Engine::global();
     if engine.is_quitting() {
@@ -658,6 +661,8 @@ fn tick() {
         engine.emit(EngineEvent::QuitRequested);
         return;
     }
+    #[cfg(target_os = "macos")]
+    engine.uncover_shown_pages();
     static POLLS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     if POLLS
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed)

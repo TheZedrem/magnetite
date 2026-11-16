@@ -204,6 +204,10 @@ wrap_app! {
         fn browser_process_handler(&self) -> Option<BrowserProcessHandler> {
             Some(MagnetiteBrowserProcessHandler::new())
         }
+
+        fn resource_bundle_handler(&self) -> Option<ResourceBundleHandler> {
+            Some(crate::strings::Strings::new())
+        }
     }
 }
 
@@ -217,11 +221,15 @@ wrap_browser_process_handler! {
         }
         fn on_context_initialized(&self) {
             let engine = Engine::global();
-            scheme::install_factory(engine.config().ui_dir.clone(), crate::favicon::cache_dir(&engine.config().data_dir));
+            scheme::install_factory(&engine.config().data_dir, engine.config().ui_dir.clone());
             engine.lock().router = Some(router::create_browser_router());
             engine.start_tick();
             #[cfg(target_os = "macos")]
-            crate::mac::install_pip_swipe();
+            crate::mac::install_swipe_monitor();
+            #[cfg(target_os = "macos")]
+            crate::mac::clear_tooltips_without_keyboard();
+            #[cfg(target_os = "macos")]
+            crate::mac::watch_covered_pages();
             #[cfg(target_os = "macos")]
             crate::mac::watch_memory_pressure();
             engine.emit(EngineEvent::Ready);

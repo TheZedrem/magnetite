@@ -198,6 +198,7 @@ impl PaletteMode {
 impl MagnetiteApp {
     pub fn new(
         data_dir: PathBuf,
+        scriptlets: Option<PathBuf>,
         import: ArcImport,
         open_on_start: Option<String>,
         launch_urls: Vec<String>,
@@ -207,7 +208,7 @@ impl MagnetiteApp {
         if private {
             state.make_private();
         }
-        let blocker = adblocking::Blocker::start(&data_dir, &state.settings.adblock);
+        let blocker = adblocking::Blocker::start(&data_dir, scriptlets, &state.settings.adblock);
         Self {
             state: Mutex::new(state),
             data_dir,

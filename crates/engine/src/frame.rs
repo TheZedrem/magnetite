@@ -18,7 +18,7 @@ pub(crate) struct FrameState {
     pub content_panel: Panel,
     pub sidebar_browser: Option<Browser>,
     /// The hint in the content panel for a window without a page.
-    pub empty: Option<crate::empty::EmptyHint>,
+    pub empty: Option<crate::empty::EmptyPage>,
 }
 
 impl Engine {
@@ -87,7 +87,7 @@ impl Engine {
         Some(result)
     }
 
-    /// The window whose sidebar, top bar or floating sidebar is browser
+    /// The window whose sidebar, top bar, floating sidebar or empty page is browser
     /// `id`, or whose page it is.
     pub(crate) fn window_of_browser(&self, id: i32) -> Option<WindowId> {
         let is = |b: Option<&Browser>| b.is_some_and(|b| b.identifier() == id);
@@ -101,7 +101,9 @@ impl Engine {
         inner.windows_mut().find_map(|(win, w)| {
             let frame = w.frame.as_ref();
             let float = w.float_bar.as_ref().and_then(|f| f.view.browser());
+            let empty = frame.and_then(|f| f.empty.as_ref()?.browser());
             (is(frame.and_then(|f| f.sidebar_browser.as_ref()))
+                || is(empty.as_ref())
                 || is(frame.and_then(|f| f.top_bar_browser.as_ref()))
                 || is(float.as_ref()))
             .then_some(win)
@@ -130,36 +132,19 @@ impl Engine {
     pub const CONTENT_INSET: i32 = 8;
     /// How far the window-drag strip reaches into the top of the pages.
     const GRAB_OVERLAP: i32 = 6;
-    /// Room for the traffic lights when the sidebar is hidden.
-    const TRAFFIC_LIGHTS: i32 = 80;
-    /// Gap above the pages while the sidebar is hidden in a normal window:
-    /// the traffic lights sit in it. Pages are windows above the frame and
-    /// would cover them otherwise.
-    const BUTTONS_BAR: i32 = 34;
     /// Height of the top bar (`magnetite://ui/topbar`).
     pub const TOP_BAR_HEIGHT: i32 = 42;
 
     /// Keep the window-drag strip along the top of the page area, above the
     /// page windows (see `mac::set_grab_strip`).
     pub(crate) fn update_grab_strip(&self) {
-        let frame = {
-            let inner = self.lock();
-            inner
-                .win
-                .frame
-                .as_ref()
-                .map(|f| (f.window.clone(), inner.win.sidebar_visible))
-        };
-        let Some((window, sidebar)) = frame else {
+        let Some(window) = self.frame_window() else {
             return;
         };
         let panel = self.content_panel_in_screen();
-        let skip = if sidebar { 0 } else { Self::TRAFFIC_LIGHTS };
         let strip = Rect {
-            x: panel.x + skip,
-            y: self.content_rect().y - Self::CONTENT_INSET,
-            width: (panel.width - skip).max(1),
             height: Self::CONTENT_INSET + Self::GRAB_OVERLAP,
+            ..panel
         };
         #[cfg(target_os = "macos")]
         crate::mac::set_grab_strip(window.window_handle(), &strip);
@@ -190,24 +175,17 @@ impl Engine {
     }
 
     /// Screen rectangle (DIP) the content windows must cover: the content
-    /// panel minus an inset so the page floats inside the frame, and minus
-    /// the room for the traffic lights when no sidebar holds them (a full
-    /// screen window has none).
+    /// panel minus an inset so the page floats inside the frame. With the
+    /// sidebar hidden and no top bar the pages cover the window's own
+    /// buttons: the floating sidebar has them then.
     pub fn content_rect(&self) -> Rect {
         let r = self.content_panel_in_screen();
-        let buttons = {
-            let inner = self.lock();
-            !inner.win.sidebar_visible
-                && !inner.top_bar_visible
-                && (inner.win.frame.as_ref()).is_some_and(|f| f.window.is_fullscreen() == 0)
-        };
         let i = Self::CONTENT_INSET;
-        let top = if buttons { Self::BUTTONS_BAR } else { i };
         Rect {
             x: r.x + i,
-            y: r.y + top,
+            y: r.y + i,
             width: (r.width - 2 * i).max(1),
-            height: (r.height - top - i).max(1),
+            height: (r.height - 2 * i).max(1),
         }
     }
 
@@ -345,9 +323,14 @@ impl Engine {
         self.apply_drag_regions();
         self.update_edge_zone();
         self.align_hidden_toolbars();
+        // A floating sidebar that is out moves below the bar, or back up.
+        if self.float_sidebar_shown() {
+            self.show_float_sidebar(true);
+        }
     }
 
-    /// The top bar's window buttons (Linux and Windows; macOS has its own).
+    /// The window buttons of the top bar (Linux and Windows) and of the
+    /// floating sidebar (macOS, where the pages cover the window's own).
     pub fn minimize_frame(&self) {
         if let Some(w) = self.frame_window() {
             w.minimize();
@@ -362,6 +345,13 @@ impl Engine {
             } else {
                 w.maximize();
             }
+        }
+    }
+
+    /// Enter full screen, or leave it.
+    pub fn toggle_fullscreen_frame(&self) {
+        if let Some(w) = self.frame_window() {
+            w.set_fullscreen((w.is_fullscreen() == 0).into());
         }
     }
 
@@ -469,7 +459,6 @@ impl Engine {
             content.set_background_color(argb);
             body.set_background_color(argb);
         }
-        self.colour_empty_hint(argb);
     }
 
     pub fn sidebar_visible(&self) -> bool {
@@ -692,6 +681,8 @@ wrap_window_delegate! {
             window.show();
             window.layout();
 
+            let chrome = engine.lock().win.chrome_color;
+            let empty = crate::empty::EmptyPage::new(&content, chrome);
             let mut inner = engine.lock();
             let Some(state) = inner.window_mut(self.win) else { return };
             let sidebar_browser = state.pending_sidebar_browser.take();
@@ -701,7 +692,7 @@ wrap_window_delegate! {
                 sidebar_view: sidebar,
                 top_bar_view: None,
                 top_bar_browser: None,
-                empty: crate::empty::EmptyHint::new(&content),
+                empty,
                 content_panel: content,
                 sidebar_browser,
             });
@@ -735,14 +726,6 @@ wrap_window_delegate! {
                 let engine = Engine::global();
                 engine.enter(self.win);
                 engine.notifications_follow();
-            }
-        }
-
-        // Entering or leaving full screen changes the room above the pages.
-        fn on_window_fullscreen_transition(&self, _window: Option<&mut Window>, is_completed: ::std::os::raw::c_int) {
-            if is_completed != 0 {
-                let engine = Engine::global();
-                engine.in_window(self.win, || engine.reposition_contents());
             }
         }
 

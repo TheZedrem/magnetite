@@ -8,9 +8,6 @@ use cef::*;
 use crate::client::MagnetiteClient;
 use crate::engine::Engine;
 
-/// Room left free above the panel: the frame's traffic lights (more with
-/// the top bar on).
-const TOP: i32 = 40;
 /// Gap between the panel and the window edges.
 const MARGIN: i32 = 6;
 /// Width of the hover zone along the left edge (the page gap).
@@ -67,6 +64,28 @@ impl Engine {
             .and_then(|f| f.view.browser())
     }
 
+    /// A two-finger swipe began somewhere in the app (macOS). Both sidebars
+    /// hear of it: wheel events do not say where one swipe ends and the next
+    /// begins, and the momentum of a swipe outlasts the fingers
+    /// (`useSpaceSwipe.ts`).
+    #[cfg(target_os = "macos")]
+    pub(crate) fn swipe_began(&self) {
+        let docked = self
+            .lock()
+            .win
+            .frame
+            .as_ref()
+            .and_then(|f| f.sidebar_view.browser());
+        for browser in [docked, self.float_sidebar_browser()].into_iter().flatten() {
+            if let Some(frame) = browser.main_frame() {
+                self.eval_in_ui(
+                    &frame,
+                    "window.__magnetite && window.__magnetite.swipeBegan()",
+                );
+            }
+        }
+    }
+
     /// Focus the floating sidebar (its pop-ups ask for focus).
     pub(crate) fn focus_float_sidebar(&self) {
         let handles = self
@@ -86,11 +105,13 @@ impl Engine {
         let (frame, hidden) = (self.frame_window(), !self.sidebar_visible());
         let Some(frame) = frame else { return };
         let b = frame.bounds();
+        // Not beside the top bar: its left end holds the window's buttons.
+        let top = self.top_bar_offset();
         let zone = Rect {
             x: b.x,
-            y: b.y + TOP,
+            y: b.y + top,
             width: EDGE,
-            height: (b.height - TOP).max(1),
+            height: (b.height - top).max(1),
         };
         #[cfg(target_os = "macos")]
         crate::mac::set_edge_zone(frame.window_handle(), hidden.then_some(&zone));
@@ -98,12 +119,12 @@ impl Engine {
         let _ = (zone, hidden);
     }
 
-    /// Below the traffic lights, along the left edge, the sidebar's width.
+    /// Along the left edge, the window's height (below the top bar while it
+    /// is on), the sidebar's width.
     fn float_bounds(&self) -> Option<Rect> {
         let frame = self.frame_window()?;
         let b = frame.bounds();
-        // Below the top bar while it is on.
-        let top = TOP.max(self.top_bar_offset() + MARGIN);
+        let top = self.top_bar_offset() + MARGIN;
         Some(Rect {
             x: b.x + MARGIN,
             y: b.y + top,
@@ -139,13 +160,17 @@ impl Engine {
 }
 
 /// Show the panel on top without taking the keyboard from the page: hovering
-/// is not choosing. A click into the panel focuses it as usual.
+/// is not choosing. A click into the panel focuses it as usual, and the
+/// pointer moves over it as over a focused window (hover, pointer-out).
 pub(crate) fn show_quietly(window: &Window) {
     #[cfg(target_os = "macos")]
-    crate::mac::without_taking_focus(|| {
-        window.show();
-        window.bring_to_top();
-    });
+    {
+        crate::mac::hover_without_focus(window.window_handle());
+        crate::mac::without_taking_focus(|| {
+            window.show();
+            window.bring_to_top();
+        });
+    }
     #[cfg(not(target_os = "macos"))]
     {
         window.show();
@@ -177,6 +202,8 @@ wrap_window_delegate! {
             window.set_bounds(Some(&self.bounds));
             #[cfg(target_os = "macos")]
             crate::mac::round_window_corners(window.window_handle(), 10.0, true);
+            #[cfg(target_os = "macos")]
+            crate::mac::mark_as_part(window.window_handle());
             let engine = Engine::global();
             let show = {
                 let mut inner = engine.lock();

@@ -271,6 +271,9 @@ wrap_life_span_handler! {
             if let Some(r) = engine.lock().router.clone() {
                 r.on_before_close(browser.as_deref().cloned());
             }
+            if let Some(b) = browser.as_deref() {
+                crate::scriptlets::page_closed(b.identifier());
+            }
             engine.on_browser_closed(self.kind, browser.as_deref());
         }
     }
@@ -365,6 +368,12 @@ wrap_load_handler! {
             if self.kind == Kind::DevTools && frame.is_main() != 0 {
                 Engine::global().devtools_loaded(browser);
             }
+            // The user's own CSS and JavaScript for the site.
+            if self.kind == Kind::Content && frame.is_main() != 0 {
+                let engine = Engine::global();
+                engine.put_site_style(frame);
+                engine.run_site_script(frame);
+            }
         }
         fn on_load_start(&self, browser: Option<&mut Browser>, frame: Option<&mut Frame>, _transition_type: TransitionType) {
             let engine = Engine::global();
@@ -384,6 +393,8 @@ wrap_load_handler! {
                 if f.is_main() != 0 {
                     engine.emit_site_state(id);
                     engine.on_media_report(browser.as_deref(), "null");
+                    // Before the page shows anything: the user's own CSS.
+                    engine.put_site_style(f);
                 }
             }
         }
@@ -556,7 +567,11 @@ wrap_command_handler! {
             // A window Chromium opened itself (the DevTools of an extension
             // popup): its keys are its own, not commands for our tabs.
             if self.kind == Kind::Stray { return 0; }
-            let Some(shortcut) = keys::shortcut_for_chrome_command(command_id) else { return 0 };
+            let shortcut = match keys::shortcut_for_chrome_command(command_id) {
+                keys::ChromeCommand::Pass => return 0,
+                keys::ChromeCommand::Drop => return 1,
+                keys::ChromeCommand::Run(shortcut) => shortcut,
+            };
             // Keys in DevTools act on their page.
             let owner = engine.devtools_owner(browser.as_deref());
             let from = engine.content_id_for(browser.as_deref()).or(owner);
@@ -591,9 +606,16 @@ wrap_keyboard_handler! {
             _is_keyboard_shortcut: Option<&mut ::std::os::raw::c_int>,
         ) -> ::std::os::raw::c_int {
             let engine = Engine::global();
-            // A hidden sidebar can still hold focus, and Chromium drops input
-            // to hidden pages: its shortcuts (Cmd+S to show it again) run here.
-            if self.kind == Kind::Sidebar && !engine.sidebar_visible() {
+            // The sidebar's and the top bar's shortcuts run here, not in their pages: the keys are
+            // the user's (`keymap.rs`), and a hidden sidebar can still hold
+            // focus while Chromium drops input to hidden pages.
+            // The floating sidebar is an overlay window; the other overlays
+            // (the command bar, the capture tool) keep their keys.
+            let floating = self.kind == Kind::Overlay
+                && engine.float_sidebar_browser().is_some_and(|float| {
+                    browser.as_deref().is_some_and(|b| b.identifier() == float.identifier())
+                });
+            if matches!(self.kind, Kind::Sidebar | Kind::TopBar) || floating {
                 let Some(shortcut) = event.and_then(|e| keys::shortcut_for_key(e).or_else(|| keys::yieldable_shortcut(e))) else { return 0 };
                 engine.emit(EngineEvent::Shortcut { from: None, shortcut });
                 return 1;

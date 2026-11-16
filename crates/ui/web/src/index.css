@@ -93,6 +93,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 .row:hover .kept, .row:focus-within .kept { visibility: hidden; }
 .row:hover .slot.ghost, .row:focus-within .slot.ghost { opacity: 1; }
 .row .slot:hover { background: rgba(255,255,255,0.1); color: var(--fg); }
+/* A toggle that is on (a smart folder showing its snoozed items). */
+.row .slot[data-on] { color: var(--space, var(--accent)); }
+/* A snoozed item of a smart folder: dimmed; its wake time gives way to the wake button. */
+.row.snoozed .title { color: var(--muted); }
+.row.snoozed .favicon { opacity: 0.5; filter: grayscale(1); }
+.row.snoozed:hover .meta, .row.snoozed:focus-within .meta { visibility: hidden; }
 .row .rename { flex: 1; min-width: 0; height: 24px; background: var(--surface); border: 0; border-radius: 6px; padding: 0 6px; color: var(--fg); outline: 2px solid var(--accent); outline-offset: -2px; }
 
 .drop { position: relative; }
@@ -258,6 +264,7 @@ button.panel-row:disabled { opacity: 0.45; }
 .split-cell:hover .title { -webkit-mask-image: linear-gradient(to left, transparent 20px, #000 36px); }
 .split-cell .close:hover { color: var(--fg); background: #3a3a3e; }
 /* where a dragged tab lands: a placeholder page beside its new neighbour */
+.split-cell[data-lifted] { opacity: 0; }
 .split-cell[data-ghost] { background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 65%, transparent); color: var(--secondary); animation: ghost-in 140ms cubic-bezier(0.2, 0.8, 0.2, 1); }
 @keyframes ghost-in { from { opacity: 0; transform: scale(0.94); } }
 /* a tab row previewing the split it would become */
@@ -297,6 +304,7 @@ button.panel-row:disabled { opacity: 0.45; }
 .menu button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; height: 28px; padding: 0 10px; border-radius: 6px; }
 /* One line per entry: the menu's height is counted in 28 px rows (ContextMenu.tsx). */
 .menu button span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menu button .hint { margin-left: auto; flex: none; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .menu button:hover { background: rgba(255,255,255,0.1); }
 .menu button[data-danger] { color: var(--danger); }
 .menu button[data-danger]:hover { background: rgba(255, 90, 90, 0.14); }
@@ -313,6 +321,11 @@ button.panel-row:disabled { opacity: 0.45; }
 .cmdbar .result { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 4px 8px; border-radius: 6px; }
 .cmdbar .result[data-selected] { background: rgba(255,255,255,0.1); }
 .cmdbar .result .meta { color: var(--muted); font-size: 12px; line-height: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The tab switcher's list (Switcher.tsx): rows as in the command bar; the app counts on 40 px rows and 6 px around (SWITCHER_ROW). */
+.switcher { height: 100%; padding: 6px; background: var(--surface); overflow: hidden; }
+.switcher .result { display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 10px; border-radius: 8px; font-size: 14px; }
+.switcher .result[data-selected] { background: rgba(255,255,255,0.12); }
+.switcher .result .meta { max-width: 40%; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cmdbar .group { padding: 6px 8px 2px; font-size: 12px; color: var(--muted); }
 /* What the keys do with the selected result, or what to type. */
 .cmdbar .hints { flex: none; display: flex; flex-wrap: wrap; column-gap: 16px; padding: 0 14px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); white-space: nowrap; }
@@ -405,6 +418,18 @@ button:disabled, select:disabled, [aria-disabled="true"] { cursor: default; }
 .sf-source { display: flex; align-items: center; gap: 8px; }
 .sf-source select { flex: 1; }
 
+/* The floating sidebar's window buttons on macOS: the system's three
+   colours, their signs showing while the pointer is over the group. */
+.window-buttons { display: flex; align-items: center; gap: 8px; padding: 0 12px 0 6px; }
+.window-buttons button { width: 12px; height: 12px; border-radius: 50%; cursor: default; box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.2); }
+.window-buttons button[data-kind="close"] { background: #ff5f57; }
+.window-buttons button[data-kind="minimize"] { background: #febc2e; }
+.window-buttons button[data-kind="fullscreen"] { background: #28c840; }
+.window-buttons button:active { filter: brightness(0.8); }
+.window-buttons svg { display: block; width: 12px; height: 12px; opacity: 0; fill: none; stroke: rgba(0, 0, 0, 0.6); stroke-width: 1.2; stroke-linecap: round; }
+.window-buttons svg .fill { fill: rgba(0, 0, 0, 0.6); stroke: none; }
+.window-buttons:hover svg { opacity: 1; }
+
 /* the floating sidebar slides in each time it appears */
 [data-float] { animation: float-in 170ms cubic-bezier(0.2, 0.8, 0.2, 1); }
 @keyframes float-in { from { transform: translateX(-16px); opacity: 0.4; } }
@@ -417,12 +442,19 @@ button:disabled, select:disabled, [aria-disabled="true"] { cursor: default; }
 :is(.row, .split-cell)[data-unloaded] .favicon:not(:has(img)), .fav[data-unloaded] .favicon:not(:has(img)) { color: var(--muted); }
 
 /* Settings → Appearance */
-.swatches { display: flex; flex-wrap: wrap; gap: 5px; justify-content: flex-end; max-width: 300px; }
+.swatches { display: flex; flex-wrap: wrap; gap: 6px; }
 .swatch { width: 18px; height: 18px; border-radius: 9px; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.25); position: relative; }
 .swatch[data-on] { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--fg); }
 .swatch.custom { background: conic-gradient(#f55, #fb5, #5f8, #5cf, #a6f, #f5a, #f55); overflow: hidden; cursor: pointer; }
 .swatch.custom input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
-.range { accent-color: var(--accent); }
+/* A slider drawn by us: the engine's own one changes colour under the pointer.
+   `--fill` is how far it is set, in percent (`Slider`). */
+.range { appearance: none; height: 18px; background: transparent; cursor: pointer; }
+.range::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: linear-gradient(to right, var(--accent) var(--fill, 0%), rgba(255,255,255,0.14) var(--fill, 0%)); }
+.range::-webkit-slider-thumb { appearance: none; width: 14px; height: 14px; margin-top: -5px; border-radius: 50%; background: var(--fg); box-shadow: 0 1px 3px rgba(0,0,0,0.4); transition: box-shadow 100ms; }
+.range:hover::-webkit-slider-thumb, .range:active::-webkit-slider-thumb { box-shadow: 0 1px 3px rgba(0,0,0,0.4), 0 0 0 4px var(--accent-soft); }
+.range:focus-visible { outline: none; }
+.range:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 2px var(--bg), 0 0 0 3.5px var(--accent); }
 
 /* Downloads: progress under a running row, a ring on the footer button. */
 .row.download[data-dim] .title { color: var(--muted); }
@@ -497,6 +529,13 @@ button:disabled, select:disabled, [aria-disabled="true"] { cursor: default; }
 .link-tile:disabled { opacity: 0.45; }
 .shortcuts { display: grid; grid-template-columns: max-content 1fr; gap: 7px 16px; align-items: baseline; font-size: 13px; color: var(--secondary); }
 .shortcuts kbd { font-family: inherit; color: var(--fg); font-variant-numeric: tabular-nums; }
+/* Settings → Shortcuts: one shortcut per row, its keys and buttons on the right. */
+.shortcut-row { font-size: 14px; border-top: 1px solid var(--line); }
+.shortcut-row:first-child { border-top: 0; }
+.shortcut-row kbd { min-width: 28px; padding: 3px 8px; border-radius: 6px; background: rgba(255,255,255,0.1); font: inherit; font-size: 13px; text-align: center; color: var(--fg); }
+
+/* Settings → Custom CSS & JS: a code field as wide as its card, growing downwards. */
+textarea.field.code { display: block; width: 100%; height: auto; min-height: 96px; padding: 8px 10px; resize: vertical; font-size: 12.5px; line-height: 1.5; white-space: pre; tab-size: 2; }
 
 /* Licence texts page. */
 .licence-text { white-space: pre-wrap; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--secondary); }

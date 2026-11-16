@@ -7,7 +7,7 @@ use magnetite_core::split::{Bounds, SplitNode};
 
 use crate::client::{Kind, MagnetiteClient};
 use crate::engine::Engine;
-use crate::events::{ContentId, EngineEvent};
+use crate::events::{ContentId, EngineEvent, Shortcut};
 
 pub(crate) struct ContentState {
     /// The window the page lives in: its frame is the page window's parent.
@@ -594,6 +594,24 @@ impl Engine {
             host.print();
         }
     }
+    /// Find in page `id` with Chromium's find bar: open it (`Find`), or go
+    /// to the next or previous match of what was searched last. Chromium
+    /// binds these keys through its own main menu on macOS, which ours
+    /// replaces, so the commands are run by hand.
+    pub fn content_find(&self, id: ContentId, shortcut: Shortcut) {
+        let name = match shortcut {
+            Shortcut::Find => "IDC_FIND",
+            Shortcut::FindNext => "IDC_FIND_NEXT",
+            Shortcut::FindPrevious => "IDC_FIND_PREVIOUS",
+            _ => return,
+        };
+        if let (Some(host), Some(command)) = (
+            self.content_browser_host(id),
+            crate::keys::command_id_for(name),
+        ) {
+            host.execute_chrome_command(command, WindowOpenDisposition::CURRENT_TAB);
+        }
+    }
     pub fn content_stop(&self, id: ContentId) {
         if let Some(b) = self.content_browser(id) {
             b.stop_load();
@@ -659,6 +677,22 @@ impl Engine {
             .is_some_and(|w| w.is_visible() != 0)
     }
 
+    /// Pages on screen that Chromium wrongly holds for covered, and so for
+    /// hidden, come back to life (`mac::uncover_page`).
+    #[cfg(target_os = "macos")]
+    pub(crate) fn uncover_shown_pages(&self) {
+        let shown: Vec<(ContentId, Window)> = (self.lock().contents.iter())
+            .filter_map(|(id, c)| Some((*id, c.window.clone()?)))
+            .collect();
+        for (id, window) in shown {
+            if window.is_visible() != 0 && crate::mac::uncover_page(window.window_handle()) {
+                crate::trace(&format!(
+                    "page #{id} was marked covered while on screen: mark removed"
+                ));
+            }
+        }
+    }
+
     /// Give page `id` keyboard focus (its window comes forward).
     pub fn focus_content(&self, id: ContentId) {
         if let Some((window, view)) = self.content_handles(id) {
@@ -682,11 +716,19 @@ impl Engine {
 
     /// Which content window owns `browser`, by browser identifier.
     pub(crate) fn content_id_for(&self, browser: Option<&Browser>) -> Option<ContentId> {
-        let ident = browser?.identifier();
+        self.content_id_of(browser?.identifier())
+    }
+
+    /// The page whose browser has `identifier`.
+    pub(crate) fn content_id_of(&self, identifier: i32) -> Option<ContentId> {
         self.lock()
             .contents
             .iter()
-            .find(|(_, c)| c.browser.as_ref().is_some_and(|b| b.identifier() == ident))
+            .find(|(_, c)| {
+                c.browser
+                    .as_ref()
+                    .is_some_and(|b| b.identifier() == identifier)
+            })
             .map(|(id, _)| *id)
     }
 

@@ -73,6 +73,7 @@ export const GlobeIcon = icon(L.Globe);
 export const NotesIcon = icon(L.ScrollText);
 export const BugIcon = icon(L.Bug);
 export const CodeIcon = icon(L.SquareCode);
+export const BracesIcon = icon(L.Braces);
 export const CaptureIcon = icon(L.Focus);
 export const TabPlus = icon(L.SquarePlus);
 export const SmartFolderIcon = icon(L.FolderSync);
@@ -81,6 +82,9 @@ export const RefreshIcon = icon(L.RefreshCw);
 export const WarningIcon = icon(L.TriangleAlert);
 export const ExternalIcon = icon(L.ExternalLink);
 export const KeyIcon = icon(L.KeyRound);
+// Smart folder items: put away until later, and bring back.
+export const SnoozeIcon = icon(L.AlarmClock);
+export const WakeIcon = icon(L.AlarmClockOff);
 // What a site asks for in a permission prompt (Notifications.tsx).
 export const BellIcon = icon(L.Bell);
 export const CameraIcon = icon(L.Camera);

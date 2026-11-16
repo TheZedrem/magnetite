@@ -8,12 +8,12 @@ pub type ContentId = u64;
 #[serde(rename_all = "snake_case")]
 pub enum Shortcut {
     NewTab,
+    /// A private window: a Magnetite of its own that keeps nothing.
+    NewPrivateWindow,
     /// `Cmd+N`: another window on the same sidebar.
     NewWindow,
     /// `Cmd+Shift+W`: close the window (the last one quits).
     CloseWindow,
-    /// A private window: a Magnetite of its own that keeps nothing.
-    NewPrivateWindow,
     CloseTab,
     FocusAddress,
     ToggleSidebar,
@@ -62,6 +62,12 @@ pub enum Shortcut {
     ZoomReset,
     /// `Cmd+P`: print the page in front (the page may claim the key).
     Print,
+    /// `Cmd+F`: find in the page in front (the page may claim the key).
+    Find,
+    /// `Cmd+G` / `Cmd+Shift+G`: the next or previous match (the page may
+    /// claim the keys).
+    FindNext,
+    FindPrevious,
     /// Menu bar, `Cmd+Y`: the history view in the sidebar.
     History,
     /// `Cmd+Option+N`, system-wide or from the menu bar: the quick search,

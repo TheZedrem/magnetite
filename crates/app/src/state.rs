@@ -26,7 +26,10 @@ mod windows;
 
 pub(crate) use folders::folder_in_tree_mut;
 pub use history::{History, Visit};
-pub use settings::{AdblockSettings, Appearance, Settings, SiteSearch, SyncSettings};
+pub use settings::{
+    AdblockSettings, Appearance, Settings, SidebarEffect, SiteSearch, SyncSettings, TabOrder,
+};
+pub use tabs::TabSwitch;
 
 /// What the sidebar UI receives on every change.
 #[derive(Serialize)]
@@ -46,7 +49,13 @@ pub struct UiState<'a> {
     /// Every split, on screen or not; the sidebar shows each as one row.
     pub splits: Vec<SplitNode<Id>>,
     pub peek: Option<&'a Peek>,
+    /// The tabs `Ctrl+Tab` is going through and where it stands, while
+    /// Ctrl is held: what the switcher's list shows.
+    pub switcher: Option<&'a TabSwitch>,
     pub settings: &'a Settings,
+    /// The keys each shortcut has now (as `Combo` saves them), for the
+    /// hints beside buttons and menu entries; one without keys is left out.
+    pub keys: std::collections::BTreeMap<magnetite_engine::Action, String>,
     /// Chrome colour behind the page cards, `#rrggbb`, derived from the space accent.
     pub chrome: String,
     /// Connected smart folder accounts (never their tokens).
@@ -170,6 +179,12 @@ pub struct AppState {
     /// live in memory only.
     pub minis: Vec<Peek>,
     pub settings: Settings,
+    /// Tabs in the order they were last chosen, the latest first: what
+    /// `Ctrl+Tab` goes through. In memory only; a tab not in it counts by
+    /// its `last_active_at`.
+    pub recent_tabs: Vec<Id>,
+    /// The round `Ctrl+Tab` is on while Ctrl is held (`TabSwitch`).
+    pub switcher: Option<TabSwitch>,
     pub sidebar_visible: bool,
     /// Smart folder accounts of this device (tokens on disk, owner-only).
     pub accounts: crate::smart::Accounts,
@@ -231,7 +246,9 @@ impl AppState {
             split: self.visible_split(),
             splits: self.live_splits().collect(),
             peek: self.peek.as_ref(),
+            switcher: self.switcher.as_ref(),
             settings: &self.settings,
+            keys: self.settings.shortcut_keys().collect(),
             chrome: format!("#{:06x}", self.chrome_rgb()),
             accounts: self.accounts.list(),
             smart: &self.smart_status,
@@ -275,16 +292,27 @@ impl AppState {
         (byte(c.red) << 16) | (byte(c.green) << 8) | byte(c.blue)
     }
 
-    /// Mix 8% of the active space accent into the base graphite, keeping
-    /// every space's chrome at the same lightness.
+    /// Mix the active space accent into the base graphite, as much as
+    /// Settings → Appearance says (8% unless changed), keeping every space's
+    /// chrome at the same lightness.
     pub fn chrome_rgb(&self) -> u32 {
         const BASE: (f32, f32, f32) = (27.0, 27.0, 30.0); // #1b1b1e
         let accent = self.space(&self.active_space).and_then(|s| s.accent);
+        // At most 30, so the cast is exact.
+        #[allow(clippy::cast_precision_loss)]
+        let tint = self
+            .settings
+            .appearance
+            .look(&self.active_space)
+            .tint
+            .min(30) as f32
+            / 100.0;
+        let mix = |base: f32, accent: f32| base * (1.0 - tint) + accent * 255.0 * tint;
         let (r, g, b) = match accent {
             Some(c) => (
-                BASE.0 * 0.92 + c.red * 255.0 * 0.08,
-                BASE.1 * 0.92 + c.green * 255.0 * 0.08,
-                BASE.2 * 0.92 + c.blue * 255.0 * 0.08,
+                mix(BASE.0, c.red),
+                mix(BASE.1, c.green),
+                mix(BASE.2, c.blue),
             ),
             None => BASE,
         };

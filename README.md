@@ -29,10 +29,11 @@
 >
 > | Patch | Upstream | CEF it needs |
 > | --- | --- | --- |
-> | Several windows on one sidebar, as in Zen: choosing a tab in a window moves it there, still playing. Off by default: Settings → General → Several windows. | [#93](https://github.com/magnetite-browser/magnetite/pull/93) | Upstream's CEF build is enough (magnetite-cef 156.0.30 or later, with `window-reparent.patch`). With the official CEF it works, but a page that changes windows loads again. |
-> | Private windows (⇧⌘P / Ctrl+Shift+P): a separate Magnetite on a new data folder in memory, deleted when it quits. Its sidebar has only its own tabs. | [#102](https://github.com/magnetite-browser/magnetite/pull/102) | Any CEF. |
+> | Private windows (⇧⌘P / Ctrl+Shift+P, keys changeable in Settings → Shortcuts): a separate Magnetite on a new data folder in memory, deleted when it quits. Its sidebar has only its own tabs. | [#102](https://github.com/magnetite-browser/magnetite/pull/102) | Any CEF. |
 >
 > None of them needs a CEF of my own: my [magnetite-cef fork](https://github.com/TheZedrem/magnetite-cef) has no patches upstream lacks.
+>
+> **Already upstream:** synced windows as in Zen ([#93](https://github.com/magnetite-browser/magnetite/pull/93)), the Wayland client by default ([#68](https://github.com/magnetite-browser/magnetite/pull/68)), and the Linux fixes [#78](https://github.com/magnetite-browser/magnetite/pull/78), [#79](https://github.com/magnetite-browser/magnetite/pull/79) and [#80](https://github.com/magnetite-browser/magnetite/pull/80).
 
 <p align="center">
   <img src="docs/assets/readme/window.webp" width="860" alt="The Magnetite window: the sidebar with favorites, a space with pinned tabs, a smart folder and today's tabs, next to a web page">
