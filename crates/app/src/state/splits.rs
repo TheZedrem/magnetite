@@ -53,7 +53,13 @@ impl AppState {
         else {
             return false;
         };
-        if target == tab || self.find_tab(tab).is_none() {
+        // A web panel lies over the pages: it is no page of a split, as
+        // the page put there or the one it is put beside.
+        if target == tab
+            || self.find_tab(tab).is_none()
+            || self.is_web_panel(tab)
+            || self.is_web_panel(&target)
+        {
             return false;
         }
         let mut tree = self
