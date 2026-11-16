@@ -124,6 +124,62 @@ its logins. Deleting counts for this device: with sync on, the other
 devices keep the profile and its logins until it is deleted there, and it
 does not come back here (`sync.md`).
 
+## Private space
+
+A space for browsing that leaves nothing behind. There is at most one, and
+it is the last of the spaces while it is open.
+
+- **Open**: "+" → Private Space, `Cmd+Shift+P`, File → Private Space, or
+  "Open private space" in the command bar. If it is open already, these go
+  to it, also when it is hidden.
+- **Look**: a mask as its icon, in the footer and beside its name
+  "Private". In place of the "…" button its title has a hide button and a
+  close button, and
+  "New Tab" reads "New Private Tab". It has only Today tabs: no pinned tabs,
+  folders or bookmarks, and the favorites do not show there.
+- **A profile per tab**: every tab you open in it (New Private Tab, an
+  address from the command bar) runs in an in-memory profile of its own, so
+  it shares no cookies, logins or storage with another such tab, nor with
+  any other space. What a private tab's page opens (a link in a new tab, a
+  sign-in window, a peek, a mini window) stays in that tab's profile and
+  shares its cookies and logins: a sign-in window has to. Closing the space
+  closes all of them, popup windows included.
+- **Nothing is kept**: the space, its tabs and its profiles are not saved
+  and not synced. Its pages leave no history, its closed tabs do not go to
+  the archive, and a tab's profile is dropped with its data once the tab
+  and everything opened from it are closed.
+- **Tabs stay put**: a tab cannot be moved into the private space or out of
+  it, pinned, or added to the favorites or bookmarks. A peek or mini window
+  kept as a tab stays on its side too: a private one becomes a tab of the
+  private space, any other a tab of the space beside it. The same holds for
+  a tab that a page opens while another space is in front.
+- **Extensions**: only those with "Allow in Incognito" switched on
+  (`extensions.md`).
+- **Hide**: the hide button on its title, its menu in the footer,
+  `Cmd+Shift+D`, File → Hide Private Space, or "Hide private space" in the
+  command bar. The keys work from any space and before the page sees them,
+  and one hand reaches them, like those that close the space.
+  The space stays open with its tabs and their logins, but nothing shows
+  that it is there: it is gone from the footer, its tabs from the command
+  bar's results and the media controls, the keys for the next, previous
+  and numbered space pass it over, and "Close private space" is not
+  offered. A window that showed it goes on in the space before it. Its
+  pages are paused, and a video of theirs in picture-in-picture goes back
+  into its page. A tab that one of its pages opens meanwhile opens in the
+  background and stays hidden with it. Opening the private space (see Open)
+  shows it again as it was, and so does keeping one of its mini windows as
+  a tab. Its mini windows and popup windows are windows of their own and
+  stay on screen; closing the space closes them.
+- **Close**: the close button on its title, its menu in the footer,
+  `Cmd+Shift+X`, File → Close Private Space, or "Close private space" in
+  the command bar. The keys work from any space, also while the space is
+  hidden, and before the page sees them, and nothing asks first: the space
+  is gone at once. Its
+  tabs close, with the peeks and mini windows opened from them, and the
+  space before it takes over.
+  Quitting Magnetite closes it too: the next start goes on in the space
+  before it.
+
 A space can be kept on one device (Settings → Sync, "Only on this
 device"). A separate profile that only such spaces use stays there with
 them and is marked "only on this device" in the list (`sync.md`, "Only on
@@ -132,7 +188,8 @@ this device").
 ## Links from other apps
 
 A link from another app opens in the space in front, unless a rule names
-another space for its site.
+another space for its site. It never opens in the private space: with that
+in front, the space beside it comes to the front for the link.
 
 | Setting | Values |
 |---|---|
@@ -177,7 +234,7 @@ another space for its site.
 - Syncing a space's look, and a background effect behind the empty window.
 
 Code: `crates/core/src/model.rs`, `crates/app/src/app/commands.rs`,
-`crates/app/src/state/profiles.rs`,
+`crates/app/src/state/profiles.rs`, `crates/app/src/state/private.rs`,
 `crates/app/src/state/tabs.rs` (`move_space`),
 `crates/ui/web/src/{App,SpaceSwitcher,IsolationSection,Glyphs}.tsx`,
 `crates/ui/web/src/useSpaceSwipe.ts`,

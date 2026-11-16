@@ -56,6 +56,16 @@ pub(super) fn move_tab(s: &mut AppState, id: &str, to: &Destination) {
         Section::Pinned | Section::Today if s.space(space_id).is_none() => return,
         Section::Pinned | Section::Today => None,
     };
+    // Nothing moves into the private space or out of it, and inside it
+    // there are only Today tabs: a tab kept elsewhere would outlive it.
+    let from = s
+        .find_tab(id)
+        .and_then(|(sp, _)| sp.map(|sp| sp.id.clone()));
+    let private = |space: Option<&str>| space.is_some_and(|sp| s.is_private_space(sp));
+    let to_private = section != Section::Favorites && private(Some(space_id));
+    if private(from.as_deref()) != to_private || (to_private && section != Section::Today) {
+        return;
+    }
     let Some((mut tab, _)) = s.take_tab(id) else {
         return;
     };
@@ -132,6 +142,12 @@ impl MagnetiteApp {
         };
 
         let switching = self.with_state(|s| {
+            // A tab of the hidden private space is gone to only by the
+            // user's own doing (a private mini window kept as a tab), which
+            // shows the space again.
+            if s.is_hidden_space(&space_id) {
+                s.private_hidden = false;
+            }
             s.active_space.clone_from(&space_id);
             s.active_tab.insert(space_id, tab_id.to_string());
             s.note_tab_use(tab_id);
@@ -412,6 +428,63 @@ impl MagnetiteApp {
         }
     }
 
+    /// Open the private space, or go to it if it is open.
+    pub(super) fn open_private_space(&self, engine: &Engine) {
+        let id = self.with_state(AppState::open_private_space);
+        self.activate_space(engine, &id);
+    }
+
+    /// A link from another app is not private browsing: with the private
+    /// space in front, the space beside it comes to the front for it.
+    pub(super) fn leave_private_space(&self, engine: &Engine) {
+        let beside = self.with_state(|s| {
+            (s.is_private_space(&s.active_space)).then(|| s.lasting_space(&s.active_space))
+        });
+        if let Some(space) = beside {
+            self.activate_space(engine, &space);
+        }
+    }
+
+    /// Hide the private space: nothing lists it any more, its pages are
+    /// paused and taken back from picture-in-picture, and every window
+    /// that showed it shows the space it goes on in. It stays open;
+    /// `open_private_space` shows it again.
+    pub(super) fn hide_private_space(&self, engine: &Engine) {
+        let others = self.with_state(|s| s.other_windows_in_private_space());
+        let Some(pages) = self.with_state(AppState::hide_private_space) else {
+            return;
+        };
+        for c in pages {
+            engine.content_media(c, magnetite_engine::MediaAction::Pause);
+            engine.content_picture_in_picture(c, false);
+        }
+        let show = || {
+            let space = self.with_state(|s| s.active_space.clone());
+            self.activate_space(engine, &space);
+        };
+        for win in others {
+            engine.in_window(win, show);
+        }
+        show();
+    }
+
+    /// Close the private space with everything opened from it. Every
+    /// window that showed it shows the space it goes on in.
+    pub(super) fn close_private_space(&self, engine: &Engine) {
+        let others = self.with_state(|s| s.other_windows_in_private_space());
+        for c in self.with_state(AppState::close_private_space) {
+            engine.close_content(c);
+        }
+        let show = || {
+            let space = self.with_state(|s| s.active_space.clone());
+            self.activate_space(engine, &space);
+        };
+        for win in others {
+            engine.in_window(win, show);
+        }
+        show();
+    }
+
     /// Open `url` (typed, or from Magnetite's UI) as a new Today tab (see
     /// `open_url_from`).
     pub(super) fn open_url(&self, engine: &Engine, url: &str, background: bool) -> Option<String> {
@@ -442,14 +515,16 @@ impl MagnetiteApp {
     /// Open `url` from `source` as a new Today tab of the active space, in
     /// the opener's `context` (profile id, `""` the default) when there is
     /// one, so a page opened from a private or separate profile does not get
-    /// the space's cookies. Addresses the policy refuses are not opened.
+    /// the space's cookies. A private opener's tab goes to the private space
+    /// instead, and no other one into it (`open_tab_from`). Addresses the
+    /// policy refuses are not opened.
     /// Returns the tab's id; internal pages are singletons and return the
     /// existing tab.
     pub(super) fn open_url_from(
         &self,
         engine: &Engine,
         url: &str,
-        background: bool,
+        mut background: bool,
         source: url_policy::Source,
         context: Option<&str>,
     ) -> Option<String> {
@@ -475,7 +550,6 @@ impl MagnetiteApp {
         // An internal page that is open already, asked for at another place.
         let mut revisit = false;
         let id = self.with_state(|s| {
-            let space = s.active_space.clone();
             // Internal pages are singletons: focus an existing one instead.
             // The part after `#` is a place in the page (a section of
             // Settings), not another page.
@@ -489,20 +563,19 @@ impl MagnetiteApp {
                     .map(|t| t.id.clone())
             {
                 revisit = s.find_tab(&existing).is_some_and(|(_, t)| t.url != url);
-                return existing;
+                return Some(existing);
             }
-            let id = s.new_today_tab(&space, &url, &title);
-            let space_profile = s.active_space().profile_id.clone();
-            // An override only when it differs from the space's profile.
-            let profile = context
-                .and_then(|c| s.profile_for_context(c))
-                .filter(|p| *p != space_profile);
+            let opener = context.and_then(|c| s.profile_for_context(c));
+            let id = s.open_tab_from(opener.as_deref(), &url, &title)?;
+            // What a page of the hidden private space opens stays out of
+            // sight with it: a tab in the background.
+            let (space, _) = s.find_tab(&id)?;
+            background |= space.is_some_and(|sp| s.is_hidden_space(&sp.id));
             if let Some(t) = s.find_tab_mut(&id) {
                 t.unread = background;
-                t.profile_id = profile;
             }
-            id
-        });
+            Some(id)
+        })?;
         if background {
             self.push_state(engine);
         } else {
@@ -622,6 +695,8 @@ impl MagnetiteApp {
     pub(super) fn set_pinned(&self, engine: &Engine, id: &str, pinned: bool) {
         self.with_state(|s| {
             let space = s.find_tab(id).and_then(|(sp, _)| sp.map(|x| x.id.clone()));
+            // The private space has only Today tabs.
+            let space = space.filter(|sid| !s.is_private_space(sid));
             if let Some(sp) = space.and_then(|sid| s.space_mut(&sid)) {
                 if pinned {
                     sp.pin(id);

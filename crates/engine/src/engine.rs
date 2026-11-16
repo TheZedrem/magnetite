@@ -523,7 +523,8 @@ impl Engine {
     /// The request context for `profile`; `None` is the global context.
     /// Other profiles get their own cache directory below the root cache
     /// path (separate cookies, storage and extensions); ephemeral ones keep
-    /// everything in memory until Magnetite quits. Chromium finishes a new
+    /// everything in memory, until `forget_contexts` or until Magnetite
+    /// quits. Chromium finishes a new
     /// context a little later (`context_is_ready`).
     pub(crate) fn request_context(
         &self,
@@ -551,6 +552,27 @@ impl Engine {
         let ctx = request_context_create_context(Some(&settings), Some(&mut handler))?;
         self.lock().contexts.insert(profile.id.clone(), ctx.clone());
         Some(ctx)
+    }
+
+    /// Let go of the in-memory contexts of the profiles `ids`, which nothing
+    /// uses any more: Chromium drops such a context, with its cookies and
+    /// storage, once its last page has closed. A popup window a page of
+    /// theirs opened (`foreign`) would keep the context alive: it closes.
+    pub fn forget_contexts(&self, ids: &[String]) {
+        let popups: Vec<Browser> = self.lock().foreign.values().cloned().collect();
+        for host in popups.iter().filter_map(ImplBrowser::host) {
+            let context = host.request_context().and_then(|c| self.context_id_of(&c));
+            if context.is_some_and(|id| ids.contains(&id)) {
+                host.close_browser(1);
+            }
+        }
+        let mut inner = self.lock();
+        for id in ids {
+            if inner.contexts.remove(id).is_some() {
+                crate::trace(&format!("letting go of in-memory context {id}"));
+            }
+            inner.ready_contexts.remove(id);
+        }
     }
 
     /// Whether a browser can be made in `profile`'s context now: always in

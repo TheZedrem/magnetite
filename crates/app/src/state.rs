@@ -1,6 +1,7 @@
 //! Application state: the sidebar snapshot plus per-tab runtime data, and
 //! its persistence. Pure data and logic; no engine calls here.
 
+use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
@@ -16,6 +17,7 @@ mod history;
 mod import;
 mod panels;
 mod persist;
+mod private;
 mod profiles;
 mod search;
 mod settings;
@@ -35,8 +37,10 @@ pub use tabs::TabSwitch;
 /// What the sidebar UI receives on every change.
 #[derive(Serialize)]
 pub struct UiState<'a> {
-    pub sidebar: &'a SidebarSnapshot,
+    pub sidebar: Cow<'a, SidebarSnapshot>,
     pub active_space: &'a str,
+    /// The private space, while one is open (`private.rs`).
+    pub private_space: Option<&'a str>,
     pub active_tab: Option<&'a str>,
     pub runtime: &'a HashMap<Id, TabRuntime>,
     pub sidebar_visible: bool,
@@ -212,6 +216,16 @@ pub struct AppState {
     /// another device's list (`adopt_sidebar`), and its data folder goes at
     /// the next start (`deleted_profile_data`).
     pub deleted_profiles: Vec<Id>,
+    /// The private space, while one is open (`private.rs`). Not saved, like
+    /// the space itself.
+    pub private_space: Option<Id>,
+    /// The private space is hidden (`hide_private_space`): open, with its
+    /// pages, but listed nowhere and in front in no window. Not saved.
+    pub private_hidden: bool,
+    /// The in-memory profiles made for the private space: the space's own
+    /// and one per tab. Not saved, never synced, and each is dropped once
+    /// nothing runs in it (`release_private_profiles`).
+    pub private_profiles: BTreeSet<Id>,
     path: PathBuf,
     saver: persist::Saver,
 }
@@ -240,8 +254,9 @@ impl AppState {
         extensions: &'a [magnetite_engine::ExtensionInfo],
     ) -> UiState<'a> {
         UiState {
-            sidebar: &self.sidebar,
+            sidebar: self.ui_sidebar(),
             active_space: &self.active_space,
+            private_space: self.shown_private_space(),
             active_tab: self.active_tab.get(&self.active_space).map(String::as_str),
             runtime: &self.runtime,
             sidebar_visible: self.sidebar_visible,
@@ -262,11 +277,29 @@ impl AppState {
         }
     }
 
+    /// The sidebar as the UI lists it: without the profiles of the private
+    /// space, which are no choice for anything else, and without the space
+    /// itself while it is hidden.
+    fn ui_sidebar(&self) -> Cow<'_, SidebarSnapshot> {
+        if self.private_profiles.is_empty() {
+            return Cow::Borrowed(&self.sidebar);
+        }
+        let mut sidebar = self.sidebar.clone();
+        (sidebar.profiles).retain(|p| !self.private_profiles.contains(&p.id));
+        (sidebar.spaces).retain(|sp| !self.is_hidden_space(&sp.id));
+        Cow::Owned(sidebar)
+    }
+
     /// Follow pins made in Chromium's own UI ("Pin to toolbar" on its
     /// extensions page) for `profile`: an extension Chromium newly pins is
     /// pinned here too, one it unpins leaves the sidebar. Pins changed here
     /// stay as they are until Chromium's change. Returns whether any changed.
+    /// A profile of the private space is not followed: its id would be saved
+    /// with what was seen, and its pins are the default profile's anyway.
     pub fn follow_chromium_pins(&mut self, profile: &str, chromium: Vec<String>) -> bool {
+        if self.private_profiles.contains(profile) {
+            return false;
+        }
         let seen = self
             .settings
             .chromium_pins_seen

@@ -159,6 +159,7 @@ impl AppState {
     pub fn profile_in_use(&self, profile_id: &str) -> bool {
         self.sidebar.uses_profile(profile_id)
             || (self.peek.iter())
+                .chain(self.views.values().filter_map(|v| v.peek.as_ref()))
                 .chain(self.minis.iter())
                 .any(|p| p.profile == profile_id)
     }
@@ -200,13 +201,16 @@ impl AppState {
 
     /// Private profiles exist for one space or favorite; drop them once
     /// nothing uses them. A deletion like any other: remembered, so the
-    /// profile is not taken back from another device's list.
+    /// profile is not taken back from another device's list. Not those of
+    /// the private space: no other device hears of them, and they go their
+    /// own way (`release_private_profiles`).
     pub fn prune_private_profiles(&mut self) {
         let unused: Vec<String> = self
             .sidebar
             .profiles
             .iter()
-            .filter(|p| p.ephemeral && !self.profile_in_use(&p.id))
+            .filter(|p| p.ephemeral && !self.private_profiles.contains(&p.id))
+            .filter(|p| !self.profile_in_use(&p.id))
             .map(|p| p.id.clone())
             .collect();
         for id in unused {

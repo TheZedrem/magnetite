@@ -28,6 +28,9 @@ pub enum Action {
     NewWindow,
     CloseWindow,
     NewSpace,
+    PrivateSpace,
+    ClosePrivateSpace,
+    HidePrivateSpace,
     NextSpace,
     PrevSpace,
     ToggleSidebar,
@@ -47,7 +50,7 @@ pub enum Action {
 impl Action {
     /// Every action, in the order Settings lists them. Of two actions on
     /// the same keys the earlier one gets them.
-    pub const ALL: [Self; 25] = [
+    pub const ALL: [Self; 28] = [
         Self::NewTab,
         Self::FocusAddress,
         Self::CloseTab,
@@ -59,6 +62,9 @@ impl Action {
         Self::NewWindow,
         Self::CloseWindow,
         Self::NewSpace,
+        Self::PrivateSpace,
+        Self::ClosePrivateSpace,
+        Self::HidePrivateSpace,
         Self::NextSpace,
         Self::PrevSpace,
         Self::ToggleSidebar,
@@ -89,6 +95,9 @@ impl Action {
             Self::NewWindow => Shortcut::NewWindow,
             Self::CloseWindow => Shortcut::CloseWindow,
             Self::NewSpace => Shortcut::NewSpace,
+            Self::PrivateSpace => Shortcut::PrivateSpace,
+            Self::ClosePrivateSpace => Shortcut::ClosePrivateSpace,
+            Self::HidePrivateSpace => Shortcut::HidePrivateSpace,
             Self::NextSpace => Shortcut::NextSpace,
             Self::PrevSpace => Shortcut::PrevSpace,
             Self::ToggleSidebar => Shortcut::ToggleSidebar,
@@ -127,6 +136,9 @@ impl Action {
                 | Self::NewWindow
                 | Self::CloseWindow
                 | Self::NewSpace
+                | Self::PrivateSpace
+                | Self::ClosePrivateSpace
+                | Self::HidePrivateSpace
                 | Self::NextSpace
                 | Self::PrevSpace
         )
@@ -148,6 +160,9 @@ impl Action {
             Self::NewWindow => "primary+N",
             Self::CloseWindow => "primary+shift+W",
             Self::NewSpace => "primary+shift+N",
+            Self::PrivateSpace => "primary+shift+P",
+            Self::ClosePrivateSpace => "primary+shift+X",
+            Self::HidePrivateSpace => "primary+shift+D",
             Self::NextSpace => "primary+alt+Right",
             Self::PrevSpace => "primary+alt+Left",
             Self::ToggleSidebar => "primary+S",

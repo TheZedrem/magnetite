@@ -123,7 +123,7 @@ impl AppState {
     /// window and what is known about its page. Returns the tab's id.
     pub fn keep_peek(&mut self) -> Option<Id> {
         let p = self.peek.take()?;
-        let space = self.active_space.clone();
+        let space = self.keep_space(&p.profile, &self.active_space);
         Some(self.keep_page(p, &space))
     }
 
@@ -134,11 +134,41 @@ impl AppState {
         let pos = self.minis.iter().position(|m| m.content == content)?;
         let page = self.minis.remove(pos);
         let space = if self.space(space).is_some() {
-            space.to_string()
+            space
         } else {
-            self.active_space.clone()
+            &self.active_space
         };
+        let space = self.keep_space(&page.profile, space);
         Some(self.keep_page(page, &space))
+    }
+
+    /// A new Today tab for `url`, opened by a page of profile `opener`
+    /// (none: by the user or another app) while the active space is in
+    /// front. The tab runs in the opener's profile and stays on its side of
+    /// the private space's border (`keep_space`): a private page's tab goes
+    /// to the private space, also when another space is in front. None for
+    /// a private page whose space is closed: its pages are closing, and
+    /// nothing of it opens elsewhere.
+    pub fn open_tab_from(&mut self, opener: Option<&str>, url: &str, title: &str) -> Option<Id> {
+        let private = opener.is_some_and(|p| self.private_profiles.contains(p));
+        if private && self.private_space.is_none() {
+            return None;
+        }
+        let space = opener.map_or_else(
+            || self.active_space.clone(),
+            |p| self.keep_space(p, &self.active_space),
+        );
+        let id = self.new_today_tab(&space, url, title);
+        // An override only when it differs from the space's profile. A tab
+        // of the private space otherwise keeps the profile it was made with
+        // (`new_today_tab`).
+        let space_profile = self.space(&space).map(|sp| sp.profile_id.clone());
+        if let Some(p) = opener.filter(|p| Some(*p) != space_profile.as_deref())
+            && let Some(t) = self.find_tab_mut(&id)
+        {
+            t.profile_id = Some(p.to_string());
+        }
+        Some(id)
     }
 
     /// Page `p` becomes a Today tab at the top of space `space`: its window
@@ -288,11 +318,16 @@ impl AppState {
         None
     }
 
+    /// A new tab at the top of Today of space `space_id`. In the private
+    /// space it gets a profile of its own (`private.rs`).
     pub fn new_today_tab(&mut self, space_id: &str, url: &str, title: &str) -> Id {
         let id = new_id();
+        let profile_id =
+            (self.private_space.as_deref() == Some(space_id)).then(|| self.new_private_profile());
         let tab = TabItem {
             created_at: Some(now()),
             last_active_at: Some(now()),
+            profile_id,
             ..TabItem::new(id.clone(), url, title)
         };
         if let Some(s) = self.space_mut(space_id) {
@@ -407,7 +442,8 @@ impl AppState {
     }
 
     /// Take the archive record at `pos` back into Today of its space (the
-    /// active space if that one is gone). Returns the tab's id. A tab that
+    /// active space if that one is gone, the space beside the private one if
+    /// that is the active one). Returns the tab's id. A tab that
     /// is in the sidebar again (a sync brought it back) is not added a second
     /// time, and a profile of its own that no longer exists is dropped: with
     /// it the tab would count as private and be gone at the next start.
@@ -426,10 +462,12 @@ impl AppState {
         if tab.profile_id.as_ref().is_some_and(|p| !known(p)) {
             tab.profile_id = None;
         }
+        // Never the private space: an archived tab was not one of it, and
+        // would run there in a profile that is kept.
         let space = if self.space(&space_id).is_some() {
             space_id
         } else {
-            self.active_space.clone()
+            self.lasting_space(&self.active_space)
         };
         self.space_mut(&space)?.today.insert(0, tab);
         Some(id)
@@ -467,7 +505,9 @@ impl AppState {
     /// like closed ones (`archive_tab`, so a private profile's leave nothing
     /// behind). Returns the page windows to close.
     pub fn delete_space(&mut self, id: &str) -> Vec<ContentId> {
-        if self.sidebar.spaces.len() <= 1 {
+        // The private space does not count: it is gone at the next start.
+        let private = usize::from(self.private_space.is_some());
+        if self.sidebar.spaces.len() - private <= 1 && !self.is_private_space(id) {
             return vec![];
         }
         let Some(space) = self.space(id) else {
