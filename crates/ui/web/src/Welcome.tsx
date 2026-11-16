@@ -1,26 +1,27 @@
 // The welcome page (magnetite://ui/welcome): the app opens it once, as a tab,
 // at the first start. It asks what to bring along: sync with other devices,
 // tabs from another browser, which search engine to use, whether to block
-// ads and with which lists, what happens to tabs left alone, whether
-// Magnetite should be the default browser.
+// ads and with which lists, what happens to tabs left alone, where links
+// from other apps open and whether Magnetite should be the default browser.
 // Nothing is read, sent or changed before the user chooses; the chosen
 // browsers are read and the system asked about the default browser at the
 // end, with "Start browsing". Everything here is in Settings too.
 import { useCallback, useEffect, useState } from "react";
 import appIcon from "./assets/icon.png?url";
 import { send, type ImportSource } from "./bridge";
-import { SHORTCUTS } from "./settings/AboutSection";
 import { AdblockChoice } from "./settings/AdblockSection";
 import { Toggle } from "./settings/fields";
 import { SEARCH_ENGINES } from "./settings/searchEngines";
+import { EXTERNAL_LINKS } from "./settings/externalLinks";
+import { keysLabel, SHORTCUT_LABEL, type ShortcutAction } from "./settings/shortcutKeys";
 import { ARCHIVE_AFTER, UNLOAD_AFTER } from "./settings/tabTimes";
 import { SyncSection, type SyncJob } from "./settings/SyncSection";
 import type { Info, SettingsPatch } from "./settings/types";
 
 const STEPS = ["welcome", "sync", "import", "search", "ads", "tabs", "done"] as const;
 
-/** The keys worth knowing on the first day. */
-const FIRST_KEYS = SHORTCUTS.slice(0, 5);
+/** The shortcuts worth knowing on the first day. */
+const FIRST_KEYS: ShortcutAction[] = ["new_tab", "focus_address", "close_tab", "reopen_closed", "toggle_sidebar"];
 
 export function Welcome() {
   const [info, setInfo] = useState<Info | null>(null);
@@ -179,13 +180,13 @@ export function Welcome() {
                 Magnetite tidies up behind you. Both can be changed later in Settings → Tabs &amp; archive.
               </Heading>
               <div className="set-card flex flex-col gap-5">
-                <Times
+                <Choices
                   title="Unload a page that has been off screen for"
                   hint="An unloaded page uses no memory and loads again when you open its tab. Shorter saves memory, longer keeps more pages ready. Favorites stay loaded."
                   options={UNLOAD_AFTER.map((t) => ({ label: t.label, on: info.settings.unload_minutes === t.minutes, patch: { unload_minutes: t.minutes } }))}
                   choose={choose}
                 />
-                <Times
+                <Choices
                   title="Archive a Today tab not used for"
                   hint="Archived tabs leave the sidebar and can be found again in the archive. Pinned tabs and favorites are never archived."
                   options={ARCHIVE_AFTER.map((t) => ({ label: t.label, on: info.settings.auto_archive_hours === t.hours, patch: { auto_archive_hours: t.hours } }))}
@@ -199,17 +200,25 @@ export function Welcome() {
             <>
               <Heading title="You are set">
                 {chosen.length > 0 ? `Start browsing brings in your tabs from ${named(chosen).join(" and ")}. ` : ""}
-                A few keys for the first day; the rest is in Settings → About.
+                A few keys for the first day; all of them are in Settings → Shortcuts, where you can change them.
               </Heading>
               <div className="set-card">
                 <div className="shortcuts">
-                  {FIRST_KEYS.map(([keys, what]) => (
-                    <div key={keys} className="contents">
-                      <kbd>{keys}</kbd>
-                      <span>{what}</span>
+                  {FIRST_KEYS.map((action) => (
+                    <div key={action} className="contents">
+                      <kbd>{keysLabel(info.shortcuts.find((s) => s.action === action)?.keys)}</kbd>
+                      <span>{SHORTCUT_LABEL[action]}</span>
                     </div>
                   ))}
                 </div>
+              </div>
+              <div className="set-card">
+                <Choices
+                  title="Open links from other apps in"
+                  hint="Links from Mail, Slack and other apps, when Magnetite is your default browser. A mini window is a small window of its own; one click moves its page into a space."
+                  options={EXTERNAL_LINKS.map((o) => ({ label: o.label, on: info.settings.external_links === o.value, patch: { external_links: o.value } }))}
+                  choose={choose}
+                />
               </div>
               {info.default_browser === "no" && (
                 <Toggle
@@ -248,8 +257,8 @@ export function Welcome() {
   );
 }
 
-/** One question of the tabs step: a row of times to choose from. */
-function Times({ title, hint, options, choose }: { title: string; hint: string; options: { label: string; on: boolean; patch: SettingsPatch }[]; choose: (patch: SettingsPatch) => void }) {
+/** One question with a row of answers to choose from. */
+function Choices({ title, hint, options, choose }: { title: string; hint: string; options: { label: string; on: boolean; patch: SettingsPatch }[]; choose: (patch: SettingsPatch) => void }) {
   return (
     <div>
       <div className="text-[14px] font-medium">{title}</div>

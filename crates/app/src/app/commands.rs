@@ -11,7 +11,7 @@ use magnetite_engine::{Engine, MediaAction, Shortcut};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::state::{AppState, ArcImport, new_id};
+use crate::state::{AppState, ArcImport, SidebarEffect, new_id};
 use crate::sync::{self, Job};
 use crate::{capture, downloads, lock, url_policy};
 
@@ -48,6 +48,35 @@ impl EnginePage {
             Self::Addresses => "chrome://settings/contactInfo",
             Self::Cards => "chrome://settings/payments",
         }
+    }
+}
+
+/// The most an own image may weigh as base64: about 6 MB of WebP.
+const MAX_IMAGE_BASE64: usize = 8 * 1024 * 1024;
+
+/// Where an own image of the user goes (Settings → Appearance).
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ImageSlot {
+    /// Behind the empty window.
+    Empty,
+    /// Over the sidebar's colour.
+    Sidebar,
+}
+
+impl ImageSlot {
+    /// The file of this slot's image for space `space`, served as
+    /// `magnetite://ui/user-images/<slot>-<space>`. `None` for an id that
+    /// would not make a plain file name.
+    fn file(self, data_dir: &Path, space: &str) -> Option<std::path::PathBuf> {
+        let plain = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_';
+        let slot = match self {
+            Self::Empty => "empty",
+            Self::Sidebar => "sidebar",
+        };
+        (!space.is_empty() && space.chars().all(plain)).then(|| {
+            magnetite_engine::user_image_dir(data_dir).join(format!("{slot}-{space}.webp"))
+        })
     }
 }
 
@@ -173,8 +202,11 @@ pub(super) enum UiCommand {
         id: String,
         index: usize,
     },
+    /// A new folder inside folder `parent`, else at the top of Pinned.
     NewFolder {
         title: String,
+        #[serde(default)]
+        parent: Option<String>,
     },
     RenameFolder {
         id: String,
@@ -202,9 +234,13 @@ pub(super) enum UiCommand {
         #[serde(default)]
         profile: Option<String>,
     },
+    /// Put folder `id` at `index` (counted without it) of folder `folder`,
+    /// else of the top level of Pinned.
     MoveFolder {
         id: String,
         index: usize,
+        #[serde(default)]
+        folder: Option<String>,
     },
     /// Show tab `id` beside the active tab (`side`, default right).
     AddSplit {
@@ -219,16 +255,25 @@ pub(super) enum UiCommand {
         tab: String,
         side: Side,
     },
+    /// A page dragged inside its split's sidebar row: `tab` goes before
+    /// (`left`) or after `target` in reading order, the layout stays.
+    SplitReorder {
+        target: String,
+        tab: String,
+        side: Side,
+    },
     /// A sidebar tab started dragging: show drop zones over the pages.
     SplitDragStart {
         tab: String,
     },
     /// The drop-zone page asks what to draw.
     SplitDropFrame,
-    /// Dropped on a zone: `tab` (the dragged one) beside `target` on `side`.
+    /// Dropped on a zone: `tab` (the dragged one) beside `target` on `side`,
+    /// or without a side in `target`'s place, which takes `tab`'s.
     SplitDrop {
         target: String,
-        side: Side,
+        #[serde(default)]
+        side: Option<Side>,
     },
     /// The drag ended (dropped anywhere, or cancelled).
     SplitDragEnd,
@@ -236,6 +281,8 @@ pub(super) enum UiCommand {
     SplitEqualize {
         path: Vec<usize>,
     },
+    /// Arrange the split on screen as an even grid.
+    SplitGrid,
     RemoveSplit {
         id: String,
     },
@@ -331,13 +378,29 @@ pub(super) enum UiCommand {
     SmartUnlink {
         id: String,
     },
-    /// Take tab `id` out of its smart folder for good.
-    SmartHide {
+    /// Put tab `id`, an item of its smart folder, away until `until`
+    /// (Unix seconds; none: until it is woken by hand).
+    SmartSnooze {
         id: String,
+        #[serde(default)]
+        until: Option<i64>,
+    },
+    /// Bring the item `url`, snoozed in smart folder `id`, back now.
+    SmartWake {
+        id: String,
+        url: String,
     },
     /// Let smart folder `id`, synced from another device, fetch here.
     SmartAllow {
         id: String,
+    },
+    /// Store the user's own image for `slot` of space `space` (WebP,
+    /// base64), or remove it (`None`). Settings → Appearance.
+    SetAppearanceImage {
+        slot: ImageSlot,
+        space: String,
+        #[serde(default)]
+        data: Option<String>,
     },
     /// What a Settings page changed: only the settings it sends change
     /// (`Settings::patched`).
@@ -346,6 +409,25 @@ pub(super) enum UiCommand {
     },
     /// Settings page (own tab) asks for everything it shows.
     GetSettings,
+    /// Give shortcut `action` the keys `keys` (as `Combo` saves them), or
+    /// none. An action that had these keys loses them. Answers
+    /// `{"error": …}` for keys a shortcut cannot have.
+    SetShortcut {
+        action: magnetite_engine::Action,
+        #[serde(default)]
+        keys: Option<String>,
+    },
+    /// Give shortcut `action` its default keys back, or every shortcut
+    /// without `action`.
+    ResetShortcut {
+        #[serde(default)]
+        action: Option<magnetite_engine::Action>,
+    },
+    /// The Settings page waits for the keys of a shortcut (`on`): until it
+    /// has them no shortcut runs, so they reach the page.
+    RecordShortcut {
+        on: bool,
+    },
     /// Start a new sync chain (fresh sync code) on `server`.
     SyncCreate {
         server: String,
@@ -487,9 +569,11 @@ pub(super) enum UiCommand {
     ToggleSidebar,
     /// Turn the top bar on or off (Settings → Appearance has it too).
     ToggleTopBar,
-    /// The top bar's window buttons (Linux and Windows).
+    /// The window buttons of the top bar (Linux and Windows) and of the
+    /// floating sidebar (macOS).
     WindowMinimize,
     WindowMaximize,
+    WindowFullscreen,
     WindowClose,
     /// Open one of the top bar's pop-ups below it, `width` by `height`, at
     /// (`x`, `y`) in the top bar page's coordinates.
@@ -666,13 +750,18 @@ impl MagnetiteApp {
                     engine.remove_profile_dirs(&deleted);
                 });
                 // Initial activation: restore the active tab of the active space.
+                // A further window starts without a tab: the space's first
+                // one may be on screen in another window, which would lose it.
                 self.smart_refresh_due(engine);
-                let target = self.with_state(|s| s.active_tab_id().map(str::to_owned));
+                let (target, first_window) =
+                    self.with_state(|s| (s.active_tab_id().map(str::to_owned), s.views.is_empty()));
                 if let Some(t) = target {
                     self.activate_tab(engine, &t);
-                } else {
+                } else if first_window {
                     let space = self.with_state(|s| s.active_space.clone());
                     self.activate_space(engine, &space);
+                } else {
+                    self.present(engine);
                 }
                 // Once: `Ready` repeats when the sidebar reloads.
                 static OPENED: std::sync::Once = std::sync::Once::new();
@@ -834,6 +923,15 @@ impl MagnetiteApp {
                 for c in contents {
                     engine.close_content(c);
                 }
+                // Its look and its own images go with it.
+                if self.with_state(|s| s.space(&id).is_none()) {
+                    self.with_state(|s| s.settings.appearance.looks.remove(&id));
+                    for slot in [ImageSlot::Empty, ImageSlot::Sidebar] {
+                        if let Some(file) = slot.file(&self.data_dir, &id) {
+                            let _ = std::fs::remove_file(file);
+                        }
+                    }
+                }
                 let space = self.with_state(|s| s.active_space.clone());
                 self.activate_space(engine, &space);
             }
@@ -841,26 +939,8 @@ impl MagnetiteApp {
                 self.with_state(|s| s.move_space(&id, index));
                 self.push_state(engine);
             }
-            UiCommand::NewFolder { title } => {
-                self.with_state(|s| {
-                    let space = s.active_space.clone();
-                    if let Some(sp) = s.space_mut(&space) {
-                        sp.pinned.insert(
-                            0,
-                            magnetite_core::SidebarNode::Folder(magnetite_core::Folder {
-                                id: new_id(),
-                                title: if title.trim().is_empty() {
-                                    "Untitled".into()
-                                } else {
-                                    title.trim().into()
-                                },
-                                icon: None,
-                                children: vec![],
-                                smart: None,
-                            }),
-                        );
-                    }
-                });
+            UiCommand::NewFolder { title, parent } => {
+                self.with_state(|s| s.new_folder(&title, parent.as_deref()));
                 self.push_state(engine);
             }
             UiCommand::RenameFolder { id, title } => {
@@ -935,24 +1015,24 @@ impl MagnetiteApp {
                     self.push_state(engine);
                 }
             }
-            UiCommand::MoveFolder { id, index } => {
-                self.with_state(|s| {
-                    let space = s.active_space.clone();
-                    if let Some(sp) = s.space_mut(&space)
-                        && let Some(node) =
-                            magnetite_core::sidebar::remove_from_tree(&mut sp.pinned, &id)
-                    {
-                        let i = index.min(sp.pinned.len());
-                        sp.pinned.insert(i, node);
-                    }
-                });
-                self.push_state(engine);
+            UiCommand::MoveFolder { id, index, folder } => {
+                if self.with_state(|s| s.move_folder(&id, folder.as_deref(), index)) {
+                    self.push_state(engine);
+                }
             }
             UiCommand::AddSplit { id, side } => {
                 self.split_add(engine, None, &id, side.unwrap_or(Side::Right));
             }
             UiCommand::SplitInsert { target, tab, side } => {
                 self.split_add(engine, target.as_deref(), &tab, side);
+            }
+            UiCommand::SplitReorder { target, tab, side } => {
+                self.with_state(|s| s.split_reorder(&target, &tab, side));
+                // The same pages stay on screen in the same layout, only
+                // their places change: tiling them again is enough, and far
+                // quicker than showing the split anew.
+                self.retile_split(engine);
+                self.push_state(engine);
             }
             UiCommand::SplitDragStart { tab } => self.split_drag_start(engine, tab),
             UiCommand::SplitDropFrame => {
@@ -994,8 +1074,13 @@ impl MagnetiteApp {
                     .filter(|(_, at)| at.elapsed() < LATE_DROP)
                     .map(|(tab, _)| tab);
                 let tab = self.split_drag_end(engine).or(just_ended);
-                if let Some(tab) = tab.filter(|t| *t != target) {
-                    self.split_add(engine, Some(&target), &tab, side);
+                match (tab.filter(|t| *t != target), side) {
+                    (Some(tab), Some(side)) => self.split_add(engine, Some(&target), &tab, side),
+                    (Some(tab), None) => {
+                        self.with_state(|s| s.split_swap(&target, &tab));
+                        self.present(engine);
+                    }
+                    (None, _) => {}
                 }
             }
             UiCommand::SplitDragEnd => {
@@ -1003,6 +1088,7 @@ impl MagnetiteApp {
                 lock(&self.split_drag).ended = tab.map(|t| (t, std::time::Instant::now()));
             }
             UiCommand::SplitEqualize { path } => self.split_equalize(engine, &path),
+            UiCommand::SplitGrid => self.split_grid(engine),
             UiCommand::RemoveSplit { id } => {
                 self.with_state(|s| s.split_remove(&id));
                 self.present(engine);
@@ -1162,7 +1248,8 @@ impl MagnetiteApp {
                 });
                 self.push_state(engine);
             }
-            UiCommand::SmartHide { id } => self.smart_hide(engine, &id),
+            UiCommand::SmartSnooze { id, until } => self.smart_snooze(engine, &id, until),
+            UiCommand::SmartWake { id, url } => self.smart_wake(engine, &id, &url),
             UiCommand::SmartAllow { id } => {
                 self.with_state(|s| s.allow_smart(&id));
                 self.smart_fetch(engine, &id);
@@ -1334,6 +1421,11 @@ impl MagnetiteApp {
                         "engine": { "chromium": chromium, "cef": cef },
                         "data_dir": self.data_dir.display().to_string(),
                         "adblock": adblock,
+                        "shortcuts": magnetite_engine::Action::ALL.map(|action| json!({
+                            "action": action,
+                            "keys": s.settings.shortcuts.combo_of(action).map(|c| c.to_string()),
+                            "default": action.default_combo().map(|c| c.to_string()),
+                        })),
                     })
                 }));
             }
@@ -1345,16 +1437,66 @@ impl MagnetiteApp {
                 });
                 self.push_state(engine);
             }
+            UiCommand::SetAppearanceImage { slot, space, data } => {
+                if !self.with_state(|s| s.space(&space).is_some()) {
+                    return Err("no such space".into());
+                }
+                let file = slot.file(&self.data_dir, &space).ok_or("no such space")?;
+                let stored = if let Some(data) = data {
+                    use base64::Engine as _;
+                    if data.len() > MAX_IMAGE_BASE64 {
+                        return Err("that image is too large".into());
+                    }
+                    let bytes = base64::engine::general_purpose::STANDARD
+                        .decode(data)
+                        .map_err(|_| "that is not an image")?;
+                    // What the page sends: a WebP file ("RIFF....WEBP").
+                    if bytes.get(..4) != Some(b"RIFF") || bytes.get(8..12) != Some(b"WEBP") {
+                        return Err("that is not an image".into());
+                    }
+                    (file.parent().map_or(Ok(()), crate::files::private_dir))
+                        .and_then(|()| crate::files::write_private(&file, &bytes))
+                        .map_err(|e| format!("the image could not be stored: {e}"))?;
+                    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
+                    Some(now.map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)))
+                } else {
+                    // Gone already is as good as removed; a picture that
+                    // stays on disk keeps its setting.
+                    match std::fs::remove_file(&file) {
+                        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                            return Err(format!("the image could not be removed: {e}"));
+                        }
+                        _ => None,
+                    }
+                };
+                self.with_state(|s| {
+                    let a = s.settings.appearance.looks.entry(space).or_default();
+                    match slot {
+                        ImageSlot::Empty => a.empty_image = stored,
+                        ImageSlot::Sidebar => {
+                            a.sidebar_image = stored;
+                            // A new image shows at once; without one its effect is off.
+                            if stored.is_some() {
+                                a.sidebar_effect = SidebarEffect::Image;
+                            } else if a.sidebar_effect == SidebarEffect::Image {
+                                a.sidebar_effect = SidebarEffect::None;
+                            }
+                        }
+                    }
+                });
+                self.push_state(engine);
+            }
             UiCommand::SetSettings { settings: patch } => {
                 let before = self.with_state(|s| s.settings.adblock.clone());
-                let settings = self.with_state(|s| {
+                let (settings, code_changed) = self.with_state(|s| {
                     let settings = s.settings.patched(patch)?;
+                    let code_changed = settings.site_code != s.settings.site_code;
                     s.settings = settings.clone();
                     // A shorter history period (or none) counts at once.
                     if s.history.prune(settings.history_days, crate::state::now()) {
                         s.history.save();
                     }
-                    Ok::<_, String>(settings)
+                    Ok::<_, String>((settings, code_changed))
                 })?;
                 engine.set_sidebar_width(settings.appearance.sidebar_width);
                 engine.set_top_bar_visible(settings.appearance.top_bar);
@@ -1363,6 +1505,10 @@ impl MagnetiteApp {
                 Self::apply_devtools_dock(engine, settings.devtools_dock);
                 engine.set_autofill(settings.autofill);
                 engine.set_quick_search_key(settings.quick_search);
+                // Open pages get changed CSS at once.
+                if code_changed {
+                    engine.set_site_code(settings.site_code.clone());
+                }
                 // Lists are fetched and compiled only when they changed.
                 let after = &settings.adblock;
                 if (after.enabled, &after.lists) != (before.enabled, &before.lists) {
@@ -1372,6 +1518,13 @@ impl MagnetiteApp {
                 }
                 self.push_state(engine);
             }
+            UiCommand::SetShortcut { action, keys } => {
+                if let Err(error) = self.set_shortcut(engine, action, keys.as_deref()) {
+                    return Ok(json!({ "error": error.to_string() }));
+                }
+            }
+            UiCommand::ResetShortcut { action } => self.reset_shortcut(engine, action),
+            UiCommand::RecordShortcut { on } => engine.record_shortcut_keys(on),
             UiCommand::OpenEnginePage { page, profile } => {
                 // Over the page in front (Settings), in the logins asked
                 // for: each profile has its own passwords and addresses.
@@ -1395,6 +1548,7 @@ impl MagnetiteApp {
             }
             UiCommand::WindowMinimize => engine.minimize_frame(),
             UiCommand::WindowMaximize => engine.toggle_maximize_frame(),
+            UiCommand::WindowFullscreen => engine.toggle_fullscreen_frame(),
             UiCommand::WindowClose => engine.close_frame(),
             UiCommand::TopBarPopup {
                 popup,

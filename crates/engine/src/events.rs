@@ -10,6 +10,10 @@ pub enum Shortcut {
     NewTab,
     /// A private window: a Magnetite of its own that keeps nothing.
     NewPrivateWindow,
+    /// `Cmd+N`: another window on the same sidebar.
+    NewWindow,
+    /// `Cmd+Shift+W`: close the window (the last one quits).
+    CloseWindow,
     CloseTab,
     FocusAddress,
     ToggleSidebar,
@@ -58,6 +62,12 @@ pub enum Shortcut {
     ZoomReset,
     /// `Cmd+P`: print the page in front (the page may claim the key).
     Print,
+    /// `Cmd+F`: find in the page in front (the page may claim the key).
+    Find,
+    /// `Cmd+G` / `Cmd+Shift+G`: the next or previous match (the page may
+    /// claim the keys).
+    FindNext,
+    FindPrevious,
     /// Menu bar, `Cmd+Y`: the history view in the sidebar.
     History,
     /// `Cmd+Option+N`, system-wide or from the menu bar: the quick search,
@@ -167,7 +177,15 @@ pub enum EngineEvent {
     /// CEF is initialised; the delegate may create the frame now.
     Ready,
     /// The frame window and the sidebar view exist.
-    FrameCreated,
+    /// Window `win` has its frame: its sidebar loads, pages can be shown.
+    FrameCreated {
+        win: crate::WindowId,
+    },
+    /// Window `win` closed, one of several; its pages report their own
+    /// closing (`ContentClosed`).
+    WindowClosed {
+        win: crate::WindowId,
+    },
     /// The sidebar page finished loading (safe to push state).
     SidebarLoaded,
     FrameBoundsChanged,
@@ -288,7 +306,8 @@ impl EngineEvent {
             Self::SplitDivider { .. } => "SplitDivider",
             Self::DevToolsResized(_) => "DevToolsResized",
             Self::Ready => "Ready",
-            Self::FrameCreated => "FrameCreated",
+            Self::FrameCreated { .. } => "FrameCreated",
+            Self::WindowClosed { .. } => "WindowClosed",
             Self::SidebarLoaded => "SidebarLoaded",
             Self::FrameBoundsChanged => "FrameBoundsChanged",
             Self::ContentCreated { .. } => "ContentCreated",

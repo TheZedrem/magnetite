@@ -5,8 +5,9 @@
 //! it installs our menu bar, `menubar.rs`), adapted from the cef-rs
 //! `cefsimple` example (Apache-2.0 OR MIT). Next to them: tweaks to CEF's
 //! own windows (pinned, rounded corners, the focus ring of a split page,
-//! hidden or shown, shown without taking focus), swipes that fling the
-//! floating video to a screen edge, and helpers for the child modules:
+//! hidden or shown, shown without taking focus), the watch on two-finger
+//! swipes, stale tooltips, pages wrongly marked covered, and helpers for the
+//! child modules:
 //!
 //! - `chrome`: our child windows over the page area (drag strip, peek
 //!   backdrop, the hidden sidebar's edge, split dividers);
@@ -289,6 +290,28 @@ pub fn pin_window(handle: cef::sys::cef_window_handle_t) {
         let _: () = msg_send![window, setMovable: Bool::NO];
         let _: () = msg_send![window, setMovableByWindowBackground: Bool::NO];
     }
+    mark_as_part(handle);
+}
+
+/// Tell accessibility that the window holding the view `handle` is a part of
+/// another window, not one to switch to. AppKit calls a frameless window that
+/// can take the keyboard a dialog, which window switchers (`AltTab`) list next
+/// to the frame: one more "Magnetite" for every loaded page.
+pub fn mark_as_part(handle: cef::sys::cef_window_handle_t) {
+    if handle.is_null() {
+        return;
+    }
+    // SAFETY: CEF hands us a live NSView*; `setAccessibilitySubrole:` takes
+    // an NSString.
+    unsafe {
+        let view: &AnyObject = &*handle.cast::<AnyObject>();
+        let window: *mut AnyObject = msg_send![view, window];
+        if window.is_null() {
+            return;
+        }
+        let subrole = objc2_foundation::ns_string!("AXUnknown");
+        let _: () = msg_send![&*window, setAccessibilitySubrole: subrole];
+    }
 }
 
 /// Give a frameless child window rounded corners, a clear background and a
@@ -329,17 +352,25 @@ pub fn round_window_corners(handle: cef::sys::cef_window_handle_t, radius: f64, 
     }
 }
 
-/// Two-finger swipes on the floating video window (picture-in-picture) fling
-/// it to the screen edge in the swipe's direction; diagonal swipes reach a
-/// corner. Quicker than dragging. Installed once on the UI (main) thread.
-pub fn install_pip_swipe() {
+/// Watches two-finger swipes, once, on the UI (main) thread:
+///
+/// - each one that begins is reported to the sidebars (`Engine::swipe_began`),
+///   which cannot tell a new swipe from the momentum of the last one;
+/// - on the floating video window (picture-in-picture) a swipe flings it to
+///   the screen edge in the swipe's direction; diagonal swipes reach a
+///   corner. Quicker than dragging.
+pub fn install_swipe_monitor() {
     use block2::RcBlock;
-    use objc2_app_kit::{NSEvent, NSEventMask};
+    use objc2_app_kit::{NSEvent, NSEventMask, NSEventPhase};
     use std::ptr::NonNull;
 
     let handler = RcBlock::new(|event: NonNull<NSEvent>| -> *mut NSEvent {
         // SAFETY: AppKit passes a live event for the duration of the call.
         let ev = unsafe { event.as_ref() };
+        if ev.phase().contains(NSEventPhase::Began) {
+            // Not from inside an AppKit callback.
+            Engine::post(Box::new(|| Engine::global().swipe_began()));
+        }
         if let Some(mtm) = MainThreadMarker::new()
             && let Some(window) = ev.window(mtm)
             && let Some(video) = crate::pip::video_window_for(&window)
@@ -354,6 +385,153 @@ pub fn install_pip_swipe() {
     };
     // The monitor lives as long as the app.
     std::mem::forget(monitor);
+}
+
+/// A window that loses the keyboard loses the tooltips of its pages.
+/// Chromium takes a page's tooltip changes only while its window has the
+/// keyboard and drops the rest, also the change that takes a tooltip away.
+/// A tooltip set just before (by the click in the floating sidebar that
+/// shows a tab, say) stayed for good, and showed wherever the pointer
+/// rested on that page. Installed once on the UI (main) thread.
+pub fn clear_tooltips_without_keyboard() {
+    use block2::RcBlock;
+    use objc2_app_kit::{NSWindow, NSWindowDidResignKeyNotification};
+    use objc2_foundation::{NSNotification, NSNotificationCenter};
+    use std::ptr::NonNull;
+
+    let resigned = RcBlock::new(|notification: NonNull<NSNotification>| {
+        // SAFETY: AppKit passes a live notification for the duration of the call.
+        let window = unsafe { notification.as_ref() }
+            .object()
+            .and_then(|o| o.downcast::<NSWindow>().ok());
+        if let Some(root) = window.and_then(|w| w.contentView()) {
+            clear_tooltips(&root);
+        }
+    });
+    // SAFETY: an AppKit notification name; the block runs on the main thread,
+    // where windows post it.
+    let observer = unsafe {
+        NSNotificationCenter::defaultCenter().addObserverForName_object_queue_usingBlock(
+            Some(NSWindowDidResignKeyNotification),
+            None,
+            None,
+            &resigned,
+        )
+    };
+    // The observer lives as long as the app.
+    std::mem::forget(observer);
+}
+
+/// Take the tooltip off every Chromium page view below `view`.
+fn clear_tooltips(view: &objc2_app_kit::NSView) {
+    use objc2_foundation::NSString;
+    // Chromium's own way to set a page view's tooltip (`ToolTipBaseView`).
+    if view.respondsToSelector(sel!(setToolTipAtMousePoint:)) {
+        let none: Option<&NSString> = None;
+        // SAFETY: the view implements the selector; it takes a nullable string.
+        let _: () = unsafe { msg_send![view, setToolTipAtMousePoint: none] };
+    }
+    for child in view.subviews() {
+        clear_tooltips(&child);
+    }
+}
+
+/// Chromium marks a window "covered" (`WebContentsOcclusionCheckerMac`) and
+/// treats its page as hidden: nothing is drawn, no input is taken. Its check
+/// judges our page windows (child windows of the frame) one by one from what
+/// macOS reports for each, and those reports lag the frame's. A mark that
+/// stays on a page on screen leaves it dead until its tab is shown again.
+///
+/// Take the mark off the page window whose content view is `handle` if it
+/// cannot be right: the window is on screen above a frame macOS reports as
+/// visible, and macOS reports the page as visible too or Magnetite is the app
+/// in front. True if there was a mark to take off.
+pub fn uncover_page(handle: cef::sys::cef_window_handle_t) -> bool {
+    use objc2_app_kit::{NSView, NSWindowOcclusionState};
+    let Some(mtm) = MainThreadMarker::new() else {
+        return false;
+    };
+    if handle.is_null() {
+        return false;
+    }
+    // SAFETY: CEF hands us a live NSView; we are on the main thread.
+    let view: &NSView = unsafe { &*handle.cast::<NSView>() };
+    let Some(window) = view.window() else {
+        return false;
+    };
+    let Some(frame) = window.parentWindow() else {
+        return false;
+    };
+    let seen = |w: &NSWindow| w.occlusionState().contains(NSWindowOcclusionState::Visible);
+    if !window.isVisible() || !seen(&frame) {
+        return false;
+    }
+    if !seen(&window) && !NSApplication::sharedApplication(mtm).isActive() {
+        return false;
+    }
+    // Chromium's own accessors for the mark (a category on NSWindow); the
+    // setter tells the page's view, which shows the page again.
+    if !window.respondsToSelector(sel!(isOccluded))
+        || !window.respondsToSelector(sel!(setOccluded:))
+    {
+        return false;
+    }
+    // SAFETY: the window implements both selectors, a BOOL getter and setter.
+    unsafe {
+        let covered: Bool = msg_send![&*window, isOccluded];
+        if !covered.as_bool() {
+            return false;
+        }
+        let _: () = msg_send![&*window, setOccluded: Bool::NO];
+    }
+    true
+}
+
+/// Look for pages wrongly marked covered (`uncover_page`) whenever a window's
+/// occlusion changes or Magnetite comes to the front. Installed once on the
+/// UI (main) thread; the housekeeping poll looks too, for a mark that came
+/// without either.
+pub fn watch_covered_pages() {
+    use block2::RcBlock;
+    use objc2_app_kit::{
+        NSApplicationDidBecomeActiveNotification, NSWindowDidChangeOcclusionStateNotification,
+    };
+    use objc2_foundation::{NSNotification, NSNotificationCenter};
+    use std::ptr::NonNull;
+
+    thread_local! {
+        /// A look is already on its way: notifications come in bursts.
+        static PENDING: Cell<bool> = const { Cell::new(false) };
+    }
+    let changed = RcBlock::new(|_: NonNull<NSNotification>| {
+        if PENDING.replace(true) {
+            return;
+        }
+        // Not from inside the notification: taking a mark off posts one too.
+        Engine::post(Box::new(|| {
+            PENDING.set(false);
+            Engine::global().uncover_shown_pages();
+        }));
+    });
+    // SAFETY: AppKit notification names; the block runs on the main thread,
+    // where windows and the application post them.
+    for name in unsafe {
+        [
+            NSWindowDidChangeOcclusionStateNotification,
+            NSApplicationDidBecomeActiveNotification,
+        ]
+    } {
+        let observer = unsafe {
+            NSNotificationCenter::defaultCenter().addObserverForName_object_queue_usingBlock(
+                Some(name),
+                None,
+                None,
+                &changed,
+            )
+        };
+        // The observer lives as long as the app.
+        std::mem::forget(observer);
+    }
 }
 
 thread_local! {
@@ -507,6 +685,88 @@ pub fn without_taking_focus(f: impl FnOnce()) {
     if let Some(key) = key {
         key.makeKeyWindow();
     }
+}
+
+thread_local! {
+    /// The windows `hover_without_focus` was asked for, by address.
+    static HOVER_WINDOWS: std::cell::RefCell<std::collections::HashSet<usize>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
+/// `isMainWindow` as CEF's window class had it before `hover_without_focus`.
+static IS_MAIN_WINDOW: std::sync::OnceLock<objc2::runtime::Imp> = std::sync::OnceLock::new();
+
+type IsMainWindow = unsafe extern "C-unwind" fn(&AnyObject, objc2::runtime::Sel) -> Bool;
+
+/// `isMainWindow` of CEF's windows: yes for the windows of
+/// `hover_without_focus`, else what the class answered before.
+extern "C-unwind" fn main_for_the_pointer(window: &AnyObject, cmd: objc2::runtime::Sel) -> Bool {
+    if HOVER_WINDOWS.with(|w| w.borrow().contains(&std::ptr::from_ref(window).addr())) {
+        return Bool::YES;
+    }
+    let Some(before) = IS_MAIN_WINDOW.get() else {
+        return Bool::NO;
+    };
+    // SAFETY: the implementation this one took the place of, with its type.
+    unsafe { std::mem::transmute::<objc2::runtime::Imp, IsMainWindow>(*before)(window, cmd) }
+}
+
+/// Let the window holding the view `handle` take pointer movement while
+/// another window has the keyboard. Chromium drops mouse moves in a window
+/// that is neither key nor main and tells its page the pointer left
+/// (`-[RenderWidgetHostViewCocoa shouldIgnoreMouseEvent:]`): a panel shown
+/// `without_taking_focus` then shows no hover, and the floating sidebar,
+/// which leaves with the pointer, hides on the first move.
+///
+/// From now on the window answers `isMainWindow` with yes. Which window is
+/// key or main for AppKit does not change. The answer comes from a method
+/// added to the window's class (CEF's, which inherits AppKit's); the window
+/// cannot get a class of its own, since key-value observing already gave it
+/// one.
+pub fn hover_without_focus(handle: cef::sys::cef_window_handle_t) {
+    use objc2::runtime::{AnyClass, Imp};
+    use objc2_app_kit::NSView;
+    if handle.is_null() || MainThreadMarker::new().is_none() {
+        return;
+    }
+    // SAFETY: CEF hands us a live NSView; we are on the main thread.
+    let view: &NSView = unsafe { &*handle.cast::<NSView>() };
+    let Some(window) = view.window() else {
+        return;
+    };
+    let ours = main_for_the_pointer as IsMainWindow;
+    // SAFETY: same calling convention; called only through the runtime.
+    let ours: Imp = unsafe { std::mem::transmute::<IsMainWindow, Imp>(ours) };
+    // SAFETY: `class` returns the class the window was made with, not the
+    // one key-value observing put in front of it.
+    let class: &AnyClass = unsafe { msg_send![&*window, class] };
+    let Some(method) = class.instance_method(sel!(isMainWindow)) else {
+        return;
+    };
+    let before = method.implementation();
+    if !std::ptr::fn_addr_eq(before, ours) {
+        // One class of windows only: what it answered before is kept once.
+        if !std::ptr::fn_addr_eq(*IS_MAIN_WINDOW.get_or_init(|| before), before) {
+            crate::trace("hover without focus: a second window class, left as it is");
+            return;
+        }
+        // SAFETY: adds a method with the type of the inherited one to a
+        // class that does not define it itself; the main thread, where
+        // AppKit sends it.
+        let added = unsafe {
+            objc2::ffi::class_addMethod(
+                std::ptr::from_ref(class).cast_mut(),
+                sel!(isMainWindow),
+                ours,
+                objc2::ffi::method_getTypeEncoding(method),
+            )
+        };
+        if !added.as_bool() {
+            crate::trace("hover without focus: the window class has its own isMainWindow");
+            return;
+        }
+    }
+    HOVER_WINDOWS.with(|w| w.borrow_mut().insert(Retained::as_ptr(&window).addr()));
 }
 
 /// The corner radius a page window shows: macOS rounds titled windows itself
@@ -710,6 +970,11 @@ pub fn attach_child(frame: cef::sys::cef_window_handle_t, child: cef::sys::cef_w
     if let (Some(parent), Some(window)) = (frame.window(), child.window())
         && window.parentWindow().as_ref() != Some(&parent)
     {
+        // A page that moves here from another of our windows leaves that one.
+        // TODO(macos): untested (see `cef_app::can_reparent`).
+        if let Some(before) = window.parentWindow() {
+            before.removeChildWindow(&window);
+        }
         attach_above(&parent, &window);
     }
 }
@@ -717,6 +982,24 @@ pub fn attach_child(frame: cef::sys::cef_window_handle_t, child: cef::sys::cef_w
 /// Whether Magnetite is the app in front.
 pub fn app_is_active() -> bool {
     MainThreadMarker::new().is_some_and(|mtm| NSApplication::sharedApplication(mtm).isActive())
+}
+
+/// Whether those of Cmd, Control and Option that are asked for are all down
+/// right now, whichever app has the keyboard (the keyboard's state, not
+/// that of the last event).
+pub fn modifiers_held(command: bool, control: bool, option: bool) -> bool {
+    use objc2_app_kit::NSEventModifierFlags as Flags;
+    let mut wanted = Flags::empty();
+    for (asked, flag) in [
+        (command, Flags::Command),
+        (control, Flags::Control),
+        (option, Flags::Option),
+    ] {
+        if asked {
+            wanted |= flag;
+        }
+    }
+    NSEvent::modifierFlags_class().contains(wanted)
 }
 
 /// Hand the keyboard back to the app that was in front before Magnetite.

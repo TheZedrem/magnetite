@@ -3,6 +3,7 @@
 // Rust -> JS: window.__magnetite.setState(state) and a few UI calls.
 // JS -> Rust: window.magnetiteQuery({request: JSON, onSuccess, onFailure}) (CEF message router).
 
+import type { ShortcutAction, ShortcutKeys } from "./settings/shortcutKeys";
 import type { Info } from "./settings/types";
 
 export type Id = string;
@@ -48,7 +49,16 @@ export interface SmartFolder {
   limit: number;
   refresh_minutes: number;
   items: string[];
-  hidden: string[];
+  /** Items put away; absent when there are none. */
+  snoozed?: Snoozed[];
+}
+
+/** A smart folder's item that is put away. */
+export interface Snoozed {
+  url: string;
+  title: string;
+  /** Unix seconds when it comes back; none: only when woken by hand. */
+  until?: number;
 }
 
 /** A connected account (the token never leaves the app side). */
@@ -184,7 +194,11 @@ export interface UiState {
   splits: SplitNode[];
   /** The page shown over the tab; `runtime` is what is known about it, as for a tab. */
   peek: { url: string; title: string; runtime: TabRuntime } | null;
+  /** While Ctrl+Tab goes through the tabs by last use: the tabs of the round and the place it stands on. */
+  switcher: { tabs: Id[]; at: number } | null;
   settings: Settings;
+  /** The keys each shortcut has now (Settings → Shortcuts). */
+  keys: ShortcutKeys;
   chrome: string;
   /** Connected smart folder accounts. */
   accounts: Account[];
@@ -221,6 +235,20 @@ export function splitIds(n: SplitNode): Id[] {
   return n.kind === "pane" ? [n.id] : n.children.flatMap(splitIds);
 }
 
+/** A link from another app to `site` (a host, or a host and the start of a path) opens in space `space`. */
+export interface LinkRule {
+  site: string;
+  space: Id;
+}
+
+/** CSS and JavaScript the user added to the pages of `site` (a host, standing for its subdomains too); `enabled` off keeps them unused. */
+export interface SiteCode {
+  site: string;
+  css: string;
+  js: string;
+  enabled: boolean;
+}
+
 export interface Settings {
   auto_archive_hours: number;
   /** Archived tabs are deleted after this many days. */
@@ -232,11 +260,16 @@ export interface Settings {
   /** Keywords that search one site from the command bar (`gh rust`). */
   site_searches: SiteSearch[];
   external_links: "tab" | "peek" | "mini";
+  /** Which space a link from another app opens in, by its site. */
+  link_rules: LinkRule[];
+  /** The user's own CSS and JavaScript per site (Settings → Custom CSS & JS). */
+  site_code: SiteCode[];
   /** The system-wide quick search key (⌥⌘N) is on; this device's own choice. */
   quick_search: boolean;
   chrome_toolbar: boolean;
   appearance: Appearance;
   auto_pip: boolean;
+  several_windows: boolean;
   strip_trackers: boolean;
   devtools_dock: "right" | "bottom" | "window";
   sync: SyncSettings;
@@ -246,6 +279,8 @@ export interface Settings {
   check_updates: boolean;
   /** What a click on the sidebar's archive and downloads button opens. */
   library_opens: LibraryView;
+  /** The order Ctrl+Tab goes through the tabs in: by last use, or as the sidebar lists them. */
+  tab_order: "recent" | "sidebar";
   /** Chromium's password manager and autofill: which parts are on (Settings → Passwords & autofill). */
   autofill: { passwords: boolean; addresses: boolean; cards: boolean; breach_check: boolean };
   /** The ad blocker (Settings → Ad blocking); this device's own choice, never synced. */
@@ -296,7 +331,26 @@ export interface Appearance {
   sidebar_width: number;
   /** Navigation, address and window buttons in a bar across the top. */
   top_bar: boolean;
+  /** How each space looks beyond its colour, by space id; a space without an entry has `DEFAULT_LOOK`. Kept on this device. */
+  looks: Record<Id, SpaceLook>;
 }
+
+/** One space's look beyond its colour. */
+export interface SpaceLook {
+  /** How much of the space colour the window takes, in percent, 0 to 30. */
+  tint: number;
+  /** What lies over the sidebar's colour; "image" is the user's own. */
+  sidebar_effect: "none" | "grain" | "glow" | "aurora" | "fade" | "image";
+  /** When the own sidebar image was stored, `null` without one (`userImageUrl`). */
+  sidebar_image: number | null;
+  /** The same for the picture behind the empty window. */
+  empty_image: number | null;
+}
+
+export const DEFAULT_LOOK: SpaceLook = { tint: 8, sidebar_effect: "none", sidebar_image: null, empty_image: null };
+
+/** The look of space `id`: its own, or the default one. */
+export const lookOf = (a: Appearance, id: Id): SpaceLook => a.looks[id] ?? DEFAULT_LOOK;
 
 /** Apply text size and row density to this page. */
 export function applyAppearance(a: Pick<Appearance, "text_scale" | "density">) {
@@ -369,17 +423,19 @@ export type Command =
   | { cmd: "rename_space"; id: Id; title: string; icon?: string }
   | { cmd: "delete_space"; id: Id }
   | { cmd: "move_space"; id: Id; index: number }
-  | { cmd: "new_folder"; title: string }
+  | { cmd: "new_folder"; title: string; parent?: Id }
   | { cmd: "rename_folder"; id: Id; title: string }
   | { cmd: "delete_folder"; id: Id }
   | { cmd: "move_tab"; id: Id; space: Id; section: "favorites" | "pinned" | "today"; index: number; folder?: Id; profile?: Id }
-  | { cmd: "move_folder"; id: Id; index: number }
+  | { cmd: "move_folder"; id: Id; index: number; folder?: Id }
   | { cmd: "add_split"; id: Id; side?: Side }
   | { cmd: "split_insert"; target?: Id; tab: Id; side: Side }
+  | { cmd: "split_reorder"; target: Id; tab: Id; side: Side }
   | { cmd: "split_equalize"; path: number[] }
+  | { cmd: "split_grid" }
   | { cmd: "split_drag_start"; tab: Id }
   | { cmd: "split_drop_frame" }
-  | { cmd: "split_drop"; target: Id; side: Side }
+  | { cmd: "split_drop"; target: Id; side?: Side }
   | { cmd: "split_drag_end" }
   | { cmd: "remove_split"; id: Id }
   | { cmd: "separate_all"; id?: Id }
@@ -401,6 +457,8 @@ export type Command =
   /** The system asks the user; answers once they did. */
   | { cmd: "make_default_browser" }
   | { cmd: "set_settings"; settings: Partial<Settings> }
+  /** Store an own image (WebP as base64) for `slot` of space `space`, or remove it (`null`). Settings page only. */
+  | { cmd: "set_appearance_image"; slot: "empty" | "sidebar"; space: Id; data: string | null }
   | { cmd: "get_settings" }
   | { cmd: "sync_create"; server: string; invite?: string }
   | { cmd: "sync_join"; server: string; words: string }
@@ -424,12 +482,14 @@ export type Command =
   | { cmd: "smart_save"; id?: Id; title: string; source: SmartSource; account?: string; limit: number; refresh_minutes: number }
   | { cmd: "smart_refresh"; id: Id }
   | { cmd: "smart_unlink"; id: Id }
-  | { cmd: "smart_hide"; id: Id }
+  | { cmd: "smart_snooze"; id: Id; until?: number }
+  | { cmd: "smart_wake"; id: Id; url: string }
   | { cmd: "smart_allow"; id: Id }
   | { cmd: "toggle_sidebar" }
   | { cmd: "toggle_top_bar" }
   | { cmd: "window_minimize" }
   | { cmd: "window_maximize" }
+  | { cmd: "window_fullscreen" }
   | { cmd: "window_close" }
   | { cmd: "top_bar_popup"; popup: TopBarPopupKind; id?: string; x: number; y: number; width: number; height: number }
   | { cmd: "focus_sidebar" }
@@ -480,7 +540,10 @@ export type Command =
   | { cmd: "import_from"; key: string }
   /** The text of a bookmarks file (the HTML browsers export): its bookmarks join the current space's. */
   | { cmd: "import_bookmarks"; html: string }
-  | { cmd: "shortcut"; shortcut: string | { select_tab: number } | { select_space: number } };
+  | { cmd: "shortcut"; shortcut: string | { select_tab: number } | { select_space: number } }
+  | { cmd: "set_shortcut"; action: ShortcutAction; keys: string | null }
+  | { cmd: "reset_shortcut"; action?: ShortcutAction }
+  | { cmd: "record_shortcut"; on: boolean };
 
 /** A browser on this computer that Magnetite can import from. */
 export interface ImportSource {
@@ -552,6 +615,8 @@ export interface SplitDropFrame {
 interface Replies {
   get_state: UiState;
   get_settings: Info;
+  /** `error`: why these keys cannot be a shortcut; nothing changed. */
+  set_shortcut: { error?: string };
   search: { results: SearchResult[] };
   archive: { items: ArchiveItem[] };
   history: { items: Visit[] };
@@ -611,6 +676,8 @@ declare global {
       captureReady: (r: CaptureInfo) => void;
       captureFailed: (r: { error: string }) => void;
       captureBusy: (r: { what: string }) => void;
+      /** macOS: a two-finger swipe began somewhere in the app. */
+      swipeBegan: () => void;
     };
   }
 }
@@ -759,6 +826,7 @@ const prompts = cached(() => send({ cmd: "permission_prompts" }).then((r) => r.i
 const updates = cached(() => send({ cmd: "update_status" }).then((u) => (u.status ? u : undefined)));
 const notices = signal<string>();
 const captures = signal<CaptureEvent>();
+const swipes = signal();
 
 window.__magnetite = {
   setState: states.emit,
@@ -776,6 +844,7 @@ window.__magnetite = {
   captureReady: (info) => captures.emit({ kind: "ready", info }),
   captureFailed: ({ error }) => captures.emit({ kind: "failed", error }),
   captureBusy: ({ what }) => captures.emit({ kind: "busy", what }),
+  swipeBegan: swipes.emit,
 };
 
 /** The UI state, now (once the app sent it) and on every push. */
@@ -798,6 +867,8 @@ export const onOpenHistory = historyOpens.on;
 export const onOpenArchive = archiveOpens.on;
 /** Results of the capture tool, for the sidebar toast. */
 export const onCapture = captures.on;
+/** macOS: each two-finger swipe as it begins, anywhere in the app. */
+export const onSwipeBegan = swipes.on;
 export const onSiteDataCleared = clearReports.on;
 /** Copy results from keyboard shortcuts pressed in a page window. */
 export const onCopied = copies.on;

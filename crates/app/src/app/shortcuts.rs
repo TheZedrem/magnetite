@@ -1,13 +1,45 @@
 //! Keys and menu bar items, and the command palette they open.
 
 use magnetite_core::split::Side;
-use magnetite_engine::{ContentId, Engine, Shortcut};
+use magnetite_engine::{Action, Combo, ContentId, Engine, KeysError, Overrides, Shortcut};
 use serde_json::json;
 
 use super::addresses::urlencode;
 use super::{LinkVariant, MagnetiteApp, PaletteMode};
 
 impl MagnetiteApp {
+    /// Hand the engine the keys the shortcuts have now (Settings →
+    /// Shortcuts): at start, and whenever they change here or through sync.
+    pub(super) fn apply_shortcut_keys(&self, engine: &Engine) {
+        let keys = self.with_state(|s| s.settings.shortcuts.clone());
+        engine.set_shortcut_keys(&keys);
+    }
+
+    /// Give `action` the keys `keys` (`None`: no keys), or tell why not.
+    /// Other keys take effect at once, in the menu bar too.
+    pub(super) fn set_shortcut(
+        &self,
+        engine: &Engine,
+        action: Action,
+        keys: Option<&str>,
+    ) -> Result<(), KeysError> {
+        let combo: Option<Combo> = keys.map(str::parse).transpose()?;
+        self.with_state(|s| s.settings.shortcuts.set(action, combo))?;
+        self.apply_shortcut_keys(engine);
+        self.push_state(engine);
+        Ok(())
+    }
+
+    /// Give `action` its default keys back, or every action (`None`).
+    pub(super) fn reset_shortcut(&self, engine: &Engine, action: Option<Action>) {
+        self.with_state(|s| match action {
+            Some(action) => s.settings.shortcuts.reset(action),
+            None => s.settings.shortcuts = Overrides::default(),
+        });
+        self.apply_shortcut_keys(engine);
+        self.push_state(engine);
+    }
+
     /// Open the command palette centred over the page area; the quick
     /// search in a window of its own, on the screen with the pointer.
     pub(super) fn open_palette(
@@ -32,14 +64,14 @@ impl MagnetiteApp {
         }
     }
 
-    /// Reload, history and zoom for the page in front (menu bar items).
+    /// Reload, history, zoom and find for the page in front (menu bar items).
     pub(super) fn page_command(&self, engine: &Engine, shortcut: Shortcut) {
         if let Some(c) = self.focused_content(None) {
             Self::page_command_on(engine, c, shortcut);
         }
     }
 
-    /// Reload, history and zoom for page `c`.
+    /// Reload, history, zoom and find for page `c`.
     pub(super) fn page_command_on(engine: &Engine, c: ContentId, shortcut: Shortcut) {
         let zoom = || engine.content_site_state(c).map_or(100, |s| s.zoom);
         match shortcut {
@@ -51,6 +83,9 @@ impl MagnetiteApp {
                 engine.set_content_zoom(c, magnetite_engine::zoom_step(zoom(), up));
             }
             Shortcut::ZoomReset => engine.set_content_zoom(c, 100),
+            Shortcut::Find | Shortcut::FindNext | Shortcut::FindPrevious => {
+                engine.content_find(c, shortcut);
+            }
             _ => {}
         }
     }
@@ -83,7 +118,10 @@ impl MagnetiteApp {
             | Shortcut::Forward
             | Shortcut::ZoomIn
             | Shortcut::ZoomOut
-            | Shortcut::ZoomReset => self.page_command(engine, shortcut),
+            | Shortcut::ZoomReset
+            | Shortcut::Find
+            | Shortcut::FindNext
+            | Shortcut::FindPrevious => self.page_command(engine, shortcut),
             Shortcut::OpenDevTools => {
                 if let Some(c) = self.focused_content(None) {
                     engine.content_show_devtools(c);
@@ -107,6 +145,24 @@ impl MagnetiteApp {
             }
             Shortcut::NewTab => Self::open_palette(engine, PaletteMode::New, None, None),
             Shortcut::NewPrivateWindow => crate::private::open_window(),
+            // Without several windows (Settings) the key keeps what it did
+            // before: a new tab.
+            Shortcut::NewWindow => {
+                if self.with_state(|s| s.settings.several_windows) {
+                    self.new_window(engine);
+                } else {
+                    self.handle_shortcut(engine, Shortcut::NewTab);
+                }
+            }
+            Shortcut::CloseWindow => {
+                // With one window the key keeps what it did before there
+                // were several: it closes the tab.
+                if engine.windows().len() > 1 {
+                    engine.close_window(engine.current_window());
+                } else {
+                    self.handle_shortcut(engine, Shortcut::CloseTab);
+                }
+            }
             Shortcut::FocusAddress => {
                 let has_tab = self.with_state(|s| s.active_tab_id().is_some());
                 let mode = if has_tab {
@@ -135,11 +191,7 @@ impl MagnetiteApp {
                 self.push_state(engine);
             }
             Shortcut::NextTab | Shortcut::PrevTab => {
-                let forward = shortcut == Shortcut::NextTab;
-                let target = self.with_state(|s| s.cycle_tab(forward));
-                if let Some(t) = target {
-                    self.activate_tab(engine, &t);
-                }
+                self.cycle_tab(engine, shortcut == Shortcut::NextTab);
             }
             Shortcut::SelectTab(n) => {
                 // Tabs count from 1; a 0 from a page names none.

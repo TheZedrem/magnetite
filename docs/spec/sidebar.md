@@ -59,7 +59,8 @@ the row turns the icon into a back arrow that takes the page back.
   at the system's warning the half that was off screen the longest, at its
   critical level all of them.
 - While no page is on screen (every tab closed, or a new space), the page
-  area shows the logo and "Press ⌘T to open a tab".
+  area shows the logo and "Press ⌘T to open a tab", or the picture chosen
+  for the space's empty window (`spaces.md`, "Look").
 - **Favorites and pinned tabs stay loaded** once opened, until they are
   closed, also when the system runs short of memory.
 - Closing a favorite or a pinned tab unloads it and takes it back to its
@@ -120,10 +121,13 @@ the row turns the icon into a back arrow that takes the page back.
   tabs. The sidebar page keeps this on the device, not in `state.json`.
 - Double-click or the context menu renames a folder; "Change icon…" picks
   one of 27 glyphs or the default icon.
-- A tab dropped on a folder goes to its top. A dragged folder is placed
-  among the top-level items of Pinned.
-- Folders inside folders are shown (an import can bring them), but the
-  sidebar cannot nest a folder.
+- A tab dropped on a folder goes to its top.
+- Folders nest: a folder dropped on the middle of another goes to its top,
+  one dropped on the upper or lower edge of a row is placed there, at any
+  level, and one dropped below the pinned items goes to the end of the top
+  level. "New folder inside" in a folder's context menu makes one at its
+  top. A folder does not go into itself, into a smart folder or more than
+  32 folders deep.
 - "Delete folder (keep tabs)" in the context menu removes the folder; its
   tabs stay where it was. A smart folder is deleted with the items it
   listed.
@@ -132,13 +136,16 @@ the row turns the icon into a back arrow that takes the page back.
 ## Hiding and resizing
 
 `Cmd+S` or the sidebar button hides the sidebar: the pages take the whole
-window and the keyboard. `Cmd+S` shows it again. In a window that is not
-full screen, a strip above the pages stays free for the window's close,
-minimize and zoom buttons. While it is hidden on macOS,
+window and the keyboard. `Cmd+S` shows it again. While it is hidden on macOS,
 moving the pointer to the window's left edge slides the sidebar out over the
-pages without taking the keyboard from the page. It leaves when the pointer
-does, or on Esc; its sidebar button or `Cmd+S` docks it again. The sidebar
-is docked at every start.
+pages, along the window's whole height, without taking the keyboard from the
+page. It leaves when the pointer does, or on Esc; its sidebar button or
+`Cmd+S` docks it again. The sidebar is docked at every start.
+
+The pages cover the window's close, minimize and full screen buttons while
+the sidebar is hidden, so the sidebar that slides out has them, in its title
+band. With the top bar on they stay in the top bar. The gap above the pages
+still drags the window.
 
 Dragging the sidebar's right edge sets its width (220 to 360 points, 264 by
 default; double-click resets). Settings → Appearance has the width too, plus
@@ -174,24 +181,43 @@ switches at once, without a restart.
 | Change the address | Cmd+L |
 | Close the tab | Cmd+W |
 | Reopen the last archived tab | Cmd+Shift+T |
-| Next / previous tab of the space (below) | Ctrl+Tab / Ctrl+Shift+Tab |
+| The tab used before this one, and further back or forth (below) | Ctrl+Tab / Ctrl+Shift+Tab |
 | Tab 1 to 9 of the space (pinned first, then Today) | Cmd+1 to Cmd+9 |
 | Pin or unpin the active tab | Cmd+D |
 | Show or hide the sidebar | Cmd+S |
 | Back / forward / reload | Cmd+[ / Cmd+] / Cmd+R |
 | History | Cmd+Y |
 | Print the page | Cmd+P |
+| Find in the page / next / previous match | Cmd+F / Cmd+G / Cmd+Shift+G |
 
-`Cmd+S`, `Cmd+D` and `Cmd+P` go to the page first, which may use them
-itself. The six shortcuts above `Cmd+D` are taken before the page sees the
-key.
+These are the keys until the user changes them (`shortcuts.md`); the digits,
+back, forward and reload are fixed. "Show or hide the sidebar", "Pin or
+unpin the active tab", print and find go to the page first, which may use
+the key itself. The six shortcuts above "Pin or unpin" are taken before the
+page sees the key.
 
-`Ctrl+Tab` and `Ctrl+Shift+Tab` go through the rows of the current space
-in the order of `Cmd+1` to `Cmd+9`: the pinned tabs, those in folders
-included (also closed ones), then Today; after the last comes the first.
-The tabs of a split count one by one, so the keys can leave a split or
-move within it. Favorites are not part of the round; from a favorite the
-keys go to the first or the last row.
+`Ctrl+Tab` goes to the tab used before this one, and pressed again, back:
+the tabs are taken by last use, the favorites and the tabs of the current
+space together. With Ctrl held, each further Tab goes one tab further back
+(`Ctrl+Shift+Tab`: the other way), around the nine used last, and after
+150 ms a list over the page shows them with the one it stands on marked.
+Letting go of Ctrl chooses that tab; choosing a tab or a space some other
+way ends the round. The list never takes the keyboard.
+
+| Setting | Values | Default |
+|---|---|---|
+| Settings → Tabs & archive → "Ctrl+Tab goes through the tabs" | by last use, in sidebar order | by last use |
+
+In sidebar order the two keys go through the rows of the current space in
+the order of `Cmd+1` to `Cmd+9`: the pinned tabs, those in folders included
+(also closed ones), then Today; after the last comes the first. The tabs of
+a split count one by one, so the keys can leave a split or move within it.
+Favorites are not part of the round; from a favorite the keys go to the
+first or the last row.
+
+The order of last use is kept while Magnetite runs; after a restart the
+tabs count by the time they were last chosen. The setting stays on the
+device.
 
 ## Data
 
@@ -211,6 +237,9 @@ not opened.
 
 - Changing the home page of a pinned tab or favorite without pinning it
   again, and a "back to home page" control for favorites.
+- Outside macOS, the round with Ctrl held and its list: there the system
+  does not say whether the key is still down, so every `Ctrl+Tab` switches
+  at once to the tab used before.
 
 Code: `crates/core/src/{model,sidebar}.rs`, `crates/app/src/app/tabs.rs`,
 `crates/app/src/state/{tabs,folders,profiles}.rs`,

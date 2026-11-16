@@ -40,6 +40,7 @@ mod favicon;
 mod floatbar;
 mod frame;
 mod glyphs;
+mod keymap;
 mod keys;
 #[cfg(target_os = "macos")]
 mod mac;
@@ -54,13 +55,16 @@ mod pip;
 mod prompts;
 mod router;
 mod scheme;
+mod scriptlets;
 mod site;
+mod sitecode;
 mod sitedata;
 mod splitui;
 mod stray;
+mod strings;
 
 pub use autofill::AutofillPrefs;
-pub use blocker::{Filters, set_allowed_sites, set_filters};
+pub use blocker::{Filters, List as FilterList, set_allowed_sites, set_filters};
 pub use bootstrap::{run, run_helper};
 pub use capture::{FrozenFrame, PageTiles};
 pub use client::host_of;
@@ -68,16 +72,19 @@ pub use config::EngineConfig;
 pub use content::SPLIT_GAP;
 pub use default_browser::DefaultBrowser;
 pub use devdock::{DevToolsDock, DevToolsSize};
-pub use engine::{ContextProfile, Engine, EngineDelegate};
+pub use engine::{ContextProfile, Engine, EngineDelegate, WindowId};
 pub use events::{
     ContentId, DevToolsAction, DividerAction, DownloadReport, DownloadState, EngineEvent,
     ExtensionMenuAction, MemoryPressure, Shortcut, UrlSource,
 };
 pub use extensions::ExtensionInfo;
+pub use keymap::{Action, Combo, KeysError, Overrides};
 pub use media::{MediaAction, MediaState};
 pub use prompts::{PermissionPrompt, PromptAnswer, PromptKind};
 pub use router::ReplyTicket;
+pub use scheme::user_image_dir;
 pub use site::{SiteState, ZOOM_STEPS, zoom_step};
+pub use sitecode::SiteCode;
 pub use sitedata::{
     ClearReport, PermissionKind, PermissionRow, PermissionValue, in_domain, registrable_domain,
 };

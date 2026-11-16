@@ -208,7 +208,7 @@ impl Engine {
             Some(&mut client),
             Some(&CefString::from(url.as_str())),
             Some(&BrowserSettings {
-                background_color: self.lock().chrome_color,
+                background_color: self.lock().win.chrome_color,
                 ..Default::default()
             }),
             None,
@@ -614,7 +614,8 @@ wrap_window_delegate! {
             _is_menu: Option<&mut ::std::os::raw::c_int>,
             _can_activate_menu: Option<&mut ::std::os::raw::c_int>,
         ) -> Option<Window> {
-            Engine::global().frame_window()
+            // It moves with its page (`ContentWindowDelegate::parent_window`).
+            Engine::global().home_frame(self.id)
         }
         fn is_frameless(&self, _window: Option<&mut Window>) -> ::std::os::raw::c_int { 1 }
         fn with_standard_window_buttons(&self, _window: Option<&mut Window>) -> ::std::os::raw::c_int { 0 }

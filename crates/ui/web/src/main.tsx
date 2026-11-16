@@ -6,16 +6,18 @@ import { CaptureOverlay } from "./CaptureOverlay";
 import { CommandPalette } from "./CommandPalette";
 import { DeviceBar } from "./DeviceBar";
 import { DownloadsPage } from "./DownloadsPage";
+import { Empty } from "./Empty";
 import { Licenses } from "./Licenses";
 import { Notifications } from "./Notifications";
 import { SplitDrop } from "./SplitDrop";
 import { SettingsPage } from "./SettingsPage";
 import { SmartFolderDialog } from "./SmartFolderDialog";
+import { Switcher } from "./Switcher";
 import { TopBar } from "./TopBar";
 import { TopBarPopup } from "./TopBarPopup";
 import { Welcome } from "./Welcome";
 
-/** Each magnetite://ui page: the sidebar, the top bar, settings, all downloads, the welcome page, and the small windows over the page area. */
+/** Each magnetite://ui page: the sidebar, the top bar, settings, all downloads, the welcome page, the page behind the tabs, and the small windows over the page area. */
 function Route() {
   const path = location.pathname;
   if (path.startsWith("/settings")) return <SettingsPage />;
@@ -26,9 +28,11 @@ function Route() {
   if (path.startsWith("/command")) return <CommandPalette />;
   if (path.startsWith("/notifications")) return <Notifications />;
   if (path.startsWith("/splitdrop")) return <SplitDrop />;
+  if (path.startsWith("/switcher")) return <Switcher />;
   if (path.startsWith("/device")) return <DeviceBar />;
   if (path.startsWith("/smart-folder")) return <SmartFolderDialog />;
   if (path.startsWith("/topbar")) return <TopBar />;
+  if (path.startsWith("/empty")) return <Empty />;
   if (path.startsWith("/popup")) return <TopBarPopup />;
   return <App />;
 }

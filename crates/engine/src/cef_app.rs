@@ -66,6 +66,11 @@ fn add_to_list(cmd: &mut CommandLine, switch: &str, item: &str) {
 #[cfg(target_os = "linux")]
 const WAYLAND_PATCH: &str = "wayland-child-windows.patch";
 
+/// The patch to CEF that gives a window another parent when it is shown
+/// (magnetite-cef, `patches/`): a page moves to another window with it.
+#[cfg(target_os = "linux")]
+const REPARENT_PATCH: &str = "window-reparent.patch";
+
 /// The list of Magnetite's patches in the CEF in use, one file name a line.
 /// Magnetite's CEF build carries it, and packaging puts it next to the
 /// executable; the official CEF has none.
@@ -97,6 +102,13 @@ fn default_platform(
     }
 }
 
+/// The text of `CEF_PATCHES_FILE`, if the CEF in use has one.
+#[cfg(target_os = "linux")]
+fn cef_patches() -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    std::fs::read_to_string(exe.with_file_name(CEF_PATCHES_FILE)).ok()
+}
+
 /// Pick Chromium's platform (`default_platform`) unless an
 /// `--ozone-platform` on the command line did, and note for `wayland()`
 /// what it runs on.
@@ -105,10 +117,8 @@ fn choose_platform(cmd: &mut CommandLine) {
     let set = |var: &str| std::env::var_os(var).is_some_and(|v| !v.is_empty());
     let name = CefString::from("ozone-platform");
     if cmd.has_switch(Some(&name)) == 0 {
-        let cef_has_patch = std::env::current_exe()
-            .ok()
-            .and_then(|exe| std::fs::read_to_string(exe.with_file_name(CEF_PATCHES_FILE)).ok())
-            .is_some_and(|patches| lists_patch(&patches, WAYLAND_PATCH));
+        let cef_has_patch =
+            cef_patches().is_some_and(|patches| lists_patch(&patches, WAYLAND_PATCH));
         if let Some(platform) =
             default_platform(set("WAYLAND_DISPLAY"), set("DISPLAY"), cef_has_patch)
         {
@@ -122,6 +132,24 @@ fn choose_platform(cmd: &mut CommandLine) {
 
 #[cfg(target_os = "linux")]
 static WAYLAND: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether a page window can get another window's frame as its parent
+/// (`Engine::can_move_pages`). macOS does it natively (`mac::attach_child`);
+/// Linux needs `REPARENT_PATCH` in the CEF in use; Windows is not built yet.
+pub(crate) fn can_reparent() -> bool {
+    // TODO(macos): untested, written without a Mac (not even compiled):
+    // check that a page moves between windows (`mac::attach_child`), and the
+    // New Window / Close Window menu items.
+    #[cfg(target_os = "macos")]
+    return true;
+    #[cfg(target_os = "linux")]
+    return cef_patches().is_some_and(|patches| lists_patch(&patches, REPARENT_PATCH));
+    // TODO(windows): untested, no Windows machine yet. `window-reparent.patch`
+    // reparents on every platform; once Windows builds, check that a page
+    // moves between windows there and return true.
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    false
+}
 
 /// Whether Chromium runs as a Wayland client, so that the frame's child
 /// windows are subsurfaces of it (ADR-0012). Always false off Linux.
@@ -176,6 +204,10 @@ wrap_app! {
         fn browser_process_handler(&self) -> Option<BrowserProcessHandler> {
             Some(MagnetiteBrowserProcessHandler::new())
         }
+
+        fn resource_bundle_handler(&self) -> Option<ResourceBundleHandler> {
+            Some(crate::strings::Strings::new())
+        }
     }
 }
 
@@ -189,11 +221,15 @@ wrap_browser_process_handler! {
         }
         fn on_context_initialized(&self) {
             let engine = Engine::global();
-            scheme::install_factory(engine.config().ui_dir.clone(), crate::favicon::cache_dir(&engine.config().data_dir));
+            scheme::install_factory(&engine.config().data_dir, engine.config().ui_dir.clone());
             engine.lock().router = Some(router::create_browser_router());
             engine.start_tick();
             #[cfg(target_os = "macos")]
-            crate::mac::install_pip_swipe();
+            crate::mac::install_swipe_monitor();
+            #[cfg(target_os = "macos")]
+            crate::mac::clear_tooltips_without_keyboard();
+            #[cfg(target_os = "macos")]
+            crate::mac::watch_covered_pages();
             #[cfg(target_os = "macos")]
             crate::mac::watch_memory_pressure();
             engine.emit(EngineEvent::Ready);

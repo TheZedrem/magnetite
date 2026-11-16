@@ -1,11 +1,12 @@
 //! The application: reacts to engine events and sidebar commands, keeps
 //! `AppState` consistent, and drives content windows.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock, Weak};
 
-use magnetite_engine::{ContentId, Engine};
+use magnetite_engine::{ContentId, Engine, WindowId};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -61,8 +62,9 @@ pub struct MagnetiteApp {
     /// A sync chain is being started or joined: a second request would make
     /// a second chain and replace the stored sync code.
     sync_connecting: AtomicBool,
-    /// Content windows shown by the last `present`, to detect tab switches.
-    visible: Mutex<Vec<ContentId>>,
+    /// Content windows shown by the last `present`, per window, to detect
+    /// tab switches.
+    visible: Mutex<HashMap<WindowId, Vec<ContentId>>>,
     capture: Mutex<CaptureState>,
     /// The extensions the sidebar was last shown (refreshed on tick).
     shown_extensions: Mutex<Vec<magnetite_engine::ExtensionInfo>>,
@@ -196,6 +198,7 @@ impl PaletteMode {
 impl MagnetiteApp {
     pub fn new(
         data_dir: PathBuf,
+        scriptlets: Option<PathBuf>,
         import: ArcImport,
         open_on_start: Option<String>,
         launch_urls: Vec<String>,
@@ -205,7 +208,7 @@ impl MagnetiteApp {
         if private {
             state.make_private();
         }
-        let blocker = adblocking::Blocker::start(&data_dir, &state.settings.adblock);
+        let blocker = adblocking::Blocker::start(&data_dir, scriptlets, &state.settings.adblock);
         Self {
             state: Mutex::new(state),
             data_dir,
@@ -214,7 +217,7 @@ impl MagnetiteApp {
             launch_urls,
             sync: OnceLock::new(),
             sync_connecting: AtomicBool::new(false),
-            visible: Mutex::new(Vec::new()),
+            visible: Mutex::new(HashMap::new()),
             capture: Mutex::new(CaptureState::default()),
             shown_extensions: Mutex::new(Vec::new()),
             split_drag: Mutex::new(SplitDrag::default()),
@@ -226,13 +229,23 @@ impl MagnetiteApp {
         }
     }
 
+    /// The pages on screen, in any window.
+    fn on_screen(&self) -> Vec<ContentId> {
+        lock(&self.visible).values().flatten().copied().collect()
+    }
+
     /// Live content window of a tab.
     fn content_of(&self, tab_id: &str) -> Option<ContentId> {
         self.with_state(|s| s.runtime.get(tab_id).and_then(|r| r.content))
     }
 
+    /// Work on the state, as the engine's current window sees it: the
+    /// state follows whenever the engine has moved on to another window.
     fn with_state<R>(&self, f: impl FnOnce(&mut AppState) -> R) -> R {
         let mut guard = lock(&self.state);
+        if let Some(engine) = Engine::try_global() {
+            guard.enter(engine.current_window());
+        }
         f(&mut guard)
     }
 
@@ -299,6 +312,22 @@ impl MagnetiteApp {
             shown: Some(std::time::Instant::now()),
             queued: false,
         };
+        // Every window shows the sidebar its own way; the current one last,
+        // for what there is one of (the extension menu, the mini windows'
+        // list of spaces).
+        let current = engine.current_window();
+        let mut windows = engine.windows();
+        windows.retain(|win| *win != current);
+        windows.push(current);
+        for win in windows {
+            engine.in_window(win, || self.show_window_state(engine));
+        }
+        // Another tab, split or peek on screen: other prompts may show.
+        self.show_prompts(engine);
+    }
+
+    /// The current window's part of `show_state`.
+    fn show_window_state(&self, engine: &Engine) {
         let context = self.with_state(|s| s.front_context());
         let extensions = engine.extensions(context.as_ref());
         let chromium: Vec<String> = extensions
@@ -340,8 +369,6 @@ impl MagnetiteApp {
         engine.ui_eval_all(&format!(
             "window.__magnetite && window.__magnetite.setState({json})"
         ));
-        // Another tab, split or peek on screen: other prompts may show.
-        self.show_prompts(engine);
     }
 
     /// Send the download list to both sidebars, the notification panel and
