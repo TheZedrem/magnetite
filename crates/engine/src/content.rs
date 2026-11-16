@@ -10,6 +10,8 @@ use crate::engine::Engine;
 use crate::events::{ContentId, EngineEvent};
 
 pub(crate) struct ContentState {
+    /// The window the page lives in: its frame is the page window's parent.
+    pub home: crate::WindowId,
     pub window: Option<Window>,
     pub view: BrowserView,
     pub browser: Option<Browser>,
@@ -38,6 +40,8 @@ pub(crate) struct QueuedContent {
     pub profile: crate::ContextProfile,
     /// For a mini window.
     pub mini: bool,
+    /// The window that asked for the page: it lives there.
+    pub home: crate::WindowId,
 }
 
 /// Space between split pages (and around docked `DevTools`).
@@ -89,11 +93,14 @@ impl Engine {
         let context = self.request_context(profile);
         let waiting = profile.filter(|_| !self.context_is_ready(profile));
         if let Some(profile) = waiting {
-            self.lock().queued.push(QueuedContent {
+            let mut inner = self.lock();
+            let home = inner.current;
+            inner.queued.push(QueuedContent {
                 id,
                 url: url.to_string(),
                 profile: profile.clone(),
                 mini,
+                home,
             });
         } else {
             self.build_content(id, url, profile, context, mini);
@@ -118,9 +125,16 @@ impl Engine {
                 .collect()
         };
         for page in waiting {
-            let context = self.request_context(Some(&page.profile));
-            self.build_content(page.id, &page.url, Some(&page.profile), context, page.mini);
-            self.show_late(page.id);
+            // In the window that asked for it; in the current one if that
+            // window closed meanwhile.
+            let build = || {
+                let context = self.request_context(Some(&page.profile));
+                self.build_content(page.id, &page.url, Some(&page.profile), context, page.mini);
+                self.show_late(page.id);
+            };
+            if self.in_window(page.home, build).is_none() {
+                build();
+            }
         }
     }
 
@@ -130,10 +144,10 @@ impl Engine {
         let (peek, split, focus, shown) = {
             let inner = self.lock();
             (
-                inner.peek,
-                inner.split.clone(),
-                inner.focused_pane,
-                inner.shown,
+                inner.win.peek,
+                inner.win.split.clone(),
+                inner.win.focused_pane,
+                inner.win.shown,
             )
         };
         if peek == Some(id) {
@@ -187,6 +201,7 @@ impl Engine {
         self.lock().contents.insert(
             id,
             ContentState {
+                home: self.current_window(),
                 window: None,
                 view: view.clone(),
                 browser: None,
@@ -206,12 +221,117 @@ impl Engine {
         crate::trace(&format!("create_content #{id} window created"));
     }
 
+    /// The frame of the window page `id` lives in: the parent of the page's
+    /// window, of its docked `DevTools` and of its device bar.
+    pub(crate) fn home_frame(&self, id: ContentId) -> Option<Window> {
+        let inner = self.lock();
+        (inner.window(inner.home_of(id)))
+            .and_then(|w| w.frame.as_ref())
+            .map(|f| f.window.clone())
+    }
+
+    /// Run `f` in the window page `id` lives in (in the current one if that
+    /// window is gone).
+    fn at_home<R>(&self, id: ContentId, f: impl Fn() -> R) -> R {
+        let home = self.lock().home_of(id);
+        self.in_window(home, &f).unwrap_or_else(f)
+    }
+
+    /// Whether a page can move to another window as it is. It needs CEF to
+    /// give a window another parent: on Linux that is Magnetite's CEF with
+    /// `window-reparent.patch`. Without it a page that is to show in
+    /// another window has to be closed and made again there.
+    pub fn can_move_pages(&self) -> bool {
+        crate::cef_app::can_reparent()
+    }
+
+    /// The window page `id` lives in.
+    pub fn content_window(&self, id: ContentId) -> crate::WindowId {
+        self.lock().home_of(id)
+    }
+
+    /// Page `id` is about to show in the current window. If it lives in
+    /// another one it leaves that window, as a hidden page does, and lives
+    /// here from now on: its page window gets this window's frame as its
+    /// parent the next time it is shown.
+    fn bring_home(&self, id: ContentId) {
+        let (home, current) = {
+            let mut inner = self.lock();
+            // Still waiting for its profile's context: it is made here
+            // (`context_ready`).
+            let current = inner.current;
+            if let Some(q) = inner.queued.iter_mut().find(|q| q.id == id) {
+                q.home = current;
+                return;
+            }
+            (inner.home_of(id), current)
+        };
+        if home == current {
+            return;
+        }
+        self.hide_content(id);
+        if let Some(c) = self.lock().contents.get_mut(&id) {
+            c.home = current;
+            // macOS attaches the page window to its frame itself (`keep_attached`).
+            c.adopted = true;
+        }
+    }
+
+    /// Window `win` is about to close: its pages move to window `to`,
+    /// hidden, and stay loaded; the notification panel goes with them.
+    /// Where CEF cannot give a window another parent (`can_move_pages`),
+    /// they close with the window and are made again when shown.
+    pub(crate) fn leave_window(&self, win: crate::WindowId, to: crate::WindowId) {
+        if !self.can_move_pages() {
+            return;
+        }
+        let pages: Vec<ContentId> = {
+            let mut inner = self.lock();
+            let mut pages = Vec::new();
+            for (id, c) in inner.contents.iter_mut().filter(|(_, c)| c.home == win) {
+                if c.mini.is_some() {
+                    // A window of its own: nothing to move.
+                    c.home = to;
+                } else {
+                    pages.push(*id);
+                }
+            }
+            pages
+        };
+        self.in_window(to, || {
+            for id in pages {
+                self.bring_home(id);
+                // CEF gives a window its new parent when it is shown
+                // (`window-reparent.patch`); macOS attaches it at its next
+                // show (`keep_attached`).
+                #[cfg(not(target_os = "macos"))]
+                if let Some((window, _)) = self.content_handles(id) {
+                    window.show();
+                    self.show_docked(id, true);
+                    self.hide_here(id);
+                }
+            }
+        });
+        let panel = {
+            let mut inner = self.lock();
+            let moves = inner.notifications_win == win;
+            if moves {
+                inner.notifications_win = to;
+            }
+            moves
+        };
+        if panel {
+            self.place_notifications();
+        }
+    }
+
     pub fn show_content(&self, id: ContentId) {
+        self.bring_home(id);
         self.end_peek_if(|p| p == id);
         {
             let mut inner = self.lock();
-            inner.split = None;
-            inner.shown = Some(id);
+            inner.win.split = None;
+            inner.win.shown = Some(id);
         }
         self.update_focus_ring(None);
         self.update_dividers(None);
@@ -234,11 +354,14 @@ impl Engine {
 
     /// Show a split: every page of `tree` in its tile, `focus` focused.
     pub fn show_split(&self, tree: &SplitNode<ContentId>, focus: Option<ContentId>) {
+        for id in tree.ids() {
+            self.bring_home(id);
+        }
         self.end_peek_if(|p| tree.contains(&p));
         {
             let mut inner = self.lock();
-            inner.split = Some(tree.clone());
-            inner.shown = None;
+            inner.win.split = Some(tree.clone());
+            inner.win.shown = None;
         }
         self.layout_split(tree);
         for id in tree.ids() {
@@ -265,7 +388,7 @@ impl Engine {
     /// back above them, with its backdrop and the keyboard.
     fn raise_peek(&self) {
         // Its own statement: `content_handles` locks again.
-        let peek = self.lock().peek;
+        let peek = self.lock().win.peek;
         let Some(id) = peek else { return };
         let Some((window, view)) = self.content_handles(id) else {
             return;
@@ -280,11 +403,11 @@ impl Engine {
     /// Re-tile the visible split after its sizes changed (divider drag),
     /// without raising or refocusing anything.
     pub fn update_split(&self, tree: &SplitNode<ContentId>) {
-        self.lock().split = Some(tree.clone());
+        self.lock().win.split = Some(tree.clone());
         self.layout_split(tree);
         self.update_dividers(Some(tree));
         // The outline follows the resized page.
-        let focus = self.lock().focused_pane;
+        let focus = self.lock().win.focused_pane;
         self.update_focus_ring(focus);
     }
 
@@ -303,12 +426,14 @@ impl Engine {
     /// Show `id` as a peek overlay: centred over the content area, above the
     /// panes. It stays until `hide_content`/`close_content`.
     pub fn show_peek(&self, id: ContentId) {
-        self.lock().peek = Some(id);
+        self.bring_home(id);
+        self.lock().win.peek = Some(id);
         let Some((window, view)) = self.content_handles(id) else {
             return;
         };
         self.place(id, &peek_rect(&self.content_rect()));
         window.show();
+        self.keep_attached(id, &window);
         window.bring_to_top();
         self.show_docked(id, true);
         self.update_peek_backdrop();
@@ -320,7 +445,7 @@ impl Engine {
     pub(crate) fn update_peek_backdrop(&self) {
         // Two statements: a guard taken inside a statement lives to its end,
         // and `frame_window` locks again.
-        let peek = self.lock().peek;
+        let peek = self.lock().win.peek;
         let frame = self.frame_window();
         let (Some(id), Some(frame)) = (peek, frame) else {
             return;
@@ -344,9 +469,9 @@ impl Engine {
     fn end_peek_if(&self, ends: impl FnOnce(ContentId) -> bool) {
         let ended = {
             let mut inner = self.lock();
-            let ended = inner.peek.is_some_and(ends);
+            let ended = inner.win.peek.is_some_and(ends);
             if ended {
-                inner.peek = None;
+                inner.win.peek = None;
             }
             ended
         };
@@ -359,20 +484,25 @@ impl Engine {
     }
 
     pub fn peek_content(&self) -> Option<ContentId> {
-        self.lock().peek
+        self.lock().win.peek
     }
 
+    /// Hide page `id` in the window it lives in.
     pub fn hide_content(&self, id: ContentId) {
+        self.at_home(id, || self.hide_here(id));
+    }
+
+    fn hide_here(&self, id: ContentId) {
         self.end_peek_if(|p| p == id);
         // A split that loses a page is no longer on screen.
         let was_split = {
             let mut inner = self.lock();
-            if inner.shown == Some(id) {
-                inner.shown = None;
+            if inner.win.shown == Some(id) {
+                inner.win.shown = None;
             }
-            let was_split = inner.split.as_ref().is_some_and(|t| t.contains(&id));
+            let was_split = inner.win.split.as_ref().is_some_and(|t| t.contains(&id));
             if was_split {
-                inner.split = None;
+                inner.win.split = None;
             }
             was_split
         };
@@ -387,7 +517,7 @@ impl Engine {
     }
 
     pub fn close_content(&self, id: ContentId) {
-        self.end_peek_if(|p| p == id);
+        self.at_home(id, || self.end_peek_if(|p| p == id));
         self.close_docked(id);
         if let Some((window, _)) = self.content_handles(id) {
             window.close();
@@ -413,17 +543,20 @@ impl Engine {
     /// with the engine locked.
     fn forget_content(&self, id: ContentId) -> bool {
         // A page can close itself (`window.close()`) while it is the peek.
-        self.end_peek_if(|p| p == id);
+        self.at_home(id, || self.end_peek_if(|p| p == id));
         let state = {
             let mut inner = self.lock();
             inner.permission_requests.remove(&id);
             inner.locks.remove(&id);
             inner.muted.remove(&id);
-            if inner.focused_pane == Some(id) {
-                inner.focused_pane = None;
-            }
-            if inner.shown == Some(id) {
-                inner.shown = None;
+            let home = inner.home_of(id);
+            if let Some(w) = inner.window_mut(home) {
+                if w.focused_pane == Some(id) {
+                    w.focused_pane = None;
+                }
+                if w.shown == Some(id) {
+                    w.shown = None;
+                }
             }
             inner.contents.remove(&id)
         };
@@ -476,11 +609,11 @@ impl Engine {
     pub fn set_accent_color(&self, argb: u32) {
         let focus = {
             let mut inner = self.lock();
-            if inner.accent_color == argb {
+            if inner.win.accent_color == argb {
                 return;
             }
-            inner.accent_color = argb;
-            inner.focused_pane
+            inner.win.accent_color = argb;
+            inner.win.focused_pane
         };
         self.update_focus_ring(focus);
     }
@@ -492,18 +625,21 @@ impl Engine {
             let mut inner = self.lock();
             let in_split = |id: ContentId| {
                 inner
+                    .win
                     .split
                     .as_ref()
                     .is_some_and(|t| t.pane_count() > 1 && t.contains(&id))
             };
             let focus = focus.filter(|f| in_split(*f));
+            // This window's pages only: the others keep their rings.
             let pages: Vec<(Window, bool)> = inner
                 .contents
                 .iter()
+                .filter(|(_, c)| c.home == inner.current)
                 .filter_map(|(id, c)| Some((c.window.clone()?, Some(*id) == focus)))
                 .collect();
-            inner.focused_pane = focus;
-            (pages, inner.accent_color)
+            inner.win.focused_pane = focus;
+            (pages, inner.win.accent_color)
         };
         #[cfg(target_os = "macos")]
         for (window, ring) in pages {
@@ -566,16 +702,32 @@ impl Engine {
         let Some(browser) = browser else { return };
         let mut browser = browser.clone();
         match kind {
-            Kind::Sidebar => {
+            // Each goes to the window whose view it is. A sidebar made while
+            // its window is still being built waits in that window.
+            Kind::Sidebar | Kind::TopBar => {
+                let view = browser_view_get_for_browser(Some(&mut browser)).map(|v| View::from(&v));
+                let is = |v: &BrowserView| {
+                    (view.clone())
+                        .is_some_and(|mut target| View::from(v).is_same(Some(&mut target)) != 0)
+                };
                 let mut inner = self.lock();
-                match inner.frame.as_mut() {
-                    Some(f) => f.sidebar_browser = Some(browser),
-                    None => inner.pending_sidebar_browser = Some(browser),
+                let mut unbuilt = None;
+                for (_, w) in inner.windows_mut() {
+                    match w.frame.as_mut() {
+                        Some(f) if kind == Kind::Sidebar && is(&f.sidebar_view) => {
+                            f.sidebar_browser = Some(browser);
+                            return;
+                        }
+                        Some(f) if matches!(&f.top_bar_view, Some(v) if is(v)) => {
+                            f.top_bar_browser = Some(browser);
+                            return;
+                        }
+                        Some(_) => {}
+                        None => unbuilt = Some(w),
+                    }
                 }
-            }
-            Kind::TopBar => {
-                if let Some(f) = self.lock().frame.as_mut() {
-                    f.top_bar_browser = Some(browser);
+                if let (Kind::Sidebar, Some(w)) = (kind, unbuilt) {
+                    w.pending_sidebar_browser = Some(browser);
                 }
             }
             Kind::Overlay | Kind::DevTools => {}
@@ -753,7 +905,9 @@ wrap_window_delegate! {
             if self.mini.is_some() {
                 return None;
             }
-            Engine::global().frame_window()
+            // Asked again whenever the window is shown (magnetite-cef,
+            // `window-reparent.patch`): a page moves with its answer.
+            Engine::global().home_frame(self.id)
         }
         fn initial_bounds(&self, _window: Option<&mut Window>) -> Rect {
             self.mini.clone().unwrap_or_else(|| Engine::global().content_rect())

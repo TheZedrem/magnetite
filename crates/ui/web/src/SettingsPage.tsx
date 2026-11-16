@@ -152,6 +152,7 @@ export function SettingsPage() {
               </Field>
               <Toggle label="Quick search from anywhere (⌥⌘N)" hint="Opens the command bar over any app; what you pick opens in a mini window. Only that key combination reaches Magnetite, no other typing." checked={settings.quick_search} onChange={(v) => update({ quick_search: v })} />
               <Toggle label="Pop out playing videos" hint="When you leave a tab with a playing video, it continues in a floating picture-in-picture window. Coming back puts it into the page again." checked={settings.auto_pip} onChange={(v) => update({ auto_pip: v })} />
+              <Toggle label="Several windows (⌘N)" hint="New Window opens another window on the same sidebar. Choosing a tab in one window moves it there; with Magnetite's own engine build it keeps playing, otherwise it loads again. Windows open again after a restart. New, and untested on macOS and Windows." checked={settings.several_windows} onChange={(v) => update({ several_windows: v })} />
               <Toggle label="Remove trackers from copied links" hint="Copy Link (⇧⌘C) drops tracking parameters such as utm_source and fbclid." checked={settings.strip_trackers} onChange={(v) => update({ strip_trackers: v })} />
             </>
           )}

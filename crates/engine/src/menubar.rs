@@ -314,6 +314,7 @@ pub fn install(mtm: MainThreadMarker) {
 
     b.menu("File");
     b.command("New Tab", "t", CMD, S::NewTab);
+    b.command("New Window", "n", CMD, S::NewWindow);
     b.command("New Space…", "n", SHIFT_CMD, S::NewSpace);
     b.command("New Split View…", "=", SHIFT_CMD, S::NewSplit);
     b.command("New Mini Window", "n", OPT_CMD, S::NewMini);
@@ -323,6 +324,7 @@ pub fn install(mtm: MainThreadMarker) {
     b.command("Print…", "p", CMD, S::Print);
     b.separator();
     b.command("Close Tab", "w", CMD, S::CloseTab);
+    b.command("Close Window", "w", SHIFT_CMD, S::CloseWindow);
 
     b.menu("Edit");
     b.standard("Undo", sel!(undo:), "z", CMD);

@@ -76,7 +76,7 @@ impl Engine {
     /// page is on screen.
     pub fn set_empty_hint(&self, visible: bool) {
         let inner = self.lock();
-        if let Some(hint) = inner.frame.as_ref().and_then(|f| f.empty.as_ref()) {
+        if let Some(hint) = inner.win.frame.as_ref().and_then(|f| f.empty.as_ref()) {
             hint.set_visible(visible);
         }
     }
@@ -84,7 +84,7 @@ impl Engine {
     /// The hint's text follows the page area's colour.
     pub(crate) fn colour_empty_hint(&self, argb: u32) {
         let inner = self.lock();
-        if let Some(hint) = inner.frame.as_ref().and_then(|f| f.empty.as_ref()) {
+        if let Some(hint) = inner.win.frame.as_ref().and_then(|f| f.empty.as_ref()) {
             hint.set_background(argb);
         }
     }
