@@ -500,6 +500,9 @@ export type Command =
   | { cmd: "move_space"; id: Id; index: number }
   | { cmd: "new_folder"; title: string; parent?: Id }
   | { cmd: "rename_folder"; id: Id; title: string }
+  | { cmd: "share_folder"; id: Id }
+  | { cmd: "read_shared"; url: string }
+  | { cmd: "add_shared"; url: string }
   | { cmd: "delete_folder"; id: Id }
   | { cmd: "move_tab"; id: Id; space: Id; section: "favorites" | "pinned" | "today"; index: number; folder?: Id; profile?: Id }
   | { cmd: "move_folder"; id: Id; index: number; folder?: Id }
@@ -726,6 +729,8 @@ interface Replies {
   smart_preview: SmartItem[];
   sync_code: { words: string | null };
   copy_link: CopyResult;
+  read_shared: { folder: Folder | null };
+  add_shared: { added: boolean };
   downloads: { items: DownloadEntry[] };
   permission_prompts: { items: PermissionPrompt[] };
   update_status: UpdateInfo;
