@@ -152,6 +152,30 @@ function connection(item: TabItem, rt: TabRuntime | undefined): { text: string; 
   return { text: "Unavailable" };
 }
 
+/**
+ * "Developer mode": the developer bar, the caution border and the console error count for
+ * this site, as for a page this computer serves (`developer.md`). Adds the
+ * site's host to Settings → Developer → "Also local", or takes it out. A
+ * page this computer serves (`own`) has them anyway.
+ */
+function DevSwitch({ state, url, own }: { state: UiState; url: string; own: boolean }) {
+  const dev = state.settings.developer;
+  // As the app compares it: lower case, without a dot at the end.
+  const host = /^https?:/.test(url) && URL.canParse(url) ? new URL(url).hostname.toLowerCase().replace(/\.$/, "") : "";
+  if (!dev.enabled || !host) return null;
+  const named = dev.hosts.includes(host);
+  // On whatever the switch says: this computer's page, or a name under a
+  // pattern (`*.test`), which taking the host out would not turn off.
+  const always = own ? "Always, on this computer" : dev.hosts.some((h) => h.startsWith("*.") && host.endsWith(h.slice(1))) ? "On for its domain" : null;
+  const set = (checked: boolean) => send({ cmd: "set_settings", settings: { developer: { ...dev, hosts: checked ? [...dev.hosts, host] : dev.hosts.filter((h) => h !== host) } } });
+  return (
+    <label className="panel-row" title="The developer bar, a caution border on the tab and the console error count for this site">
+      <span className="flex-1">Developer mode</span>
+      {always ? <span className="text-[12px] text-[var(--muted)]">{always}</span> : <Switch label="Developer mode" checked={named} onChange={set} />}
+    </label>
+  );
+}
+
 /** `inWindow`: the panel fills a window of its own below the top bar
  * (`TopBarPopup.tsx`), which has the keyboard already. */
 export function SitePanel({ state, item, rt, onClose, inWindow = false }: { state: UiState; item: TabItem; rt: TabRuntime | undefined; onClose: () => void; inWindow?: boolean }) {
@@ -234,6 +258,7 @@ export function SitePanel({ state, item, rt, onClose, inWindow = false }: { stat
               <span className="flex-1 text-left">{rt?.muted ? "Unmute tab" : "Mute tab"}</span>
               {rt?.muted ? <SpeakerOff width={15} height={15} /> : <Speaker width={15} height={15} />}
             </button>
+            <DevSwitch state={state} url={item.url} own={rt?.dev.clears ?? false} />
             {/* Per tab: a confirmation or a report is not the next tab's. */}
             <ClearData key={item.id} profileName={profile && !profile.is_default ? profile.name : null} noSite={rt?.site?.secure === null} />
           </div>
