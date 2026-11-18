@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import appIcon from "../assets/icon.png?url";
 import { BugIcon, CodeIcon, ExternalIcon, GlobeIcon, NotesIcon, PrivacyIcon, type IconComponent } from "../Icons";
 import { onUpdate, send, type UpdateInfo } from "../bridge";
-import { Field, Toggle } from "./fields";
+import { Field, Group, Toggle } from "./fields";
 import type { Info, SettingsPatch } from "./types";
 
 const WEBSITE = "https://magnetitebrowser.org";
@@ -36,12 +36,13 @@ export function About({ info, update }: { info: Info; update: (patch: SettingsPa
 
       <Updates checkUpdates={info.settings.check_updates} update={update} />
 
+      <Group>
       <Field label="Project" hint={repo ? undefined : "The source repository is not published yet; its links follow once it is."}>
         <div className="grid grid-cols-2 gap-2">
           {links.map(({ label, url, Icon }) => (
             <button key={label} className="link-tile" disabled={!url} onClick={() => url && open(url)}>
               <Icon width={16} height={16} />
-              <span className="flex-1 text-left">{label}</span>
+              <span className="flex-1 text-left" data-search-name>{label}</span>
               <ExternalIcon width={13} height={13} className="text-[var(--muted)]" />
             </button>
           ))}
@@ -50,11 +51,12 @@ export function About({ info, update }: { info: Info; update: (patch: SettingsPa
 
       <Field label="Licence" hint="Magnetite is free software under the European Union Public Licence 1.2 (EUPL-1.2): use, study, share and change it; changed versions you share stay under the same licence. It builds on open-source software whose licences travel with it. This software uses code of FFmpeg licensed under the LGPLv2.1; how to get its source is in the open-source licences.">
         <div className="flex flex-wrap gap-2">
-          <button className="btn" onClick={() => open("magnetite://ui/licenses#magnetite")}>EUPL-1.2 licence</button>
-          <button className="btn" onClick={() => open("magnetite://ui/licenses#notices")}>Open-source licences</button>
-          <button className="btn" onClick={() => open("chrome://credits")}>Chromium licences</button>
+          <button className="btn" data-search-name onClick={() => open("magnetite://ui/licenses#magnetite")}>EUPL-1.2 licence</button>
+          <button className="btn" data-search-name onClick={() => open("magnetite://ui/licenses#notices")}>Open-source licences</button>
+          <button className="btn" data-search-name onClick={() => open("chrome://credits")}>Chromium licences</button>
         </div>
       </Field>
+      </Group>
 
       <p className="set-hint px-1 pt-2">© the Magnetite contributors. Magnetite is an independent project, not affiliated with The Browser Company.</p>
     </>
@@ -81,10 +83,10 @@ function Updates({ checkUpdates, update }: { checkUpdates: boolean; update: (pat
     : u?.system ? st.error
     : `The last check failed: ${st.error}`;
   return (
-    <>
-      <div className="set-card">
+    <Group>
+      <div className="set-row" data-search-row>
         <div className="flex items-start gap-4">
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-1" data-search-name>
             <div className="set-label">Updates</div>
             <p className="set-hint" role="status">{line}</p>
           </div>
@@ -101,10 +103,10 @@ function Updates({ checkUpdates, update }: { checkUpdates: boolean; update: (pat
       {/* A system package never asks GitHub: the switch would do nothing. */}
       {!u?.system && <Toggle
         label="Check for updates automatically"
-        hint="At start and once a day Magnetite asks the project's release page on GitHub whether a new version exists. Only that request is sent: no identifiers, no usage data. Updates are signed; Magnetite installs only what the project's release key signed."
+        hint="At start and once a day Magnetite asks the project's release page on GitHub for a new version: no identifiers, no usage data. Before it installs an update, Magnetite checks it against the release manifest the project's key signed."
         checked={checkUpdates}
         onChange={(v) => update({ check_updates: v })}
       />}
-    </>
+    </Group>
   );
 }
