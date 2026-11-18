@@ -383,6 +383,10 @@ pub(super) enum UiCommand {
     /// Ask the system to make Magnetite the default browser (answers when
     /// the user has answered the system).
     MakeDefaultBrowser,
+    /// Let the user choose the folder downloads are saved to, in the
+    /// system's dialog (answers with the settings' `downloads` once the
+    /// dialog is closed; unchanged without a choice).
+    ChooseDownloadFolder,
     ClosePeek,
     PeekToTab,
     PeekToSplit,
@@ -1398,6 +1402,56 @@ impl MagnetiteApp {
                     }));
                 }
             }
+            UiCommand::ChooseDownloadFolder => {
+                // No window to open the dialog over is no choice made, and
+                // is said: a dialog closed without one is not.
+                if !engine.can_open_dialog() {
+                    return Err("The dialog could not be opened.".into());
+                }
+                if let Some(ticket) = engine.defer_reply() {
+                    let now = self.with_state(|s| s.settings.downloads.folder.clone());
+                    let start = (!now.is_empty()).then(|| std::path::PathBuf::from(now));
+                    engine.choose_folder(
+                        "Save downloads to",
+                        start.as_deref(),
+                        Box::new(move |chosen| {
+                            let engine = Engine::global();
+                            let Some(app) = super::global() else {
+                                return engine
+                                    .finish_reply(ticket, Err("Magnetite is closing".into()));
+                            };
+                            // Chosen, and gone or no folder by now: said, where
+                            // a dialog closed without a choice is not.
+                            if chosen
+                                .as_ref()
+                                .is_some_and(|f| !(f.is_absolute() && f.is_dir()))
+                            {
+                                return engine.finish_reply(
+                                    ticket,
+                                    Err("That folder cannot be used.".into()),
+                                );
+                            }
+                            let (downloads, changed) = app.with_state(|s| {
+                                let before = s.settings.downloads.folder.clone();
+                                if let Some(folder) = chosen {
+                                    s.settings.downloads.folder =
+                                        folder.to_string_lossy().into_owned();
+                                }
+                                let changed = s.settings.downloads.folder != before;
+                                (s.settings.downloads.clone(), changed)
+                            });
+                            // A dialog closed without a choice changes nothing.
+                            if changed {
+                                engine.set_downloads(&downloads);
+                                // Kept also if the app ends without a proper quit.
+                                app.save_soon();
+                            }
+                            let reply = json!({ "downloads": downloads }).to_string();
+                            engine.finish_reply(ticket, Ok(reply));
+                        }),
+                    );
+                }
+            }
             UiCommand::ClosePeek => self.close_peek(engine),
             UiCommand::PeekToTab => self.peek_to_tab(engine),
             UiCommand::PeekToSplit => self.peek_to_split(engine),
@@ -1632,6 +1686,8 @@ impl MagnetiteApp {
                         "repository": env!("CARGO_PKG_REPOSITORY"),
                         "engine": { "chromium": chromium, "cef": cef },
                         "data_dir": self.data_dir.display().to_string(),
+                        // The chosen folder is not there: the page says so.
+                        "download_folder_missing": !s.settings.downloads.folder.is_empty() && !std::path::Path::new(&s.settings.downloads.folder).is_dir(),
                         "adblock": adblock,
                         "shortcuts": magnetite_engine::Action::ALL.iter().map(|action| json!({
                             "action": action,
@@ -1700,6 +1756,7 @@ impl MagnetiteApp {
             }
             UiCommand::SetSettings { settings: patch } => {
                 let before = self.with_state(|s| s.settings.adblock.clone());
+                let downloads_before = self.with_state(|s| s.settings.downloads.clone());
                 let (settings, code_changed) = self.with_state(|s| {
                     let settings = s.settings.patched(patch)?;
                     let code_changed = settings.site_code != s.settings.site_code;
@@ -1717,6 +1774,10 @@ impl MagnetiteApp {
                 Self::apply_devtools_dock(engine, settings.devtools_dock);
                 engine.set_autofill(settings.autofill);
                 magnetite_engine::set_global_privacy_control(settings.global_privacy_control);
+                // Only when they changed.
+                if settings.downloads != downloads_before {
+                    engine.set_downloads(&settings.downloads);
+                }
                 engine.set_quick_search_key(settings.quick_search);
                 self.dev_settings_changed(engine);
                 // Open pages get changed CSS at once.

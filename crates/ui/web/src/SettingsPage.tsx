@@ -207,6 +207,11 @@ export function SettingsPage() {
           <Toggle label="Web panels close by themselves" hint="A web panel (a favorite with &quot;Open as panel&quot;) closes when you click into the page behind it. Off: it stays until you close it." checked={settings.panel_autoclose} onChange={(v) => update({ panel_autoclose: v })} />
           <Toggle label="Pop out playing videos" hint="When you leave a tab with a playing video, it continues in a floating picture-in-picture window. Coming back puts it into the page again." checked={settings.auto_pip} onChange={(v) => update({ auto_pip: v })} />
           </Group>
+          <Group title="Downloads">
+            {/* Each sends its own part only: the other one may be newer than this page knows. */}
+            <DownloadFolder folder={settings.downloads.folder} missing={info.download_folder_missing} reset={() => send({ cmd: "set_settings", settings: { downloads: { folder: "" } } }).then(reload)} chosen={reload} />
+            <Toggle label="Ask where to save each file" hint="A dialog for every download, to name the file and its folder." checked={settings.downloads.ask} onChange={(ask) => void send({ cmd: "set_settings", settings: { downloads: { ask } } }).then(reload, reload).catch(() => {})} />
+          </Group>
           <Group title="Command bar">
           <Toggle label="Quick search from anywhere (⌥⌘N)" hint="Opens the command bar over any app; what you pick opens in a mini window. Only that key combination reaches Magnetite, no other typing." checked={settings.quick_search} onChange={(v) => update({ quick_search: v })} />
           </Group>
@@ -559,6 +564,33 @@ function DefaultBrowserCard({ state }: { state: DefaultBrowser }) {
   return (
     <Field side label="Default browser" hint={now === "yes" ? "Magnetite opens links from other apps." : "Links from other apps open in another browser."}>
       {now === "no" && <button className="btn" disabled={asking} onClick={ask}>{asking ? "Waiting for macOS…" : "Make default"}</button>}
+    </Field>
+  );
+}
+
+/**
+ * The folder downloads are saved to: the chosen one, or the system's.
+ * "Choose…" opens the system's dialog; the app keeps what was chosen there.
+ */
+function DownloadFolder({ folder, missing, reset, chosen }: { folder: string; missing: boolean; reset: () => Promise<unknown>; chosen: () => Promise<unknown> }) {
+  // Busy until the page shows what the app has now; a change or a read
+  // that failed is said.
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const run = (change: Promise<unknown>) => {
+    setBusy(true);
+    setFailed(false);
+    change.catch(() => setFailed(true)).finally(() => setBusy(false));
+  };
+  const choose = () => run(send({ cmd: "choose_download_folder" }).then(chosen));
+  return (
+    <Field side label="Save downloads to" hint={folder ? folder : "The Downloads folder of your system."}>
+      <div className="flex gap-2">
+        {folder && <button className="btn ghost" disabled={busy} onClick={() => run(reset())}>Reset</button>}
+        <button className="btn" disabled={busy} onClick={choose}>Choose…</button>
+      </div>
+      {missing && folder && <p className="set-hint" style={{ color: "var(--warn)" }}>This folder is not there right now.</p>}
+      {failed && <p className="set-hint" style={{ color: "var(--danger)" }}>That did not work. What shows here may be out of date; try again.</p>}
     </Field>
   );
 }
