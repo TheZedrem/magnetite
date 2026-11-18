@@ -35,6 +35,7 @@ pub enum Action {
     PrevSpace,
     SpacePicker,
     ToggleSidebar,
+    WebPanel,
     SitePanel,
     CopyLink,
     Capture,
@@ -55,7 +56,7 @@ pub enum Action {
 impl Action {
     /// Every action, in the order Settings lists them. Of two actions on
     /// the same keys the earlier one gets them.
-    pub const ALL: [Self; 33] = [
+    pub const ALL: [Self; 34] = [
         Self::NewTab,
         Self::FocusAddress,
         Self::CloseTab,
@@ -74,6 +75,7 @@ impl Action {
         Self::PrevSpace,
         Self::SpacePicker,
         Self::ToggleSidebar,
+        Self::WebPanel,
         Self::SitePanel,
         Self::CopyLink,
         Self::Capture,
@@ -112,6 +114,7 @@ impl Action {
             Self::PrevSpace => Shortcut::PrevSpace,
             Self::SpacePicker => Shortcut::SpacePicker,
             Self::ToggleSidebar => Shortcut::ToggleSidebar,
+            Self::WebPanel => Shortcut::WebPanel,
             Self::SitePanel => Shortcut::SitePanel,
             Self::CopyLink => Shortcut::CopyLink,
             Self::Capture => Shortcut::Capture,
@@ -185,6 +188,7 @@ impl Action {
             Self::SpacePicker if mac => "ctrl+0",
             Self::SpacePicker => "alt+0",
             Self::ToggleSidebar => "primary+S",
+            Self::WebPanel => "primary+alt+P",
             Self::SitePanel => "primary+shift+O",
             Self::CopyLink => "primary+shift+C",
             Self::Capture => "primary+shift+2",
@@ -499,11 +503,16 @@ impl<'de> Deserialize<'de> for Overrides {
 }
 
 impl Overrides {
-    /// The keys of `action` now: the user's, else the default.
+    /// The keys of `action` now: the user's, else the default. Not default
+    /// keys the user gave to another action: a default that came with a
+    /// later version does not take them back.
     pub fn combo_of(&self, action: Action) -> Option<Combo> {
         match self.0.get(&action) {
             Some(own) => own.map(Combo::here),
-            None => action.default_combo(),
+            None => action.default_combo().filter(|keys| {
+                let taken = |own: &Option<Combo>| own.map(Combo::here) == Some(*keys);
+                !self.0.values().any(taken)
+            }),
         }
     }
 
@@ -555,7 +564,13 @@ impl Overrides {
     fn take_from_others(&mut self, keeper: Option<Action>, combo: Combo) {
         let combo = Some(combo.here());
         for other in Action::ALL {
-            if Some(other) != keeper && self.combo_of(other) == combo {
+            // Also default keys that do not count now (`combo_of`): they
+            // would once the action that has them lets go.
+            let keys = match self.0.get(&other) {
+                Some(own) => own.map(Combo::here),
+                None => other.default_combo(),
+            };
+            if Some(other) != keeper && keys == combo {
                 self.0.insert(other, None);
             }
         }
@@ -667,6 +682,19 @@ mod tests {
         keys.reset(Action::NewTab);
         assert_eq!(keys.action_for(combo("primary+T")), Some(Action::NewTab));
         assert_eq!(keys.combo_of(Action::Find), None);
+    }
+
+    #[test]
+    fn keys_given_to_an_action_are_not_the_default_of_another() {
+        // Saved before the web panel had default keys: `set` would not leave this.
+        let keys = Action::WebPanel.default_combo().unwrap();
+        let saved = Overrides(BTreeMap::from([(Action::SitePanel, Some(keys))]));
+        assert_eq!(saved.action_for(keys), Some(Action::SitePanel));
+        assert_eq!(saved.combo_of(Action::WebPanel), None);
+        // Freed for a space, they are free of both.
+        let mut freed = saved.clone();
+        freed.release(keys);
+        assert_eq!(freed.action_for(keys), None);
     }
 
     #[test]
