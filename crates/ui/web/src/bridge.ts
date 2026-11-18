@@ -365,6 +365,8 @@ export interface Settings {
   downloads: DownloadPrefs;
   /** The zoom, in percent, a site has until it is zoomed on its own (Settings → Appearance): one of Chromium's steps. */
   page_zoom: number;
+  /** Spell check in text fields, and the languages websites are asked for, the preferred one first, as language tags; empty for the system's (Settings → General). */
+  languages: { spellcheck: boolean; languages: string[] };
   /** The ad blocker (Settings → Ad blocking); this device's own choice, never synced. */
   /** Developer features (Settings → Developer). */
   developer: { enabled: boolean; hosts: string[] };
@@ -562,8 +564,8 @@ export type Command =
   | { cmd: "make_default_browser" }
   /** The system's dialog for the folder downloads are saved to; answers with the settings' `downloads` once it is closed. */
   | { cmd: "choose_download_folder" }
-  /** What is named changes; `downloads` may name one of its two parts. */
-  | { cmd: "set_settings"; settings: Partial<Omit<Settings, "downloads">> & { downloads?: Partial<DownloadPrefs> } }
+  /** What is named changes; `downloads` and `languages` may each name one of their two parts. */
+  | { cmd: "set_settings"; settings: Partial<Omit<Settings, "downloads" | "languages">> & { downloads?: Partial<DownloadPrefs>; languages?: Partial<Settings["languages"]> } }
   /** Store an own image (WebP as base64) for `slot` of space `space`, or remove it (`null`). Settings page only. */
   | { cmd: "set_appearance_image"; slot: "empty" | "sidebar"; space: Id; data: string | null }
   | { cmd: "get_settings" }

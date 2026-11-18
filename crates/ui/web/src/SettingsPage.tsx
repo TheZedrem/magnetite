@@ -212,6 +212,10 @@ export function SettingsPage() {
             <DownloadFolder folder={settings.downloads.folder} missing={info.download_folder_missing} reset={() => send({ cmd: "set_settings", settings: { downloads: { folder: "" } } }).then(reload)} chosen={reload} />
             <Toggle label="Ask where to save each file" hint="A dialog for every download, to name the file and its folder." checked={settings.downloads.ask} onChange={(ask) => void send({ cmd: "set_settings", settings: { downloads: { ask } } }).then(reload, reload).catch(() => {})} />
           </Group>
+          <Group title="Text and languages">
+            <Toggle label="Check spelling as you type" hint="Marks words the spell checker does not know, in the text fields of web pages." checked={settings.languages.spellcheck} onChange={(spellcheck) => void send({ cmd: "set_settings", settings: { languages: { spellcheck } } }).then(reload, reload).catch(() => {})} />
+            <WebLanguages key={settings.languages.languages.join()} saved={settings.languages.languages} save={(languages) => send({ cmd: "set_settings", settings: { languages: { languages } } }).then(() => void reload().catch(() => undefined))} />
+          </Group>
           <Group title="Command bar">
           <Toggle label="Quick search from anywhere (⌥⌘N)" hint="Opens the command bar over any app; what you pick opens in a mini window. Only that key combination reaches Magnetite, no other typing." checked={settings.quick_search} onChange={(v) => update({ quick_search: v })} />
           </Group>
@@ -628,6 +632,55 @@ function ClearBrowsingData({ info, reload }: { info: Info; reload: () => Promise
         <button className="btn" disabled={!profile} onClick={open}>Delete…</button>
       </div>
       {failed && <p className="set-hint" role="alert" style={{ color: "var(--danger)" }}>The dialog could not be opened for those logins. Choose again.</p>}
+    </Field>
+  );
+}
+
+/** A language tag as the app keeps one (`is_tag` in the engine's `languages.rs`). */
+const LANGUAGE_TAG = /^[a-z]{2,3}(-[a-z]{4})?(-([a-z]{2}|\d{3}))?(-([a-z0-9]{5,8}|\d[a-z0-9]{3}))*$/i;
+/** The most languages the app keeps (`MAX_LANGUAGES`). */
+const MAX_LANGUAGES = 10;
+
+/**
+ * The languages websites are asked for, typed as tags in the order of
+ * preference and saved when the field is left. Empty means the system's.
+ */
+function WebLanguages({ saved, save }: { saved: string[]; save: (languages: string[]) => Promise<unknown> }) {
+  const [text, setText] = useState(saved.join(", "));
+  // The app did not take the list: the field says so and keeps what was typed.
+  const [refused, setRefused] = useState(false);
+  // As the app keeps them: each once, whatever its case, and no more than it takes.
+  const known = new Set<string>();
+  const typed = text.split(/[\s,;]+/).filter((tag) => {
+    const lower = tag.toLowerCase();
+    if (!tag || known.has(lower)) return false;
+    known.add(lower);
+    return true;
+  });
+  const many = typed.length > MAX_LANGUAGES;
+  // No language code, or one that names a variant twice.
+  const twice = (tag: string) => tag.toLowerCase().split("-").some((part, i, all) => part.length > 3 && all.indexOf(part) !== i);
+  const wrong = typed.filter((t) => !LANGUAGE_TAG.test(t) || twice(t));
+  return (
+    <Field label="Languages websites are asked for" hint="In the order you prefer them, as language codes: de, en-US, en. A website with several languages can choose by them. Empty: the languages of your system. A change counts from the next start of Magnetite.">
+      <input
+        className="field mono"
+        value={text}
+        placeholder="de, en-US, en"
+        aria-label="Languages websites are asked for"
+        aria-invalid={wrong.length > 0 || many || undefined}
+        spellCheck={false}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={() => {
+          setRefused(false);
+          if (wrong.length === 0 && !many && typed.join() !== saved.join()) save(typed).catch(() => setRefused(true));
+        }}
+        onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+      />
+      {wrong.length > 0 && <p className="set-hint" style={{ color: "var(--danger)" }}>Not saved: {wrong.join(", ")} {wrong.length === 1 ? "is no language code" : "are no language codes"}.</p>}
+      {wrong.length === 0 && many && <p className="set-hint" style={{ color: "var(--danger)" }}>Not saved: no more than {MAX_LANGUAGES} languages.</p>}
+      {/* Said aloud: it comes after the field was left. */}
+      {refused && <p className="set-hint" role="alert" style={{ color: "var(--danger)" }}>Not saved: that did not work. Leave the field again to try once more.</p>}
     </Field>
   );
 }
