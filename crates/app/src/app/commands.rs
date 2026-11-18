@@ -34,13 +34,15 @@ pub(super) enum DownloadCopy {
     Path,
 }
 
-/// Chromium's own pages for what its password manager and autofill hold.
+/// Chromium's own pages: for what its password manager and autofill hold,
+/// and its dialog that deletes cookies, site data and the cache.
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum EnginePage {
     Passwords,
     Addresses,
     Cards,
+    ClearData,
 }
 
 impl EnginePage {
@@ -49,6 +51,7 @@ impl EnginePage {
             Self::Passwords => "chrome://password-manager/passwords",
             Self::Addresses => "chrome://settings/contactInfo",
             Self::Cards => "chrome://settings/payments",
+            Self::ClearData => "chrome://settings/clearBrowserData",
         }
     }
 }
@@ -686,8 +689,8 @@ pub(super) enum UiCommand {
         id: String,
         profile: Option<String>,
     },
-    /// Show one of Chromium's own pages (saved passwords, addresses, cards)
-    /// as a peek, in the logins of `profile` (none: the default profile).
+    /// Show one of Chromium's own pages (saved passwords, addresses, cards,
+    /// deleting browsing data) as a peek, in the logins of `profile` (none: the default profile).
     OpenEnginePage {
         page: EnginePage,
         #[serde(default)]
@@ -1811,6 +1814,14 @@ impl MagnetiteApp {
             UiCommand::OpenEnginePage { page, profile } => {
                 // Over the page in front (Settings), in the logins asked
                 // for: each profile has its own passwords and addresses.
+                // Logins asked for that are gone are an error: the peek
+                // would open in those of the space in front, and the page
+                // may delete data.
+                if let Some(id) = &profile
+                    && self.with_state(|s| s.profile_for_context(id).is_none())
+                {
+                    return Err("Those logins are gone.".into());
+                }
                 let context = profile.or_else(|| self.with_state(|s| Some(s.default_profile_id())));
                 self.open_peek(
                     engine,

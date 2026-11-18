@@ -357,7 +357,7 @@ export function SettingsPage() {
       {sectionId === "sync" && <SyncSection info={info} reload={reload} job={syncJob} setJob={setSyncJob} />}
       {sectionId === "data" && (
         <>
-          <Group title="History">
+          <Group title="Browsing data">
           <Field side label="Keep history for" hint="The pages you visit, with title and time, to find them again. Kept on this computer only, never synced; private profiles leave none.">
             <select className="field" value={settings.history_days} onChange={(e) => update({ history_days: Number(e.target.value) })}>
               {[7, 30, 90].includes(settings.history_days) || settings.history_days === 0 ? null : <option value={settings.history_days}>{settings.history_days} days</option>}
@@ -367,6 +367,7 @@ export function SettingsPage() {
           <Field side label="Visited pages" hint={`${info.history_count} so far. Single pages can be removed in the history view.`}>
             <ClearHistory key={info.history_count} disabled={info.history_count === 0} onClear={() => send({ cmd: "clear_history" }).then(() => void reload())} />
           </Field>
+            <ClearBrowsingData info={info} reload={reload} />
           </Group>
           <Group title="Import">
           <ImportBrowsers />
@@ -591,6 +592,42 @@ function DownloadFolder({ folder, missing, reset, chosen }: { folder: string; mi
       </div>
       {missing && folder && <p className="set-hint" style={{ color: "var(--warn)" }}>This folder is not there right now.</p>}
       {failed && <p className="set-hint" style={{ color: "var(--danger)" }}>That did not work. What shows here may be out of date; try again.</p>}
+    </Field>
+  );
+}
+
+/**
+ * Deleting what websites left behind: Chromium's own dialog, for the logins
+ * chosen here, to start with those of the space in front.
+ */
+function ClearBrowsingData({ info, reload }: { info: Info; reload: () => Promise<unknown> }) {
+  const logins = info.profiles.filter((p) => !p.ephemeral);
+  const inFront = info.spaces.find((s) => s.id === info.active_space)?.profile_id;
+  const [chosen, setChosen] = useState<string | undefined>(undefined);
+  // The logins chosen while they still exist (another window may have
+  // deleted them), else those of the space in front, else the main ones.
+  const profile = (logins.find((p) => p.id === chosen) ?? logins.find((p) => p.id === inFront) ?? logins.find((p) => p.is_default))?.id;
+  // The app refuses logins deleted since this page last read them: say so,
+  // and read again so the list offers those that are there.
+  const [failed, setFailed] = useState(false);
+  const open = () => {
+    setFailed(false);
+    send({ cmd: "open_engine_page", page: "clear_data", profile }).catch(() => {
+      setFailed(true);
+      void reload();
+    });
+  };
+  return (
+    <Field side label="Cookies, site data and cache" hint="Delete what websites have stored on this computer, for the last hour or for all time. Deleting cookies signs you out of websites. The dialog is Chromium's own; the history it names is not the one above.">
+      <div className="flex flex-wrap gap-2">
+        {logins.length > 1 && (
+          <select className="field" value={profile} onChange={(e) => setChosen(e.target.value)} aria-label="Logins">
+            {logins.map((p) => <option key={p.id} value={p.id}>{p.is_default ? "Shared (your main logins)" : p.name}</option>)}
+          </select>
+        )}
+        <button className="btn" disabled={!profile} onClick={open}>Delete…</button>
+      </div>
+      {failed && <p className="set-hint" role="alert" style={{ color: "var(--danger)" }}>The dialog could not be opened for those logins. Choose again.</p>}
     </Field>
   );
 }
