@@ -30,7 +30,7 @@ impl Engine {
     pub(crate) fn show_dividers(&self) {
         #[cfg(target_os = "macos")]
         {
-            let (wanted, frame) = {
+            let (wanted, frame, peek) = {
                 let inner = self.lock();
                 let row = inner.devtools_dock != crate::DevToolsDock::Bottom;
                 let split = inner.win.split_dividers.iter().map(|d| {
@@ -60,19 +60,28 @@ impl Engine {
                             .map(move |(r, edge)| (r.clone(), key(*edge)))
                     });
                 let wanted: Vec<_> = split.chain(devtools).chain(handles).collect();
-                (wanted, inner.win.frame.as_ref().map(|f| f.window.clone()))
+                let frame = inner.win.frame.as_ref().map(|f| f.window.clone());
+                (wanted, frame, inner.win.peek.is_some())
             };
-            // The grip beside an open web panel, to resize it.
+            // The grip beside an open web panel, to resize it, and the
+            // button to close it.
             let mut wanted = wanted;
-            wanted.extend(
-                self.web_panel_grip()
-                    .map(|r| (r, crate::mac::DividerKey::WebPanel)),
-            );
+            let panel = self.web_panel_bounds();
+            wanted.extend((panel.as_ref()).map(|p| {
+                (
+                    crate::content::web_panel_grip(p),
+                    crate::mac::DividerKey::WebPanel,
+                )
+            }));
             if let Some(frame) = frame {
                 crate::mac::set_dividers(frame.window_handle(), &wanted);
+                // Not over a peek and the dimmed pages behind it.
+                let button = panel.as_ref().filter(|_| !peek);
+                crate::mac::set_panel_close(frame.window_handle(), button);
             }
         }
         self.web_panel_above_dividers();
+        self.sync_panel_close();
     }
 
     /// JPEG screenshot of page `id` as a data URL (drop-zone overlay).

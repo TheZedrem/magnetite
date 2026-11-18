@@ -5,6 +5,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import icon from "./assets/icon.png";
 import { userImageUrl, windowBackground } from "./backgrounds";
+import { Close } from "./Icons";
 import { IS_MAC, applyAppearance, findTab, lookOf, send, subscribe, type UiState } from "./bridge";
 import { useSidebarShortcuts } from "./useSidebarShortcuts";
 
@@ -25,9 +26,12 @@ export function Empty() {
   const look = lookOf(appearance, state.active_space);
   const space = state.sidebar.spaces.find((s) => s.id === state.active_space);
   const frame = windowBackground("frame", state.chrome, state.active_space, look, space?.accent);
-  // Outside macOS a web panel sits beside the pages: the gap between them is this page's.
+  // Outside macOS a web panel sits beside the pages: the gap after it is this page's, and the button to close it while no page is there.
   const panel = !IS_MAC && state.web_panel ? findTab(state, state.web_panel) : null;
-  const grip = panel && <PanelResizer key={panel.id} width={panel.panel_width} zoom={appearance.text_scale / 100} />;
+  const zoom = appearance.text_scale / 100;
+  const grip = panel && (
+    <PanelResizer key={panel.id} id={panel.id} width={panel.panel_width} zoom={zoom} />
+  );
   // Pages lie over this one: only the gaps around them show.
   if (state.panes.length > 0 || state.peek) return <div className="h-full" style={frame}>{grip}</div>;
   const stamp = look.empty_image;
@@ -43,11 +47,13 @@ export function Empty() {
   );
 }
 
-// The page area's inset, the gap beside a docked web panel and the panel's
-// widths, as the app lays them out (`CONTENT_INSET` in frame.rs, `SPLIT_GAP`
-// and `web_panel_rect` in content.rs).
+// The page area's inset, the gap beyond a docked web panel, the panel's
+// widths and its close button, as the app lays them out (`CONTENT_INSET` in
+// frame.rs, `SPLIT_GAP` and `web_panel_rect` in content.rs, `SIZE` and
+// `MARGIN` in panel_close.rs).
 const INSET = 8;
 const GAP = 8;
+const CLOSE = { size: 32, margin: 8 };
 const PANEL = { usual: 420, min: 280, rest: 80 };
 
 /**
@@ -55,9 +61,11 @@ const PANEL = { usual: 420, min: 280, rest: 80 };
  * without one), and the pages: drag to change the panel's width (the pages
  * follow live), release to keep it, double-click for the usual width. The gap
  * is laid out in window points; lengths on this page grow by `zoom`, its text
- * size.
+ * size. Beyond the gap, at the panel's top corner, is the round button that
+ * closes panel `id`: a page beside the panel lies over it and has the same
+ * button in the same place (`panel_close.rs`).
  */
-function PanelResizer({ width, zoom }: { width?: number; zoom: number }) {
+function PanelResizer({ id, width, zoom }: { id: string; width?: number; zoom: number }) {
   const [area, setArea] = useState(window.innerWidth);
   useEffect(() => {
     const measure = () => setArea(window.innerWidth);
@@ -85,6 +93,16 @@ function PanelResizer({ width, zoom }: { width?: number; zoom: number }) {
     frame.current = 0;
   };
   return (
+    <>
+    <button
+      className="panel-close"
+      style={{ left: (INSET + shown + GAP + CLOSE.margin) / zoom, top: (INSET + CLOSE.margin) / zoom, width: CLOSE.size / zoom, height: CLOSE.size / zoom }}
+      title="Close the panel"
+      aria-label="Close the panel"
+      onClick={() => send({ cmd: "toggle_web_panel", id })}
+    >
+      <Close size={14} />
+    </button>
     <div
       className="panel-resizer"
       style={{ left: (INSET + shown) / zoom, width: GAP / zoom, top: INSET / zoom, bottom: INSET / zoom }}
@@ -132,5 +150,6 @@ function PanelResizer({ width, zoom }: { width?: number; zoom: number }) {
       }}
       onDoubleClick={() => send({ cmd: "web_panel_width", width: null, done: true })}
     />
+    </>
   );
 }

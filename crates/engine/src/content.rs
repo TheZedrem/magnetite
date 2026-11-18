@@ -488,6 +488,8 @@ impl Engine {
         #[cfg(target_os = "macos")]
         if ended {
             crate::mac::hide_peek_backdrop();
+            // A web panel's close button, gone under the peek, is back.
+            self.show_dividers();
         }
         #[cfg(not(target_os = "macos"))]
         let _ = ended;
@@ -592,20 +594,16 @@ impl Engine {
     }
 
     #[cfg(target_os = "macos")]
-    /// Where the grip to resize the web panel lies: a strip beside the
-    /// panel's far edge, over the page.
-    pub(crate) fn web_panel_grip(&self) -> Option<Rect> {
+    /// Where the open web panel lies over the pages, once it has a window
+    /// (a page waiting for its profile has none yet).
+    pub(crate) fn web_panel_bounds(&self) -> Option<Rect> {
         let width = {
             let inner = self.lock();
-            inner.win.web_panel?;
+            let panel = inner.win.web_panel?;
+            inner.contents.get(&panel)?.window.as_ref()?;
             inner.win.web_panel_width
         };
-        let panel = web_panel_rect(&self.page_area(), width);
-        Some(Rect {
-            x: panel.x + panel.width,
-            width: WEB_PANEL_GRIP,
-            ..panel
-        })
+        Some(web_panel_rect(&self.page_area(), width))
     }
 
     #[cfg(target_os = "macos")]
@@ -749,6 +747,8 @@ impl Engine {
                     w.web_panel = None;
                     panel_of = Some(home);
                 }
+                // Its window took the close button over it along.
+                w.panel_close.take_if(|(host, _)| *host == id);
                 if w.focused_pane == Some(id) {
                     w.focused_pane = None;
                 }
@@ -758,9 +758,15 @@ impl Engine {
             }
             (inner.contents.remove(&id), shares)
         };
-        if let Some(home) = panel_of.filter(|_| WEB_PANEL_DOCKED) {
-            // A docked panel that closed itself: the pages take its room again.
-            self.in_window(home, || self.dock_web_panel());
+        if let Some(home) = panel_of {
+            // A panel that closed itself: its grip and button go with it,
+            // and beside a docked one the pages take its room again.
+            self.in_window(home, || {
+                self.show_dividers();
+                if WEB_PANEL_DOCKED {
+                    self.dock_web_panel();
+                }
+            });
         }
         // The tabs this page shared are no longer shared.
         self.emit_shares(shares);
@@ -903,6 +909,11 @@ impl Engine {
             window.activate();
             view.request_focus();
         }
+    }
+
+    /// The window page `id` is in, once it has one.
+    pub(crate) fn page_window(&self, id: ContentId) -> Option<Window> {
+        self.lock().contents.get(&id)?.window.clone()
     }
 
     fn content_handles(&self, id: ContentId) -> Option<(Window, BrowserView)> {
@@ -1195,6 +1206,17 @@ const WEB_PANEL_REST: i32 = 80;
 /// Width of the grip beside a web panel's edge.
 #[cfg(target_os = "macos")]
 const WEB_PANEL_GRIP: i32 = 8;
+/// Where the grip to resize web panel `panel` lies: a strip beside its far
+/// edge, over the page.
+#[cfg(target_os = "macos")]
+pub(crate) fn web_panel_grip(panel: &Rect) -> Rect {
+    Rect {
+        x: panel.x + panel.width,
+        width: WEB_PANEL_GRIP,
+        ..panel.clone()
+    }
+}
+
 /// Whether a web panel sits beside the pages, which make room for it,
 /// instead of lying over them. Outside macOS page windows are windows of
 /// their own to the window manager, which orders them by its own rules (a
@@ -1216,8 +1238,8 @@ pub(crate) fn web_panel_rect(area: &Rect, width: Option<u32>) -> Rect {
 }
 
 /// What a docked web panel, `width` points wide (none: the usual width),
-/// leaves of `area` for the pages: the rest beyond a gap, where the grip to
-/// resize it is (`Empty.tsx`).
+/// leaves of `area` for the pages: the rest beyond the panel and a gap,
+/// where the grip to resize it is (`Empty.tsx`).
 pub(crate) fn beside_web_panel(area: &Rect, width: Option<u32>) -> Rect {
     let taken = web_panel_rect(area, width).width + SPLIT_GAP;
     Rect {

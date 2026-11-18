@@ -218,9 +218,10 @@ impl Engine {
         }
     }
 
-    /// The gap beside a docked web panel, in the window: the grip to
-    /// resize the panel (`Empty.tsx`).
-    fn docked_grip_in_window(&self) -> Option<Rect> {
+    /// What the page behind the tabs shows beside a docked web panel, in
+    /// the window (`Empty.tsx`): the gap beyond it, the grip to resize it,
+    /// and the button to close it, in reach while no page lies over it.
+    fn docked_controls_in_window(&self) -> Option<[Rect; 2]> {
         let width = {
             let inner = self.lock();
             inner
@@ -231,11 +232,19 @@ impl Engine {
         };
         let area = Self::inset(&self.content_panel_in_window());
         let panel = crate::content::web_panel_rect(&area, width);
-        Some(Rect {
+        let grip = Rect {
             x: panel.x + panel.width,
             width: crate::content::SPLIT_GAP,
-            ..panel
-        })
+            ..panel.clone()
+        };
+        let side = i32::from(crate::panel_close::SIZE);
+        let button = Rect {
+            x: grip.x + grip.width + crate::panel_close::MARGIN,
+            y: panel.y + crate::panel_close::MARGIN,
+            width: side,
+            height: side,
+        };
+        Some([grip, button])
     }
 
     /// A docked web panel opened, closed or changed its width: the pages
@@ -249,7 +258,8 @@ impl Engine {
     /// `app-region: drag` zones plus the whole content panel. Pages sit in
     /// child windows above the panel, so only the gaps around them (top
     /// edge, sides, split gutters) end up moving the window. Not the gap
-    /// beside a docked web panel: a drag there resizes the panel.
+    /// and the button beside a docked web panel: a drag in the gap resizes
+    /// the panel, a click on the button closes it.
     pub(crate) fn apply_drag_regions(&self) {
         let (window, sidebar, top_bar) = {
             let inner = self.lock();
@@ -279,7 +289,8 @@ impl Engine {
         }];
         regions.extend(sidebar.into_iter().map(below));
         regions.extend(top_bar);
-        regions.extend(self.docked_grip_in_window().map(|bounds| DraggableRegion {
+        let controls = self.docked_controls_in_window().into_iter().flatten();
+        regions.extend(controls.map(|bounds| DraggableRegion {
             bounds,
             draggable: 0,
         }));
@@ -654,6 +665,12 @@ impl Engine {
                 self.place(id, &rect);
             }
         }
+        if panel.is_some() && !crate::content::WEB_PANEL_DOCKED {
+            // The panel moved or changed its width: its grip and button
+            // follow.
+            self.show_dividers();
+        }
+        self.sync_panel_close();
         self.update_grab_strip();
         self.place_notifications();
     }

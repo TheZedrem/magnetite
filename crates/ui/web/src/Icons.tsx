@@ -24,6 +24,7 @@ export const Reload = icon(L.RotateCw);
 export const Reset = icon(L.RotateCcw);
 export const SidebarIcon = icon(L.PanelLeft);
 export const Close = icon(L.X);
+/** The bar before a docked web panel (Empty.tsx): put the panel away. */
 /** The private space. */
 export const MaskIcon = icon(L.VenetianMask);
 /** The top bar's maximize button (Linux, Windows). */
