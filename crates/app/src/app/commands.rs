@@ -645,6 +645,21 @@ pub(super) enum UiCommand {
     },
     /// Site panel: permission rows of the focused page.
     SitePermissions,
+    /// Every site with a choice of its own for a permission, in the
+    /// logins of `profile` (none: the default profile).
+    AllPermissions {
+        #[serde(default)]
+        profile: Option<String>,
+    },
+    /// Set what site `origin` may do in the logins of `profile`, from the
+    /// list in Settings.
+    SetProfilePermission {
+        #[serde(default)]
+        profile: Option<String>,
+        origin: String,
+        kind: magnetite_engine::PermissionKind,
+        value: magnetite_engine::PermissionValue,
+    },
     SetPermission {
         origin: String,
         kind: magnetite_engine::PermissionKind,
@@ -865,6 +880,25 @@ pub(super) enum UiCommand {
 }
 
 impl MagnetiteApp {
+    /// The logins a command of Settings → Permissions names, as the engine
+    /// takes them: none for the default profile, which no id or its own id
+    /// names. An id that is no profile (any more) is an error: its choices
+    /// must not be read from, or written to, the default profile in its
+    /// place.
+    fn permission_logins(
+        &self,
+        profile: Option<&str>,
+    ) -> Result<Option<magnetite_engine::ContextProfile>, String> {
+        let Some(id) = profile else { return Ok(None) };
+        self.with_state(|s| {
+            if s.sidebar.profiles.iter().any(|p| p.id == id) {
+                Ok(s.context(Some(id)))
+            } else {
+                Err("Those logins are gone.".into())
+            }
+        })
+    }
+
     pub(super) fn handle_command(&self, engine: &Engine, cmd: UiCommand) -> Result<Value, String> {
         match cmd {
             UiCommand::Ready => {
@@ -2140,6 +2174,21 @@ impl MagnetiteApp {
             }
             UiCommand::DeviceGet { page } => return Ok(engine.device_config(page)),
             UiCommand::DeviceSet { page, config } => engine.set_device_config(page, config),
+            UiCommand::AllPermissions { profile } => {
+                let context = self.permission_logins(profile.as_deref())?;
+                return Ok(json!({ "rows": engine.all_permissions(context.as_ref()) }));
+            }
+            UiCommand::SetProfilePermission {
+                profile,
+                origin,
+                kind,
+                value,
+            } => {
+                let context = self.permission_logins(profile.as_deref())?;
+                if !engine.set_permission(context.as_ref(), &origin, kind, value) {
+                    return Err("That is no website's address.".into());
+                }
+            }
             UiCommand::SitePermissions => {
                 let rows = self
                     .focused_content(None)

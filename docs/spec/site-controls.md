@@ -217,6 +217,34 @@ or written without one of these actions.
 | `Cmd+G`, `Cmd+Shift+G` | Next or previous match of the last search; also Enter and Shift+Enter in the find bar | the page keeps it |
 | `Cmd++`, `Cmd+-`, `Cmd+0` | Zoom in, out, 100 % | Chromium's own command |
 
+## Every site's permissions
+
+Settings → Permissions lists every site that has a choice of its own for
+the camera, the microphone, the location, notifications, pop-ups and
+redirects, or the clipboard: the choices made in a site panel or in a
+question a page asked.
+
+- One card per site, a row per permission, with "Allow" and "Block" and
+  the one that holds marked. "Reset" takes the choice back: the site asks
+  again (pop-ups: blocked, as for every site), and the row is gone.
+- A change counts at once, wherever the site is open, and the site panel
+  shows it.
+- Each set of logins has its own choices. With more than one, a list on
+  top chooses which, starting with those of the space in front; a private
+  profile is not offered, it keeps nothing.
+- A site that was never asked and never set is not listed: the section
+  says so while there is none.
+- The list is read again when the page comes back to the front. If it
+  cannot be read, or a change is refused, the section says so and offers
+  to try again; logins deleted meanwhile are an error, not the main
+  logins in their place.
+- Only the Settings page may read or change the list.
+- A choice made for every site below a name (a pattern with a wildcard) is
+  not one site's and is not listed.
+
+The choices are Chromium's site settings of the profile; the list reads
+them from its preferences (`profile.content_settings.exceptions.…`).
+
 ## What is stored
 
 | Data | Where | Until |
