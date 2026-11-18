@@ -19,7 +19,7 @@ open, the peek's own row takes its place.
 
 The chip shows the first state that applies: camera or microphone in use, or
 the tab being shared (red dot), certificate problem or unencrypted connection (warning shield), zoom
-other than 100 % (dot), tab muted (crossed speaker). The first two also
+other than the default page zoom (dot), tab muted (crossed speaker). The first two also
 outline the row. The chip's tooltip lists every state.
 
 - "Copy link" (click, `Cmd+Shift+C`) copies the URL without tracking
@@ -53,7 +53,14 @@ focus returns to the chip.
   Custom CSS & JS (opens Settings at this site, see below) and Developer
   tools. Magnetite's own pages offer Share only, and nothing below.
 - **Zoom:** − and + move through Chromium's zoom steps, 25 % to 500 %; a
-  click on the value resets it to 100 %.
+  click on the value gives the site the zoom every site starts with again.
+  That is 100 %, or what Settings → Appearance → "Page zoom" says: one of
+  the same steps, for every profile, not synced. A change there counts
+  from the next start of Magnetite, since Chromium reads it when it
+  starts. The sidebar and Magnetite's own pages stay at 100 %: they have
+  a text size of their own. The address row names a site's zoom only
+  while it differs from that. "Reset zoom" in the command bar and the shortcut do the same as
+  the click.
 - **Block ads:** shown while the ad blocker is on (`ad-blocking.md`). Off
   lets the whole site load everything and loads the page again.
 - **Mute tab:** mutes this tab's audio until unmuted or the tab is unloaded.
