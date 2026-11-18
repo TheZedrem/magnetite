@@ -387,6 +387,15 @@ wrap_load_handler! {
             if self.kind == Kind::DevTools && frame.is_main() != 0 {
                 Engine::global().devtools_loaded(browser);
             }
+            // The page behind the tabs may have loaded after they were
+            // placed: it learns where they are.
+            // In its own window, current or not.
+            if self.kind == Kind::Overlay && frame.is_main() != 0 {
+                let engine = Engine::global();
+                if let Some(win) = engine.window_of_browser(browser.identifier()) {
+                    engine.in_window(win, || engine.update_page_shadows());
+                }
+            }
             // The user's own CSS and JavaScript for the site.
             if self.kind == Kind::Content && frame.is_main() != 0 {
                 let engine = Engine::global();
