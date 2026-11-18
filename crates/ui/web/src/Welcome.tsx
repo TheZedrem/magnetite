@@ -65,6 +65,12 @@ export function Welcome() {
   const [syncedBefore, setSyncedBefore] = useState(false);
   // A start or join of sync the app has not answered yet (see `SyncSection`).
   const [syncJob, setSyncJob] = useState<SyncJob | null>(null);
+  // The last one asked for: a device that syncs after "join" took a chain's sidebar.
+  const [lastSyncJob, setLastSyncJob] = useState<SyncJob | null>(null);
+  const setJob = useCallback((job: SyncJob | null) => {
+    if (job) setLastSyncJob(job);
+    setSyncJob(job);
+  }, []);
   const reload = useCallback(
     () =>
       send({ cmd: "get_settings" }).then((fresh) => {
@@ -84,7 +90,7 @@ export function Welcome() {
   // The browsers found here (looked for when the import step first shows),
   // the ones chosen, what each would bring and the names given to its
   // spaces (by their place in the preview). A browser is read when it is
-  // chosen, to show what it has; it comes in when the page is left.
+  // chosen, to show what it has; it comes in with "Start browsing".
   const [sources, setSources] = useState<ImportSource[] | null>(null);
   const [chosen, setChosen] = useState<string[]>([]);
   const [previews, setPreviews] = useState<Record<string, Preview>>({});
@@ -114,8 +120,9 @@ export function Welcome() {
 
   const syncing = info.settings.sync.enabled && info.sync_signed_in;
   // A device that joined takes the chain's sidebar, tab times and place for
-  // links: nothing to import, and nothing to ask about them.
-  const joined = joining && syncing && !syncedBefore;
+  // links: nothing to import, and nothing to ask about them. It stays so
+  // if "I am new here" is chosen after the join.
+  const joined = syncing && !syncedBefore && lastSyncJob === "join";
   const askDefault = info.default_browser === "no";
   const steps: Step[] = [
     "welcome",
@@ -125,7 +132,7 @@ export function Welcome() {
     "look",
     ...(joined ? [] : (["habits"] as const)),
     // A new start can begin a chain of its own, once the rest is answered.
-    ...(joining || syncedBefore ? [] : (["sync"] as const)),
+    ...(joining || joined || syncedBefore ? [] : (["sync"] as const)),
     "done",
   ];
   const at = Math.max(steps.indexOf(step), 0);
@@ -135,6 +142,9 @@ export function Welcome() {
   };
   const next = () => go(steps[Math.min(at + 1, steps.length - 1)]!);
   const back = () => go(steps[Math.max(at - 1, 0)]!);
+  // Something the app has not answered yet belongs to the step that asked:
+  // no way to another step until it has.
+  const busy = starting || applying || syncJob !== null;
   // A choice takes effect at once, as in Settings.
   const choose = (patch: SettingsPatch) => void send({ cmd: "set_settings", settings: patch }).then(reload);
 
@@ -147,6 +157,12 @@ export function Welcome() {
   const spaceName = (key: string, index: number, title: string) => names[key]?.[index]?.trim() || title;
   const read = (key: string) => {
     setPreviews((all) => ({ ...all, [key]: { state: "reading" } }));
+    // What was chosen for its spaces goes by their place in the preview, and
+    // the browser may have changed since the last one: it starts over.
+    setNames((all) => ({ ...all, [key]: {} }));
+    setIcons((all) => ({ ...all, [key]: {} }));
+    setLeft((all) => ({ ...all, [key]: [] }));
+    setPicker((now) => (now?.key === key ? null : now));
     send({ cmd: "import_preview", key }).then(
       (preview) => {
         setPreviews((all) => ({ ...all, [key]: { state: "read", found: preview } }));
@@ -182,9 +198,10 @@ export function Welcome() {
     }
   }
   const reading = chosen.some((key) => previews[key]?.state === "reading");
-  // The browsers read, and of them those that bring at least one space.
+  // The browsers read, and of them those that bring at least one space:
+  // none on a device that joined, whatever was chosen before it did.
   const shown = chosen.filter((key) => found(key));
-  const importing = shown.filter((key) => found(key)!.spaces.some((_, index) => !isLeft(key, index)));
+  const importing = joined ? [] : shown.filter((key) => found(key)!.spaces.some((_, index) => !isLeft(key, index)));
   const look = info.settings.appearance;
   // As in Settings: this page shows the change, the sidebar follows.
   const setLook = (patch: Partial<Appearance>) => {
@@ -204,17 +221,32 @@ export function Welcome() {
   const wanted = ads === "off" ? null : ads === "recommended" ? recommended : own;
   // One list per command, one after the other: the app takes them so. A
   // list that is chosen is downloaded at once, so this waits for "Continue".
+  // False if the app refused something: the page says what and stays.
   const applyAds = async () => {
     setApplying(true);
+    setProblem(null);
     try {
+      // Against what is set now, not what the page last read: a try before
+      // this one may have set part of it.
+      const set = (await reload()).settings.adblock;
+      // Nothing was answered here: what is set stays, also if Settings
+      // changed it while this page was open.
+      if (adsAnswer === null && ownLists === null) return true;
       if (wanted) {
         for (const { id } of offered) {
           const subscribed = wanted.includes(id);
-          if (adblock.lists.includes(id) !== subscribed) await send({ cmd: "set_adblock_list", id, subscribed });
+          if (set.lists.includes(id) !== subscribed) await send({ cmd: "set_adblock_list", id, subscribed });
         }
       }
-      if (adblock.enabled !== (wanted !== null)) await send({ cmd: "set_adblock_enabled", enabled: wanted !== null });
+      if (set.enabled !== (wanted !== null)) await send({ cmd: "set_adblock_enabled", enabled: wanted !== null });
+      // "Ready" names what is set: no going on without having read it.
       await reload();
+      return true;
+    } catch (e: unknown) {
+      setProblem(`Ad blocking could not be set: ${e instanceof Error ? e.message : String(e)}`);
+      // Part of it may be set: the step shows what is, if that can be read.
+      await reload().catch(() => undefined);
+      return false;
     } finally {
       setApplying(false);
     }
@@ -265,7 +297,7 @@ export function Welcome() {
             return (
               <li key={s}>
                 {/* Back to a step that was seen; forward only with the button. */}
-                <button className="wel-step" data-now={i === at || undefined} data-done={i < at || undefined} disabled={i >= at || starting} aria-current={i === at ? "step" : undefined} onClick={() => go(s)}>
+                <button className="wel-step" data-now={i === at || undefined} data-done={i < at || undefined} disabled={i >= at || busy} aria-current={i === at ? "step" : undefined} onClick={() => go(s)}>
                   <span className="wel-dot">{i < at ? <Check size={13} strokeWidth={2.5} /> : <Icon size={14} />}</span>
                   {STEP[s].name}
                 </button>
@@ -297,7 +329,7 @@ export function Welcome() {
                   </p>
                 ) : (
                   <div className="grid gap-3">
-                    <button className="wel-pick" onClick={() => { setJoining(false); go("import"); }}>
+                    <button className="wel-pick" onClick={() => { setJoining(false); go(joined ? "privacy" : "import"); }}>
                       <span className="set-icon"><DownloadIcon size={20} /></span>
                       <span className="min-w-0 flex-1">
                         <span className="block text-[15px] font-semibold">I am new here</span>
@@ -329,7 +361,7 @@ export function Welcome() {
                   ? "Your spaces, pinned tabs and favorites arrive from the chain, and with them when tabs are tidied up, where links open and your shortcuts. There is nothing to import."
                   : "Enter the 24 words that Settings → Sync shows on a device that syncs already. This device then takes the sidebar of the others, encrypted all the way; the server never sees what is in it."}
               </Heading>
-              <SyncSection info={info} reload={reload} job={syncJob} setJob={setSyncJob} spaces={false} only="join" />
+              <SyncSection info={info} reload={reload} job={syncJob} setJob={setJob} spaces={false} only="join" />
             </>
           )}
 
@@ -340,7 +372,7 @@ export function Welcome() {
                   ? "Enter the 24 words below on your other devices, under Settings → Sync or on their welcome page. They take the sidebar of this one."
                   : "Optional. With sync, your spaces, pinned tabs and favorites are the same on all your computers, encrypted before they leave this one. No account. It can wait: Settings → Sync has the same."}
               </Heading>
-              <SyncSection info={info} reload={reload} job={syncJob} setJob={setSyncJob} spaces={false} only="create" />
+              <SyncSection info={info} reload={reload} job={syncJob} setJob={setJob} spaces={false} only="create" />
             </>
           )}
 
@@ -498,7 +530,8 @@ export function Welcome() {
                   })}
                 </div>
               </section>
-              <section className="set-card">
+              {/* While "Continue" sets an answer, it is the answer: no other one until the app is done. */}
+              <section className="set-card" inert={applying} aria-busy={applying}>
                 <div className="flex items-center gap-2 set-label"><AdblockIcon size={15} /> Ads and trackers</div>
                 <p className="set-hint">
                   Websites load ads and trackers from known addresses. A filter list names those addresses, and Magnetite
@@ -618,7 +651,8 @@ export function Welcome() {
               <Heading title="Ready when you are">
                 {importing.length > 0 ? "Your tabs come in when you start browsing. " : ""}This is what you chose; all of it can be changed in Settings.
               </Heading>
-              <div className="set-card flex flex-col">
+              {/* While the app imports, the page stays here: a browser it cannot read is said here. */}
+              <div className="set-card flex flex-col" inert={busy}>
                 {!joined && (
                   <Chosen label="Tabs" change={() => go("import")}>
                     {importSummary.length > 0 ? `From ${listed(importSummary)}` : "A fresh start, nothing imported"}
@@ -662,13 +696,13 @@ export function Welcome() {
           {problem && <Notice>{problem}</Notice>}
 
           <div className="flex items-center gap-2 pt-2">
-            {step === "welcome" && !syncedBefore && <button className="btn ghost lg" disabled={starting} onClick={() => void finish([])}>Skip the questions</button>}
-            {step !== "welcome" && <button className="btn ghost lg inline-flex items-center" disabled={starting} onClick={back}><Back size={15} className="-ml-1 mr-1" />Back</button>}
+            {step === "welcome" && !syncedBefore && <button className="btn ghost lg" disabled={busy} onClick={() => void finish([])}>Skip the questions</button>}
+            {step !== "welcome" && <button className="btn ghost lg inline-flex items-center" disabled={busy} onClick={back}><Back size={15} className="-ml-1 mr-1" />Back</button>}
             <span className="flex-1" />
             {step === "welcome" && syncedBefore && <button className="btn primary lg" onClick={next}>Go through them</button>}
             {step === "sync" && <button className="btn primary lg" disabled={syncJob !== null} onClick={next}>{syncing ? "Continue" : joining ? "Go on without" : "Not now"}</button>}
             {step === "import" && <button className="btn primary lg" disabled={reading} onClick={next}>{reading ? "Reading…" : importing.length > 0 ? "Continue" : "Start fresh"}</button>}
-            {step === "privacy" && <button className="btn primary lg" disabled={applying} onClick={() => void applyAds().then(next)}>Continue</button>}
+            {step === "privacy" && <button className="btn primary lg" disabled={applying} onClick={() => void applyAds().then((set) => set && next())}>Continue</button>}
             {(step === "look" || step === "habits") && <button className="btn primary lg" onClick={next}>Continue</button>}
             {step === "done" && (
               <button className="btn primary lg" disabled={starting || syncJob !== null} onClick={() => void finish(importing)}>
