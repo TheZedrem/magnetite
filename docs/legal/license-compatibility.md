@@ -16,8 +16,8 @@ under the EUPL-1.2. Everything compiled into our own binaries is permissive.
 The copyleft code we ship (LGPL, MPL, APSL) lives inside the CEF library,
 which keeps its own licences, and in one data file of the ad blocker
 (GPL-3.0, "Ad blocker's scriptlets"). We ship it unmodified, except on macOS with
-Apple silicon, where we build it ourselves with public changes ("CEF and
-Chromium").
+Apple silicon and on Linux and Windows on x86_64, where we build it
+ourselves with public changes ("CEF and Chromium").
 
 Compatible does not mean free of duties. Two things must be done before the
 first binary release:
@@ -59,7 +59,8 @@ first binary release:
   authorised regardless of their licence". The FAQ also says "the simple action
   of 'linking' does not merge functional codes". The CEF library is loaded at
   run time and keeps its own licences. That also holds where we build it
-  ourselves (macOS with Apple silicon): the library stays a separate work,
+  ourselves (macOS with Apple silicon, Linux and Windows on x86_64): the
+  library stays a separate work,
   and our changes to it are public in magnetite-cef.
 - **Source and notices** (Art. 3, 5 and 11): with every copy we include the
   EUPL text and the notices. With binaries we give the source or "indicate
@@ -146,15 +147,16 @@ are not enough on their own. The full texts ship in `THIRD_PARTY_NOTICES.md`.
 ## CEF and Chromium
 
 We ship the CEF binary distribution unmodified, except on macOS with Apple
-silicon and Linux on x86_64 (below): the CEF library and its files next to it. On Windows these are `libcef.dll`, `chrome_elf.dll`,
+silicon and on Linux and Windows on x86_64 (below): the CEF library and its files next to it. On Windows these are `libcef.dll`, `chrome_elf.dll`,
 `d3dcompiler_47.dll`, `dxcompiler.dll`, `vk_swiftshader.dll` and
 `vulkan-1.dll`. On Linux they are `libcef.so`, `libvk_swiftshader.so` and
 `libvulkan.so.1`. On macOS they are inside
 `Chromium Embedded Framework.framework`. Every platform also ships the `.pak`
 files, `icudtl.dat` and the V8 snapshot. Proprietary codecs are off, except
-on macOS with Apple silicon and Linux on x86_64 (next paragraph).
+on macOS with Apple silicon and on Linux and Windows on x86_64 (next
+paragraph).
 
-**macOS on Apple silicon and Linux on x86_64** ship a CEF we build ourselves from the same
+**macOS on Apple silicon, and Linux and Windows on x86_64,** ship a CEF we build ourselves from the same
 sources, in [magnetite-cef](https://github.com/magnetite-browser/magnetite-cef).
 It differs from the official build in two ways, both public there with the
 build script: the H.264, AAC and HEVC decoders are on (`proprietary_codecs`,
@@ -228,16 +230,16 @@ What `CREDITS.html` (macOS arm64 distribution) contains, by licence type.
    (MPL-2.0 §3.2). The upstream links plus the offer cover this.
 4. **APSL-2.0**: include the licence (in `CREDITS.html`). We make no changes.
 
-**CEF source.** The corresponding source is Chromium 156.0.8078.107
-(<https://chromium.googlesource.com/chromium/src/+/refs/tags/156.0.8078.107>)
-for our own CEF build (macOS on Apple silicon, Linux on x86_64) and
+**CEF source.** The corresponding source is Chromium 156.0.8078.109
+(<https://chromium.googlesource.com/chromium/src/+/refs/tags/156.0.8078.109>)
+for our own CEF build (macOS on Apple silicon, Linux and Windows on x86_64) and
 156.0.8078.96
 (<https://chromium.googlesource.com/chromium/src/+/refs/tags/156.0.8078.96>)
 for the official one, each plus CEF commit `6028375a4532fb89d23b58635f5c0d3a82c93959`, which contains
 CEF's Chromium patches. Google's official tarballs are
 `chromium-<version>.tar.xz` (4.4 GB) and `…-lite.tar.xz` (2.0 GB) in
 `commondatastorage.googleapis.com/chromium-browser-official/`, but there is
-none for either version (checked 2026-11-16). For a version without one, we
+none for either version (checked 2026-11-19). For a version without one, we
 pack a full checkout of the tag (`gclient sync`, with all of its DEPS)
 ourselves. GitHub release files must stay under 2 GiB, so the full tarball
 cannot be a release asset.
@@ -360,8 +362,9 @@ Source files for packaging:
 - [ ] `Contents/Resources/COPYRIGHT-library.html`
 - [ ] `Contents/Resources/scriptlets/` with `scriptlets.json`, `LICENSE.txt`
       and `README.txt` ("Ad blocker's scriptlets")
-- [ ] CEF framework unmodified (re-signing is fine); on Apple silicon the
-      one from the magnetite-cef release pinned in `scripts/cef.sh`
+- [ ] CEF framework as its archive has it (re-signing is fine); on Apple
+      silicon the one from the magnetite-cef release pinned in
+      `scripts/cef.sh`
 - [ ] Patent question for H.264, AAC and HEVC decided ("CEF and Chromium")
 - [ ] `NSHumanReadableCopyright` (`English.lproj/InfoPlist.strings`):
       "© 2026 the Magnetite contributors. Licensed under the EUPL-1.2."
@@ -377,8 +380,10 @@ Source files for packaging:
       `THIRD_PARTY_NOTICES.md`, `CREDITS.html` (Windows CEF distribution),
       `COPYRIGHT-library.html`
 - [ ] The folder `scriptlets` next to `magnetite.exe`, with its three files
-- [ ] CEF files unmodified, including `d3dcompiler_47.dll` and
-      `dxcompiler.dll`. If `dxil.dll` is present, add it to the notices.
+- [ ] CEF files as their archive has them, including `d3dcompiler_47.dll`
+      and `dxcompiler.dll`. If `dxil.dll` is present, add it to the notices.
+- [ ] CEF from the magnetite-cef release pinned in `scripts/cef.sh`
+      (`magnetite-patches.txt` next to `libcef.dll`)
 - [ ] MSVC runtime: static (`+crt-static`), or Microsoft's redistribution terms
       for `vcruntime140.dll`
 - [ ] Version resource `LegalCopyright`: "© 2026 the Magnetite contributors,
