@@ -1,6 +1,7 @@
-// Settings → Appearance: space colours and their strength, backgrounds, layout, text size, density, sidebar width.
+// Settings → Appearance: a space's name, icon, colour and its strength, backgrounds; layout, text size, density, sidebar width.
 import { useRef, useState } from "react";
-import { storeImage, userImageUrl, type ImageSlot } from "../backgrounds";
+import { ICON_SIDE, storeImage, userImageUrl, type ImageSlot } from "../backgrounds";
+import { GlyphGrid, glyphFor } from "../Glyphs";
 import { DEFAULT_ACCENT, accentCss, applyAppearance, keyLabel, lookOf, send, type Appearance, type Color, type SpaceLook } from "../bridge";
 import { Field, Group, Slider, Toggle } from "./fields";
 import type { Info, SettingsPatch } from "./types";
@@ -17,20 +18,34 @@ const SPACE_COLOURS: [string, Color][] = [
 ];
 const toHex = (c?: Color | null) => "#" + channels(c ?? DEFAULT_ACCENT).map((v) => v.toString(16).padStart(2, "0")).join("");
 const fromHex = (h: string) => toColor(parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16));
-const sameColour = (a: Color | null | undefined, b: Color) => !!a && channels(a).join() === channels(b).join();
+const sameColour = (a: Color, b: Color) => channels(a).join() === channels(b).join();
+
+/** The space colours to pick from and the colour picker; `value` is the space's colour (none: the default). */
+export function ColourSwatches({ value, onPick }: { value: Color | null | undefined; onPick: (c: Color) => void }) {
+  return (
+    <div className="swatches">
+      {SPACE_COLOURS.map(([name, c]) => (
+        <button key={name} type="button" className="swatch" title={name} aria-label={name} data-on={sameColour(value ?? DEFAULT_ACCENT, c) || undefined} style={{ background: accentCss(c) }} onClick={() => onPick(c)} />
+      ))}
+      <label className="swatch custom" title="Any colour">
+        <input type="color" value={toHex(value)} onChange={(e) => onPick(fromHex(e.target.value))} />
+      </label>
+    </div>
+  );
+}
 
 /** Chromium's zoom steps, in percent (`ZOOM_STEPS` in the engine). */
 const PAGE_ZOOM = [25, 33, 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300, 400, 500];
 
 /** The built-in sidebar effects; the user's own picture is offered once one is stored. */
-const EFFECTS = [["None", "none"], ["Grain", "grain"], ["Glow", "glow"], ["Aurora", "aurora"], ["Fade", "fade"]] as const;
+export const EFFECTS = [["None", "none"], ["Grain", "grain"], ["Glow", "glow"], ["Aurora", "aurora"], ["Fade", "fade"]] as const;
 
 /**
  * Choose or remove space `space`'s own picture for `slot`, with a small preview of the
  * stored one (`stamp`). The picture is scaled down to `maxSide` before it is
- * stored; it stays on this device.
+ * stored (an icon: into a square of that size); it stays on this device.
  */
-function OwnImage({ slot, space, stamp, maxSide, reload }: { slot: ImageSlot; space: string; stamp: number | null; maxSide: number; reload: () => void }) {
+export function OwnImage({ slot, space, stamp, maxSide, reload }: { slot: ImageSlot; space: string; stamp: number | null; maxSide: number; reload: () => void }) {
   const [error, setError] = useState<string | null>(null);
   // The file input stays out of sight; the button opens its picker, so the keyboard reaches it too.
   const picker = useRef<HTMLInputElement>(null);
@@ -38,8 +53,8 @@ function OwnImage({ slot, space, stamp, maxSide, reload }: { slot: ImageSlot; sp
     storeImage(slot, space, file, maxSide).then(() => setError(null), (e: Error) => setError(e.message)).then(reload);
   return (
     <div className="flex items-center gap-3">
-      {stamp != null && <img className="h-8 w-12 rounded-md object-cover" src={userImageUrl(slot, space, stamp)} alt="" />}
-      <button className="btn sm" onClick={() => picker.current?.click()}>{stamp == null ? "Choose picture…" : "Change…"}</button>
+      {stamp != null && <img className={slot === "icon" ? "h-8 w-8 object-contain" : "h-8 w-12 rounded-md object-cover"} src={userImageUrl(slot, space, stamp)} alt="" />}
+      <button type="button" className="btn sm" onClick={() => picker.current?.click()}>{stamp == null ? "Choose picture…" : "Change…"}</button>
       <input
         ref={picker}
         className="hidden"
@@ -52,14 +67,14 @@ function OwnImage({ slot, space, stamp, maxSide, reload }: { slot: ImageSlot; sp
           if (file) void store(file);
         }}
       />
-      {stamp != null && <button className="btn sm" onClick={() => void store(null)}>Remove</button>}
+      {stamp != null && <button type="button" className="btn sm" onClick={() => void store(null)}>Remove</button>}
       {error && <span className="text-[12.5px] text-[#f3a0a0]">{error}</span>}
     </div>
   );
 }
 
 /**
- * Space colours and their strength, backgrounds, text size, density and
+ * A space's name, icon, colour and its strength, backgrounds, text size, density and
  * sidebar width. Sliders apply shortly
  * after they stop moving: each change re-lays out the pages.
  */
@@ -95,21 +110,41 @@ export function AppearanceSection({ info, update, reload }: { info: Info; update
   const stored = lookOf(saved, sp.id);
   return (
     <>
-      <Group title="Spaces" hint="Colour, strength and backgrounds belong to a space: each one can look different.">
+      <Group title="Spaces" hint="Name, icon, colour and backgrounds belong to a space: each one can look different.">
       <Field side label="Space" hint="The space the settings below are for.">
         <select className="field" value={sp.id} onChange={(e) => setChosen(e.target.value)} aria-label="Space">
           {info.spaces.map((s) => <option key={s.id} value={s.id}>{s.title}{s.id === info.active_space ? " (current)" : ""}</option>)}
         </select>
       </Field>
-      <Field side label="Colour" hint="Tints the sidebar and outlines the focused page in split view. It syncs with the space.">
-        <div className="swatches">
-          {SPACE_COLOURS.map(([name, c]) => (
-            <button key={name} className="swatch" title={name} aria-label={name} data-on={sameColour(sp.accent, c) || undefined} style={{ background: accentCss(c) }} onClick={() => colour(sp.id, c)} />
-          ))}
-          <label className="swatch custom" title="Any colour">
-            <input type="color" value={toHex(sp.accent)} onChange={(e) => colour(sp.id, fromHex(e.target.value))} />
-          </label>
+      <Field side label="Name" hint="Shown above the space's tabs. It syncs with the space.">
+        <input
+          key={`${sp.id} ${sp.title}`}
+          className="field"
+          style={{ width: 240 }}
+          defaultValue={sp.title}
+          aria-label="Name"
+          onBlur={(e) => {
+            const title = e.target.value.trim();
+            if (title && title !== sp.title) void send({ cmd: "rename_space", id: sp.id, title }).then(reload);
+            else e.target.value = sp.title;
+          }}
+          onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+        />
+      </Field>
+      <Field label="Icon" hint="Or a picture of your own, such as a PNG or an SVG. It stays on this device; your other devices show the icon chosen here.">
+        <div className="max-w-[420px]">
+          <GlyphGrid
+            current={stored.icon_image == null ? glyphFor(sp.icon) : null}
+            // A glyph takes the place of the own picture (`rename_space`).
+            onPick={(g) => void send({ cmd: "rename_space", id: sp.id, icon: g }).then(reload)}
+          />
         </div>
+        <div className="mt-2">
+          <OwnImage slot="icon" space={sp.id} stamp={stored.icon_image} maxSide={ICON_SIDE} reload={reload} />
+        </div>
+      </Field>
+      <Field side label="Colour" hint="Tints the sidebar and outlines the focused page in split view. It syncs with the space.">
+        <ColourSwatches value={sp.accent} onPick={(c) => colour(sp.id, c)} />
       </Field>
       <Field side label="Colour strength" hint="How much of the space colour the window takes.">
         <Slider value={look.tint} min={0} max={30} step={1} unit="%" reset={8} onChange={(v, now) => setLook({ tint: v }, now)} />

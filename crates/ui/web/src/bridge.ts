@@ -438,9 +438,11 @@ export interface SpaceLook {
   sidebar_image: number | null;
   /** The same for the picture behind the empty window. */
   empty_image: number | null;
+  /** The same for the picture shown in place of the space's icon. */
+  icon_image: number | null;
 }
 
-export const DEFAULT_LOOK: SpaceLook = { tint: 8, sidebar_effect: "none", sidebar_image: null, empty_image: null };
+export const DEFAULT_LOOK: SpaceLook = { tint: 8, sidebar_effect: "none", sidebar_image: null, empty_image: null, icon_image: null };
 
 /** The look of space `id`: its own, or the default one. */
 export const lookOf = (a: Appearance, id: Id): SpaceLook => a.looks[id] ?? DEFAULT_LOOK;
@@ -524,7 +526,7 @@ export type Command =
   | { cmd: "set_panel_mobile"; id: Id; mobile: boolean }
   | { cmd: "toggle_web_panel"; id: Id }
   | { cmd: "new_space"; title: string; icon?: string }
-  | { cmd: "rename_space"; id: Id; title: string; icon?: string }
+  | { cmd: "rename_space"; id: Id; title?: string; icon?: string }
   | { cmd: "delete_space"; id: Id }
   | { cmd: "move_space"; id: Id; index: number }
   | { cmd: "new_folder"; title: string; parent?: Id }
@@ -569,7 +571,7 @@ export type Command =
   /** What is named changes; `downloads` and `languages` may each name one of their two parts. */
   | { cmd: "set_settings"; settings: Partial<Omit<Settings, "downloads" | "languages">> & { downloads?: Partial<DownloadPrefs>; languages?: Partial<Settings["languages"]> } }
   /** Store an own image (WebP as base64) for `slot` of space `space`, or remove it (`null`). Settings page only. */
-  | { cmd: "set_appearance_image"; slot: "empty" | "sidebar"; space: Id; data: string | null }
+  | { cmd: "set_appearance_image"; slot: "empty" | "sidebar" | "icon"; space: Id; data: string | null }
   | { cmd: "get_settings" }
   | { cmd: "sync_create"; server: string; invite?: string }
   | { cmd: "sync_join"; server: string; words: string }
@@ -587,6 +589,7 @@ export type Command =
   | { cmd: "peek_to_tab" }
   | { cmd: "peek_to_split" }
   | { cmd: "smart_folder_dialog"; id?: Id }
+  | { cmd: "space_dialog"; id: Id }
   | { cmd: "smart_connect"; service: Service; host: string; token: string }
   | { cmd: "smart_disconnect"; id: Id }
   | { cmd: "smart_preview"; source: SmartSource; account?: string }

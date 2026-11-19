@@ -24,11 +24,23 @@ by all spaces. The profile decides which logins the pages of a space use.
   (`import.md`).
 - **Space menu**: right-click the space title, the empty part of the tab
   list or a space icon in the footer, or use the "…" button on the title.
-  It has Rename space, Change icon, New folder, the profile choice and
-  Delete space….
-- **Rename**: the space menu, or double-click the title. **Icon**: the space
-  menu, or click the icon. **Colour**: Settings → Appearance →
-  Colour, with eleven presets and a colour picker ("Look" below).
+  It has Space settings…, New folder, the profile choice and Delete
+  space….
+- **Space settings**: Space settings… in the space menu switches to the
+  space and opens a dialog over the page area with its name, icon, colour,
+  colour strength, background and own pictures ("Look" below). Each
+  change applies at once; Esc, Done or a click elsewhere closes the
+  dialog. The private space has no such dialog.
+- **Own icon**: the dialog takes a picture of your own, a PNG or an SVG
+  for one, in place of the glyph. It is drawn into a square of 128 px and
+  stored as WebP on this device like the other pictures ("Look" below),
+  never as the SVG itself, and it is not synced: other devices show the
+  glyph. Choosing a glyph removes it, in the dialog, in Settings and from
+  the icon beside the title.
+- **Rename**: the dialog, or double-click the title. **Icon**: the dialog,
+  or click the icon. **Colour**: the dialog, with eleven presets and a
+  colour picker. Settings → Appearance has all of the dialog for the space
+  chosen there.
 - **Reorder**: drag a space icon in the footer onto another one. A line
   shows where it goes: before the icon under the pointer on its left half,
   after it on its right half; where it already is, no line shows. The
@@ -67,8 +79,8 @@ such as place and camera. Strength, background and pictures are kept on this
 device and are not synced: the settings in `state.json`
 (`settings.appearance.looks`), the pictures in
 `<data-dir>/appearance/`, readable by the owner only. Only the Settings page
-may store or remove a picture. Deleting a space removes its look and its
-pictures.
+and the space dialog may store or remove a picture. Deleting a space removes
+its look and its pictures.
 
 ## Switching
 
@@ -265,7 +277,7 @@ in front, the space beside it comes to the front for the link.
 Code: `crates/core/src/model.rs`, `crates/app/src/app/commands.rs`,
 `crates/app/src/state/profiles.rs`, `crates/app/src/state/private.rs`,
 `crates/app/src/state/tabs.rs` (`move_space`),
-`crates/ui/web/src/{App,SpaceSwitcher,IsolationSection,Glyphs}.tsx`,
+`crates/ui/web/src/{App,SpaceSwitcher,SpaceDialog,IsolationSection,Glyphs}.tsx`,
 `crates/ui/web/src/useSpaceSwipe.ts`,
 `crates/ui/web/src/settings/AppearanceSection.tsx`,
 `crates/ui/web/src/{backgrounds.ts,Empty.tsx}`, `crates/engine/src/empty.rs`.

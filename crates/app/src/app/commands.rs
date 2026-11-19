@@ -59,7 +59,7 @@ impl EnginePage {
 /// The most an own image may weigh as base64: about 6 MB of WebP.
 const MAX_IMAGE_BASE64: usize = 8 * 1024 * 1024;
 
-/// Where an own image of the user goes (Settings → Appearance).
+/// Where an own image of the user goes (Settings → Appearance, the space dialog).
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ImageSlot {
@@ -67,6 +67,8 @@ pub enum ImageSlot {
     Empty,
     /// Over the sidebar's colour.
     Sidebar,
+    /// In place of the space's icon.
+    Icon,
 }
 
 impl ImageSlot {
@@ -78,6 +80,7 @@ impl ImageSlot {
         let slot = match self {
             Self::Empty => "empty",
             Self::Sidebar => "sidebar",
+            Self::Icon => "icon",
         };
         (!space.is_empty() && space.chars().all(plain)).then(|| {
             magnetite_engine::user_image_dir(data_dir).join(format!("{slot}-{space}.webp"))
@@ -216,8 +219,11 @@ pub(super) enum UiCommand {
         #[serde(default)]
         icon: Option<String>,
     },
+    /// Give space `id` another name (an empty one keeps its name), another
+    /// glyph, or both. A glyph takes the place of the space's own icon.
     RenameSpace {
         id: String,
+        #[serde(default)]
         title: String,
         #[serde(default)]
         icon: Option<String>,
@@ -405,6 +411,10 @@ pub(super) enum UiCommand {
     SmartFolderDialog {
         #[serde(default)]
         id: Option<String>,
+    },
+    /// Open the settings dialog of space `id`: name, icon, colour, background.
+    SpaceDialog {
+        id: String,
     },
     /// Check a token with the service and keep the account (answers later).
     SmartConnect {
@@ -1093,20 +1103,28 @@ impl MagnetiteApp {
                 self.activate_space(engine, &id);
             }
             UiCommand::RenameSpace { id, title, icon } => {
-                self.with_state(|s| {
+                let own_icon_gone = self.with_state(|s| {
                     // The private space keeps its name and icon.
                     if s.is_private_space(&id) {
-                        return;
+                        return false;
                     }
-                    if let Some(sp) = s.space_mut(&id) {
-                        if !title.trim().is_empty() {
-                            sp.title = title.trim().into();
-                        }
-                        if icon.is_some() {
-                            sp.icon = icon;
-                        }
+                    let Some(sp) = s.space_mut(&id) else {
+                        return false;
+                    };
+                    if !title.trim().is_empty() {
+                        sp.title = title.trim().into();
                     }
+                    if icon.is_none() {
+                        return false;
+                    }
+                    sp.icon = icon;
+                    // A glyph is chosen in place of the own icon.
+                    let look = s.settings.appearance.looks.get_mut(&id);
+                    look.is_some_and(|look| look.icon_image.take().is_some())
                 });
+                if own_icon_gone && let Some(file) = ImageSlot::Icon.file(&self.data_dir, &id) {
+                    let _ = std::fs::remove_file(file);
+                }
                 self.push_state(engine);
             }
             UiCommand::DeleteSpace { id } if self.with_state(|s| s.is_private_space(&id)) => {
@@ -1120,7 +1138,7 @@ impl MagnetiteApp {
                 // Its look and its own images go with it.
                 if self.with_state(|s| s.space(&id).is_none()) {
                     self.with_state(|s| s.settings.appearance.looks.remove(&id));
-                    for slot in [ImageSlot::Empty, ImageSlot::Sidebar] {
+                    for slot in [ImageSlot::Empty, ImageSlot::Sidebar, ImageSlot::Icon] {
                         if let Some(file) = slot.file(&self.data_dir, &id) {
                             let _ = std::fs::remove_file(file);
                         }
@@ -1491,6 +1509,10 @@ impl MagnetiteApp {
                 );
                 engine.open_palette(&url, 560, 120);
             }
+            UiCommand::SpaceDialog { id } => {
+                let url = format!("magnetite://ui/space?id={}", urlencode(&id));
+                engine.open_palette(&url, 480, 120);
+            }
             UiCommand::SmartConnect {
                 service,
                 host,
@@ -1770,6 +1792,7 @@ impl MagnetiteApp {
                     let a = s.settings.appearance.looks.entry(space).or_default();
                     match slot {
                         ImageSlot::Empty => a.empty_image = stored,
+                        ImageSlot::Icon => a.icon_image = stored,
                         ImageSlot::Sidebar => {
                             a.sidebar_image = stored;
                             // A new image shows at once; without one its effect is off.
