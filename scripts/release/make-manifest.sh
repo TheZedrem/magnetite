@@ -7,8 +7,10 @@
 # <repository>/releases/latest/download/latest.json:
 #   {"version": "...", "notes_url": "...",
 #    "assets": {"<os>-<arch>": {"url": "...", "sha256": "<hex>", "size": <bytes>}}}
-# Only the packages found in <folder> are listed; the macOS disk image is not
-# one (the updater takes the zip). The owner/repo comes from
+# Only the packages found in <folder> are listed: the zip (macOS; the disk
+# image is not one, the updater takes the zip), the tar.gz (Linux) and, for
+# Windows, the installer, which is what a Magnetite there runs to update
+# itself (the zip is for unpacking by hand). The owner/repo comes from
 # GITHUB_REPOSITORY, or else from Cargo.toml.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/../lib.sh"
@@ -17,12 +19,13 @@ version="${1:?usage: make-manifest.sh <version> <folder>}"
 dir="${2:?usage: make-manifest.sh <version> <folder>}"
 base="https://github.com/$(repo_slug)/releases"
 
-pattern="^[Mm]agnetite-${version//./\\.}-(macos|linux|windows)-(aarch64|x86_64)\\.(zip|tar\\.gz)\$"
+v="${version//./\\.}"
+pattern="^[Mm]agnetite-$v-((macos|linux)-(aarch64|x86_64)\\.(zip|tar\\.gz)|(windows)-(aarch64|x86_64)-setup\\.exe)\$"
 entries="" keys=" "
 for path in "$dir"/*; do
   file="$(basename "$path")"
   [[ $file =~ $pattern ]] || continue
-  key="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}"
+  key="${BASH_REMATCH[2]}${BASH_REMATCH[5]}-${BASH_REMATCH[3]}${BASH_REMATCH[6]}"
   [[ $keys != *" $key "* ]] || die "two packages for $key in $dir"
   keys="$keys$key "
   entries="$entries${entries:+,}

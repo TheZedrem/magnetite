@@ -1,15 +1,16 @@
 //! Split view chrome around the pages: dividers in the gaps between split
-//! pages (native windows on macOS, `MagnetiteDividerView` in `mac/chrome.rs`: drag to resize,
+//! pages (native windows on macOS and Windows, `MagnetiteDividerView` in `mac/chrome.rs` and
+//! `win/dividers.rs`: drag to resize,
 //! double-click to even out), and screenshots for the drop-zone overlay
 //! shown while a tab is dragged over the page area.
 
 use cef::*;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use magnetite_core::split::Axis;
 use magnetite_core::split::SplitNode;
 
 use crate::content::SPLIT_GAP;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use crate::content::rect_of;
 use crate::engine::Engine;
 use crate::events::ContentId;
@@ -26,7 +27,8 @@ impl Engine {
     }
 
     /// Show the split dividers and one beside each docked `DevTools` on
-    /// screen (native windows on macOS; other platforms have none yet).
+    /// screen, and the resize handles of pages in device mode (native
+    /// windows on macOS and Windows; Linux has none yet).
     pub(crate) fn show_dividers(&self) {
         #[cfg(target_os = "macos")]
         {
@@ -78,6 +80,49 @@ impl Engine {
                 // Not over a peek and the dimmed pages behind it.
                 let button = panel.as_ref().filter(|_| !peek);
                 crate::mac::set_panel_close(frame.window_handle(), button);
+            }
+        }
+        #[cfg(target_os = "windows")]
+        {
+            let (wanted, frame) = {
+                let inner = self.lock();
+                let row = inner.devtools_dock != crate::DevToolsDock::Bottom;
+                let split = inner.win.split_dividers.iter().map(|d| {
+                    let key = crate::win::DividerKey::Split {
+                        row: d.axis == Axis::Row,
+                        path: d.path.clone(),
+                        index: d.index,
+                    };
+                    (rect_of(d.bounds), key)
+                });
+                let devtools = (inner.docked.iter())
+                    .filter(|(_, d)| d.shown && !d.separate)
+                    .filter_map(|(id, d)| {
+                        Some((
+                            d.gap.clone()?,
+                            crate::win::DividerKey::DevTools { id: *id, row },
+                        ))
+                    });
+                // The resize handles of pages in device mode ("Responsive").
+                let handles = (inner.docked.iter())
+                    .filter(|(_, d)| d.shown)
+                    .filter_map(|(id, d)| Some((*id, d.device.as_ref()?)))
+                    .flat_map(|(id, m)| {
+                        let key = move |edge| crate::win::DividerKey::Device { id, edge };
+                        m.handles
+                            .iter()
+                            .map(move |(r, edge)| (r.clone(), key(*edge)))
+                    });
+                // Windows places its windows in pixels.
+                let wanted: Vec<_> = split
+                    .chain(devtools)
+                    .chain(handles)
+                    .map(|(r, key)| (display_convert_screen_rect_to_pixels(Some(&r)), key))
+                    .collect();
+                (wanted, inner.win.frame.as_ref().map(|f| f.window.clone()))
+            };
+            if let Some(frame) = frame {
+                crate::win::set_dividers(frame.window_handle(), &wanted);
             }
         }
         self.web_panel_above_dividers();

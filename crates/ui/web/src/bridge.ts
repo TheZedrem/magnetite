@@ -1133,3 +1133,19 @@ export function splitGroup(state: UiState, split: SplitNode, id: Id): Id[] {
 
 /** The app runs on macOS (Finder, ⌘ shortcuts). */
 export const IS_MAC = navigator.userAgent.includes("Mac");
+
+/**
+ * A shortcut as this system writes it. On macOS `mac` as it is ("⇧⌘T");
+ * elsewhere `other` when the keys differ there, or else `mac` with its
+ * modifier signs spelled out, ⌘ being Ctrl ("Ctrl+Shift+T").
+ */
+export function keyLabel(mac: string, other?: string): string {
+  if (IS_MAC) return mac;
+  if (other) return other;
+  const [, mods = "", key = ""] = /^([⌘⌥⇧⌃]*)(.*)$/u.exec(mac) ?? [];
+  const names: string[] = [];
+  if (mods.includes("⌘") || mods.includes("⌃")) names.push("Ctrl");
+  if (mods.includes("⌥")) names.push("Alt");
+  if (mods.includes("⇧")) names.push("Shift");
+  return [...names, key.trim()].filter(Boolean).join("+");
+}

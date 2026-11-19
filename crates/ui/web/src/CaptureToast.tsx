@@ -65,7 +65,7 @@ export function CaptureToast() {
       <div className="flex gap-1.5">
         <button className="btn sm flex-1" onClick={copy}>Copy</button>
         <button className="btn sm flex-1" onClick={save}>Save…</button>
-        <button className="btn sm flex-1" onClick={(e) => send({ cmd: "capture_share", x: e.clientX, y: e.clientY })}>Share…</button>
+        {IS_MAC && <button className="btn sm flex-1" onClick={(e) => send({ cmd: "capture_share", x: e.clientX, y: e.clientY })}>Share…</button>}
         <button className="btn sm flex-1" onClick={() => send({ cmd: "capture_start" })}>Retake</button>
       </div>
       {note && <div className="text-[12px] text-[var(--muted)]" role="status">{note}</div>}

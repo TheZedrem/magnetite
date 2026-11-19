@@ -6,7 +6,7 @@ import { IsolationSection } from "./IsolationSection";
 import { SEARCH_ENGINES } from "./settings/searchEngines";
 import { EXTERNAL_LINKS } from "./settings/externalLinks";
 import { ARCHIVE_AFTER, UNLOAD_AFTER } from "./settings/tabTimes";
-import { applyAppearance, send, type DefaultBrowser, type LinkRule, type Settings, type SiteSearch } from "./bridge";
+import { applyAppearance, IS_MAC, keyLabel, send, type DefaultBrowser, type LinkRule, type Settings, type SiteSearch } from "./bridge";
 import { About } from "./settings/AboutSection";
 import { AdblockSection } from "./settings/AdblockSection";
 import { AutofillSection } from "./settings/AutofillSection";
@@ -217,7 +217,7 @@ export function SettingsPage() {
             <WebLanguages key={settings.languages.languages.join()} saved={settings.languages.languages} save={(languages) => send({ cmd: "set_settings", settings: { languages: { languages } } }).then(() => void reload().catch(() => undefined))} />
           </Group>
           <Group title="Command bar">
-          <Toggle label="Quick search from anywhere (⌥⌘N)" hint="Opens the command bar over any app; what you pick opens in a mini window. Only that key combination reaches Magnetite, no other typing." checked={settings.quick_search} onChange={(v) => update({ quick_search: v })} />
+          <Toggle label={`Quick search from anywhere (${keyLabel("⌥⌘N")})`} hint="Opens the command bar over any app; what you pick opens in a mini window. Only that key combination reaches Magnetite, no other typing." checked={settings.quick_search} onChange={(v) => update({ quick_search: v })} />
           </Group>
           <Group title="First start">
           <Field side label="Welcome page" hint="The questions of the first start, once more. Nothing you have set changes until you choose something there.">
@@ -556,6 +556,7 @@ function ClearHistory({ disabled, onClear }: { disabled: boolean; onClear: () =>
 /**
  * Whether Magnetite opens links from other apps, and a button to make it so.
  * macOS asks the user itself; the card shows what the system says afterwards.
+ * Windows has the user choose in its Settings, which open.
  */
 function DefaultBrowserCard({ state }: { state: DefaultBrowser }) {
   const [now, setNow] = useState(state);
@@ -568,7 +569,7 @@ function DefaultBrowserCard({ state }: { state: DefaultBrowser }) {
   };
   return (
     <Field side label="Default browser" hint={now === "yes" ? "Magnetite opens links from other apps." : "Links from other apps open in another browser."}>
-      {now === "no" && <button className="btn" disabled={asking} onClick={ask}>{asking ? "Waiting for macOS…" : "Make default"}</button>}
+      {now === "no" && <button className="btn" disabled={asking} onClick={ask}>{asking ? (IS_MAC ? "Waiting for macOS…" : "Opening Settings…") : "Make default"}</button>}
     </Field>
   );
 }

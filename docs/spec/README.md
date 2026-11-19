@@ -5,7 +5,9 @@ today, checked against the code, and ends with what is not built yet. A change
 in behaviour changes its spec in the same pull request.
 
 Shortcuts are the macOS ones, with the keys they have until the user
-changes them ([shortcuts.md](shortcuts.md)).
+changes them ([shortcuts.md](shortcuts.md)). On Windows and Linux `Cmd` is
+`Ctrl` and `Option` is `Alt`; where the keys differ more, the app's own
+labels say so.
 
 | Spec | Covers |
 |---|---|

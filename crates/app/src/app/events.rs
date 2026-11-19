@@ -403,12 +403,16 @@ impl EngineDelegate for MagnetiteApp {
                 self.show_state_paced(engine);
             }
             EngineEvent::Relaunched { argv, cwd } => {
-                // Parsed as at start: an option's value is no address.
+                // Parsed as at start: an option's value is no address, and
+                // what follows `--single-argument` is one link (Windows).
                 let cwd = cwd.unwrap_or_default();
-                let args = crate::parse_cli(argv)
+                let (argv, link) = crate::split_link(argv);
+                let given = crate::parse_cli(argv)
                     .map(|cli| cli.urls)
                     .unwrap_or_default();
-                let urls: Vec<String> = args.iter().map(|a| launch_url(a, &cwd)).collect();
+                let urls: Vec<String> = (given.iter().chain(&link))
+                    .map(|a| launch_url(a, &cwd))
+                    .collect();
                 if urls.is_empty() {
                     engine.activate_frame();
                 }
@@ -695,6 +699,9 @@ mod tests {
     #[test]
     fn launch_arguments_that_are_existing_files_become_file_addresses() {
         let dir = crate::files::test_dir("launch-url");
+        std::fs::create_dir_all(&dir).unwrap();
+        // Windows has no folder names with a colon.
+        #[cfg(unix)]
         std::fs::create_dir_all(dir.join("https:").join("a.example")).unwrap();
         std::fs::write(dir.join("my page.html"), "").unwrap();
         let file_url = url::Url::from_file_path(dir.join("my page.html"))

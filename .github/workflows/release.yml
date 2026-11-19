@@ -43,8 +43,7 @@ jobs:
           - { os: macos-15-intel, target: macos-x86_64 }
           - { os: ubuntu-24.04, target: linux-x86_64 }
           - { os: ubuntu-24.04-arm, target: linux-aarch64 }
-          # Windows is not built yet (never tried). Its steps stay for the
-          # day it joins: add `{ os: windows-latest, target: windows-x86_64 }`.
+          - { os: windows-latest, target: windows-x86_64 }
     runs-on: ${{ matrix.os }}
     # Notarization can take a while; a stuck build must not run for hours.
     timeout-minutes: 120
@@ -81,8 +80,14 @@ jobs:
       # to do, and the scriptlets are made).
       - name: Build
         run: |
+          # Windows: MSVC's link.exe ahead of Git Bash's own link.
+          source scripts/lib.sh
           (cd crates/ui/web && pnpm install --frozen-lockfile && pnpm build)
           cargo build --locked --profile release -p magnetite --bins
+          # Windows packages start Magnetite as a DLL (crates/windows).
+          if [[ $RUNNER_OS == Windows ]]; then
+            cargo build --locked --profile release -p magnetite-windows
+          fi
           scripts/scriptlets.sh
 
       - name: Developer ID certificate
@@ -93,8 +98,19 @@ jobs:
           APPLE_PROVISIONING_PROFILE_BASE64: ${{ secrets.APPLE_PROVISIONING_PROFILE_BASE64 }}
         run: scripts/release/import-macos-cert.sh
 
+      # For the installer; GitHub's image usually has it already.
+      - name: Inno Setup
+        if: runner.os == 'Windows'
+        run: |
+          [[ -f "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" ]] || choco install innosetup --yes --no-progress
+
       - name: Package and sign
         run: scripts/build.sh --release --skip-ui
+
+      # Without Inno Setup the package step makes the zip alone.
+      - name: Require the Windows installer
+        if: runner.os == 'Windows'
+        run: test -f "dist/Magnetite-$VERSION-${{ matrix.target }}-setup.exe"
 
       # rpm and deb next to the tarball; signed in the publish job, which
       # alone holds the repository key.
@@ -114,10 +130,18 @@ jobs:
           scripts/release/notarize-macos.sh dist/Magnetite.app \
             "dist/Magnetite-$VERSION-${{ matrix.target }}.zip" "dist/Magnetite-$VERSION-${{ matrix.target }}.dmg"
 
+      # No certificate for Windows yet: SmartScreen warns about the download.
+      - name: Warn about an unsigned installer
+        if: runner.os == 'Windows'
+        run: echo "::warning::${{ matrix.target }} is not signed; SmartScreen will warn about it after download"
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: package-${{ matrix.target }}
-          path: dist/*-${{ matrix.target }}.*
+          # The package, and on Windows its installer.
+          path: |
+            dist/*-${{ matrix.target }}.*
+            dist/*-${{ matrix.target }}-setup.exe
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
@@ -168,7 +192,7 @@ jobs:
 
       - name: Checksums
         working-directory: dist
-        run: sha256sum -- *.zip *.dmg *.tar.gz *.rpm *.deb >SHA256SUMS
+        run: sha256sum -- *.zip *.dmg *.tar.gz *.rpm *.deb *.exe >SHA256SUMS
 
       # The notes: GitHub's list of the pull requests since the last
       # release, for a maintainer to rewrite, then the install table.
@@ -182,5 +206,5 @@ jobs:
           scripts/release/release-notes.sh "$VERSION" dist >>"$RUNNER_TEMP/notes.md"
           gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
             --title "Magnetite $VERSION" --notes-file "$RUNNER_TEMP/notes.md" \
-            dist/*.zip dist/*.dmg dist/*.tar.gz dist/*.rpm dist/*.deb dist/*.deb.asc dist/latest.json dist/latest.json.sig dist/magnetite.rb dist/SHA256SUMS \
+            dist/*.zip dist/*.dmg dist/*.tar.gz dist/*.rpm dist/*.deb dist/*.deb.asc dist/*.exe dist/latest.json dist/latest.json.sig dist/magnetite.rb dist/SHA256SUMS \
             "$RUNNER_TEMP/linux-repository.tar"

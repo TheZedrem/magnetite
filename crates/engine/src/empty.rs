@@ -10,6 +10,14 @@ use cef::*;
 use crate::client::MagnetiteClient;
 use crate::engine::Engine;
 
+/// The app icon as an image for a window (taskbar, Alt+Tab).
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn app_icon() -> Option<Image> {
+    let image = image_create()?;
+    let png = include_bytes!("../../ui/web/src/assets/icon.png");
+    (image.add_png(1.0, Some(png)) != 0).then_some(image)
+}
+
 /// The view in the content panel.
 pub(crate) struct EmptyPage {
     view: BrowserView,

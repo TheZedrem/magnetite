@@ -1,7 +1,7 @@
 // Settings → Appearance: space colours and their strength, backgrounds, layout, text size, density, sidebar width.
 import { useRef, useState } from "react";
 import { storeImage, userImageUrl, type ImageSlot } from "../backgrounds";
-import { DEFAULT_ACCENT, accentCss, applyAppearance, lookOf, send, type Appearance, type Color, type SpaceLook } from "../bridge";
+import { DEFAULT_ACCENT, accentCss, applyAppearance, keyLabel, lookOf, send, type Appearance, type Color, type SpaceLook } from "../bridge";
 import { Field, Group, Slider } from "./fields";
 import type { Info, SettingsPatch } from "./types";
 
@@ -135,7 +135,7 @@ export function AppearanceSection({ info, update, reload }: { info: Info; update
           ))}
         </div>
       </Field>
-      <Field side label="Text size" hint="The sidebar, the command bar and these pages. Web pages zoom on their own with ⌘+ and ⌘−.">
+      <Field side label="Text size" hint={`The sidebar, the command bar and these pages. Web pages zoom on their own with ${keyLabel("⌘+", "Ctrl +")} and ${keyLabel("⌘−", "Ctrl −")}.`}>
         <Slider value={draft.text_scale} min={85} max={130} step={5} unit="%" reset={100} onChange={(v, now) => set({ text_scale: v }, now)} />
       </Field>
       <Field side label="Page zoom" hint="The zoom a website has until you zoom it yourself. A change counts from the next start of Magnetite.">
