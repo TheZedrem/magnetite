@@ -281,7 +281,9 @@ impl AppState {
     pub fn tabs_by_last_use(&self) -> Vec<Id> {
         let space = self.active_space();
         // A web panel is no tab to switch to: it opens over one.
-        let favorites = self.sidebar.favorites.iter().flat_map(|f| f.items.iter());
+        let favorites = (self.sidebar.favorites.iter())
+            .flat_map(|f| f.items.iter())
+            .filter(|t| self.sidebar.favorite_shows(t, &space.id));
         let pinned = space.pinned.iter().flat_map(SidebarNode::tabs);
         let kept = favorites.chain(pinned).filter(|t| !t.panel);
         let mut tabs: Vec<&TabItem> = kept.chain(&space.today).collect();
@@ -310,11 +312,17 @@ impl AppState {
         }
         let mut tabs = self.tabs_by_last_use();
         tabs.truncate(SWITCH_TABS);
-        if tabs.len() < 2 {
+        // The round begins on the active tab, the first of the list: unless
+        // that tab is not in the list (a favorite this space does not
+        // show). Then it begins on the tab used before, and one tab is
+        // enough to switch to.
+        let active = self.active_tab_id();
+        let unlisted =
+            active.is_some_and(|a| self.find_tab(a).is_some() && !tabs.iter().any(|t| t == a));
+        if tabs.len() < if unlisted { 1 } else { 2 } {
             return false;
         }
-        // The round begins on the active tab, the first of the list.
-        let from_active = usize::from(self.active_tab_id().is_some());
+        let from_active = usize::from(active.is_some() && !unlisted);
         let at = if forward { from_active } else { tabs.len() - 1 };
         static ROUNDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let round = ROUNDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -323,12 +331,18 @@ impl AppState {
     }
 
     /// End the round of `Ctrl+Tab`: the tab it stands on, if it is still
-    /// there and a tab to go to (not made a web panel meanwhile). `None`
+    /// there and a tab to go to (not made a web panel meanwhile, nor a
+    /// favorite of other spaces only). `None`
     /// without a round.
     pub fn end_tab_switch(&mut self) -> Option<Id> {
         let round = self.switcher.take()?;
         let chosen = round.tabs.get(round.at)?;
-        let still = self.find_tab(chosen).is_some() && !self.is_web_panel(chosen);
+        // Still there, and still one this space shows: a favorite may have
+        // been given to other spaces while the round went on.
+        let shown = self.find_tab(chosen).is_some_and(|(space, tab)| {
+            space.is_some() || self.sidebar.favorite_shows(tab, &self.active_space)
+        });
+        let still = shown && !self.is_web_panel(chosen);
         still.then(|| chosen.clone())
     }
 
