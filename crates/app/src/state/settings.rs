@@ -64,6 +64,10 @@ pub struct Settings {
     /// The shortcuts whose keys go first to someone else than by default:
     /// to the page, or to Magnetite (Settings → Shortcuts). Synced.
     pub shortcut_priority: magnetite_engine::Priorities,
+    /// Sites (registrable domains) whose pages get the keys of every
+    /// shortcut first, whatever the shortcut's own choice (the site panel,
+    /// Settings → Shortcuts). Synced.
+    pub shortcut_sites: Vec<String>,
     /// The system-wide quick search key (⌥⌘N) is registered. This
     /// device's own choice, never synced.
     pub quick_search: bool,
@@ -268,15 +272,50 @@ impl AdblockSettings {
             }
         }
         self.lists = lists;
-        let mut sites: Vec<String> = (self.allowed_sites.iter())
-            .map(|s| s.trim().trim_end_matches('.').to_lowercase())
-            .filter(|s| !s.is_empty())
-            .collect();
-        sites.sort();
-        sites.dedup();
-        self.allowed_sites = sites;
+        self.allowed_sites = site_names(&self.allowed_sites);
         self
     }
+}
+
+/// The site (registrable domain) a user means by `typed`: a name, or a
+/// whole address, of which the host counts. `None` for what names no host.
+pub fn typed_site(typed: &str) -> Option<String> {
+    let typed = typed.trim();
+    // An IP address of version 6 has colons of its own, which an address
+    // without brackets would lose.
+    if let Ok(ip) = typed.parse::<std::net::IpAddr>() {
+        return Some(ip.to_string());
+    }
+    let address = if typed.contains("://") {
+        typed.to_string()
+    } else {
+        format!("https://{typed}")
+    };
+    // Parsed as an address: an international name becomes punycode, as a
+    // page's host is.
+    let url = url::Url::parse(&address).ok()?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+    match url.host()? {
+        url::Host::Domain(name) => {
+            let name = name.trim_start_matches("www.");
+            (!name.is_empty()).then(|| magnetite_engine::registrable_domain(name))
+        }
+        url::Host::Ipv4(ip) => Some(ip.to_string()),
+        url::Host::Ipv6(ip) => Some(ip.to_string()),
+    }
+}
+
+/// `sites` as lower-case names, sorted, each once.
+fn site_names(sites: &[String]) -> Vec<String> {
+    let mut sites: Vec<String> = (sites.iter())
+        .map(|s| s.trim().trim_end_matches('.').to_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+    sites.sort();
+    sites.dedup();
+    sites
 }
 
 /// How the sidebar and Magnetite's own pages look (Settings → Appearance).
@@ -632,6 +671,7 @@ impl Settings {
         self.history_days = self.history_days.min(MAX_ARCHIVE_DAYS);
         self.appearance = self.appearance.clamped();
         self.adblock = self.adblock.sanitised();
+        self.shortcut_sites = site_names(&self.shortcut_sites);
         self.developer = self.developer.sanitised();
         self.system_engine = self.system_engine.sanitised();
         if !usable_search(&self.search_template) {
@@ -755,6 +795,7 @@ impl Settings {
             smart_allowed: self.smart_allowed.clone(),
             shortcuts: self.shortcuts.clone(),
             shortcut_priority: self.shortcut_priority.clone(),
+            shortcut_sites: self.shortcut_sites.clone(),
             ..wanted
         })
     }
@@ -775,6 +816,7 @@ impl Default for Settings {
             site_code: Vec::new(),
             shortcuts: magnetite_engine::Overrides::default(),
             shortcut_priority: magnetite_engine::Priorities::default(),
+            shortcut_sites: Vec::new(),
             quick_search: true,
             chrome_toolbar: false,
             appearance: Appearance::default(),
@@ -813,6 +855,40 @@ mod tests {
             site: site.into(),
             space: space.into(),
         }
+    }
+
+    #[test]
+    fn a_typed_site_is_kept_by_its_name() {
+        let site = |typed: &str| typed_site(typed);
+        assert_eq!(
+            site("https://www.Figma.com/design/1").as_deref(),
+            Some("figma.com")
+        );
+        assert_eq!(site(" app.example.org ").as_deref(), Some("example.org"));
+        assert_eq!(site("localhost:3000").as_deref(), Some("localhost"));
+        assert_eq!(site("bücher.de").as_deref(), Some("xn--bcher-kva.de"));
+        assert_eq!(site("magnetite://ui/settings"), None);
+        assert_eq!(site("not a site"), None);
+        assert_eq!(site(" "), None);
+        // An IP address stays whole, typed again too.
+        for typed in ["[2001:db8::1]", "2001:db8::1", "http://[2001:db8::1]:8080/"] {
+            assert_eq!(site(typed).as_deref(), Some("2001:db8::1"), "{typed}");
+        }
+        assert_eq!(site("127.0.0.1:8080").as_deref(), Some("127.0.0.1"));
+    }
+
+    #[test]
+    fn a_settings_patch_leaves_the_shortcut_sites() {
+        let before = Settings {
+            shortcut_sites: vec!["example.org".into()],
+            ..Settings::default()
+        };
+        let patch = serde_json::json!({ "shortcut_sites": ["example.com"] });
+        let serde_json::Value::Object(patch) = patch else {
+            unreachable!()
+        };
+        let after = before.patched(patch).expect("a patch");
+        assert_eq!(after.shortcut_sites, ["example.org"]);
     }
 
     #[test]

@@ -682,6 +682,17 @@ pub(super) enum UiCommand {
     SiteAds {
         url: String,
     },
+    /// Site panel: whether the site of the page at `url` gets the keys of
+    /// every shortcut first.
+    SiteShortcuts {
+        url: String,
+    },
+    /// Site panel and Settings: the site of the page at `url`, or the site
+    /// `url` names, gets the keys of every shortcut first, or no longer.
+    SetSiteShortcuts {
+        url: String,
+        page_first: bool,
+    },
     /// Site panel: block ads on the site of the page at `url` again, or not.
     SetSiteAds {
         url: String,
@@ -2595,6 +2606,10 @@ impl MagnetiteApp {
                 lock(&self.capture).result = None;
             }
             UiCommand::SiteAds { url } => return Ok(self.site_ads(&url)),
+            UiCommand::SiteShortcuts { url } => return Ok(self.site_shortcuts(&url)),
+            UiCommand::SetSiteShortcuts { url, page_first } => {
+                self.set_site_shortcuts(engine, &url, page_first);
+            }
             UiCommand::SiteEngine { url } => return Ok(self.site_engine(&url)),
             UiCommand::SetSiteEngine { url, system } => {
                 self.set_site_engine(engine, &url, system)?;
