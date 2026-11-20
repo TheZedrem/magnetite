@@ -30,8 +30,8 @@
 > | Patch | Upstream | CEF it needs |
 > | --- | --- | --- |
 > | Linux: extension popups open after every start and take the keyboard under Wayland. | [#267](https://github.com/magnetite-browser/magnetite/pull/267) | Any CEF. |
-> | Linux: Shift+click on a link opens a peek, not a mini window. | Not yet | Any CEF. |
-> | Linux: the peek's buttons (close, open as tab, split) beside it, as on macOS. | Not yet | Any CEF. |
+> | Linux: Shift+click on a link opens a peek, not a mini window. | [#270](https://github.com/magnetite-browser/magnetite/pull/270) | Any CEF. |
+> | Linux: the peek's buttons (close, open as tab, split) beside it, as on macOS. | [#271](https://github.com/magnetite-browser/magnetite/pull/271) | Any CEF. |
 >
 > None of them needs a CEF of my own: my [magnetite-cef fork](https://github.com/TheZedrem/magnetite-cef) has no patches upstream lacks.
 >
