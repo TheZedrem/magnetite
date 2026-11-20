@@ -547,6 +547,9 @@ impl Engine {
         self.lock().win.split = Some(tree.clone());
         self.layout_split(tree);
         self.update_dividers(Some(tree));
+        // The peek's buttons follow the page they sit over.
+        #[cfg(target_os = "linux")]
+        self.sync_peek_buttons();
         // The outline follows the resized page.
         let focus = self.lock().win.focused_pane;
         self.update_focus_ring(focus);

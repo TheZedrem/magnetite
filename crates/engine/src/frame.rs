@@ -752,6 +752,9 @@ impl Engine {
         if let Some(tree) = split.filter(|t| t.pane_count() > 1) {
             self.layout_split(&tree);
             self.update_dividers(Some(&tree));
+            // The page the peek's buttons sit over may have moved.
+            #[cfg(target_os = "linux")]
+            self.sync_peek_buttons();
             self.update_grab_strip();
             self.place_notifications();
             return;
