@@ -4,7 +4,8 @@
 //! Widevine programme has verified, which Magnetite's Chromium is not. The
 //! system's engine has protected playback of its own, so the sites the app
 //! names (`Engine::set_system_engine_sites`) get their page from it: `WebKit`
-//! on macOS (`mac/webkit.rs`). No other system has such a page yet.
+//! on macOS (`mac/webkit.rs`), WebView2 on Windows (`win/webview2.rs`).
+//! Linux has no such engine.
 //!
 //! A system page is a page like any other to the rest of the engine and to
 //! the app: the same id, the same window in the frame (so it is shown,
@@ -30,10 +31,12 @@ use crate::site::SiteState;
 
 #[cfg(target_os = "macos")]
 pub(crate) use crate::mac::webkit as backend;
+#[cfg(target_os = "windows")]
+pub(crate) use crate::win::webview2 as backend;
 
 /// No system engine is hosted here: `available` says so, and nothing else
 /// is ever asked.
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub(crate) mod backend {
     use crate::events::ContentId;
     use std::path::Path;
@@ -102,6 +105,21 @@ impl Engine {
     /// pages in.
     pub fn system_engine_available() -> bool {
         backend::available()
+    }
+
+    /// The system's engine as the user reads of it: its name, and what it
+    /// is. Empty where there is none.
+    pub fn system_engine_name() -> (&'static str, &'static str) {
+        if cfg!(target_os = "macos") {
+            ("WebKit", "the Mac's own web engine")
+        } else if cfg!(target_os = "windows") {
+            (
+                "WebView2",
+                "Microsoft Edge's engine, which comes with Windows",
+            )
+        } else {
+            ("", "")
+        }
     }
 
     /// The sites whose pages the system's engine shows from now on: hosts,
@@ -249,7 +267,7 @@ impl Engine {
 /// What a system page reports, each as the event a Chromium page's handlers
 /// (`client.rs`) send for the same thing. Compiled where a backend exists
 /// to report.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 impl Engine {
     /// The view of page `id` got the keyboard.
     pub(crate) fn system_focused(&self, id: ContentId) {
@@ -304,6 +322,17 @@ impl Engine {
         });
         if !loading {
             self.emit_site_state(id);
+        }
+    }
+
+    /// Page `id` shows an element of its own full screen (a video), or no
+    /// more. WebView2 only says so: its page's window is made full screen,
+    /// and the view fills it. `WebKit` makes a window of its own.
+    #[cfg(target_os = "windows")]
+    pub(crate) fn system_fullscreen(&self, id: ContentId, on: bool) {
+        let window = (self.lock().contents.get(&id)).and_then(|c| c.window.clone());
+        if let Some(window) = window {
+            window.set_fullscreen(i32::from(on));
         }
     }
 
