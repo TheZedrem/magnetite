@@ -772,6 +772,9 @@ impl Engine {
                 self.place(id, &rect);
             }
         }
+        // The page the peek's buttons sit over may have moved.
+        #[cfg(target_os = "linux")]
+        self.sync_peek_buttons();
         if panel.is_some() && !crate::content::WEB_PANEL_DOCKED {
             // The panel moved or changed its width: its grip and button
             // follow.
