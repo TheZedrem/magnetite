@@ -635,22 +635,18 @@ wrap_request_handler! {
             if target_disposition == WindowOpenDisposition::OFF_THE_RECORD {
                 return 1;
             }
-            // "Open Link in New Window" asks for a window of its own. On
-            // Windows a Shift+click arrives here looking the same (on macOS
-            // it is a popup request): with Shift held it is the click, which
-            // asks for a new window as a page does and so gets a peek.
-            let window = target_disposition == WindowOpenDisposition::NEW_WINDOW;
-            #[cfg(target_os = "windows")]
-            let click = window && crate::win::shift_held();
-            #[cfg(not(target_os = "windows"))]
-            let click = false;
+            // A new window asked for here is a Shift+click on a link (on
+            // macOS that is a popup request instead): it asks for a new
+            // window as a page does and so gets a peek. "Open Link in New
+            // Window", which looks the same here, never arrives: the menu
+            // command opens its mini window itself (`on_context_menu_command`).
             Engine::global().request_open(
                 browser.as_deref(),
                 target_url.map(CefString::to_string).unwrap_or_default(),
                 url_source(self.kind),
                 target_disposition == WindowOpenDisposition::NEW_BACKGROUND_TAB,
-                click,
-                window && !click,
+                target_disposition == WindowOpenDisposition::NEW_WINDOW,
+                false,
             );
             1
         }
@@ -920,7 +916,9 @@ wrap_context_menu_handler! {
             }
         }
         /// "Inspect" in a page's menu opens `DevTools` through us, at the
-        /// clicked element, so they dock and get our menu items.
+        /// clicked element, so they dock and get our menu items. "Open Link
+        /// in New Window" opens a mini window through us: Chromium would ask
+        /// for it just as for a Shift+click (`on_open_urlfrom_tab`).
         fn on_context_menu_command(
             &self,
             browser: Option<&mut Browser>,
@@ -929,6 +927,14 @@ wrap_context_menu_handler! {
             command_id: ::std::os::raw::c_int,
             _event_flags: EventFlags,
         ) -> ::std::os::raw::c_int {
+            // A page's popup window (`Kind::Stray`) has the item too.
+            if matches!(self.kind, Kind::Content | Kind::Stray)
+                && Some(command_id) == keys::command_id_for("IDC_CONTENT_CONTEXT_OPENLINKNEWWINDOW")
+            {
+                let Some(url) = params.map(|p| CefString::from(&p.link_url()).to_string()) else { return 0 };
+                Engine::global().request_open(browser.as_deref(), url, url_source(self.kind), false, false, true);
+                return 1;
+            }
             if self.kind != Kind::Content || Some(command_id) != keys::command_id_for("IDC_CONTENT_CONTEXT_INSPECTELEMENT") {
                 return 0;
             }
