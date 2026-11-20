@@ -355,6 +355,12 @@ impl Engine {
         if !is_extension_id(extension) || !crate::devpipe::is_open() {
             return;
         }
+        // Wayland: the popup is a bubble inside the page's bubble, and
+        // Chromium activates one level only, so it gets keys only while the
+        // page's bubble is the frame's active one. A click in the sidebar
+        // made the frame itself active: hand the page the keyboard first.
+        #[cfg(target_os = "linux")]
+        self.focus_content(id);
         let extension = extension.to_string();
         let asked = std::time::Instant::now();
         self.with_tab_target(id, move |tab| {
