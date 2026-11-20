@@ -1,5 +1,6 @@
 //! The frame window: the top bar view (when on) above the body, which holds
-//! the sidebar view and the content panel.
+//! the sidebar view and, right of it, the developer bar (while the page in
+//! front has developer tools) above the content panel.
 
 use cef::*;
 
@@ -15,10 +16,18 @@ pub(crate) struct FrameState {
     /// The top bar's view, made the first time it is turned on.
     pub top_bar_view: Option<BrowserView>,
     pub top_bar_browser: Option<Browser>,
+    /// Right of the sidebar: the developer bar above the content panel.
+    pub pages_column: Panel,
+    /// The developer bar's view, made the first time it shows.
+    pub dev_bar_view: Option<BrowserView>,
+    pub dev_bar_browser: Option<Browser>,
     pub content_panel: Panel,
     pub sidebar_browser: Option<Browser>,
     /// The hint in the content panel for a window without a page.
     pub empty: Option<crate::empty::EmptyPage>,
+    /// The window's own buttons in a row at the top of the pages' column,
+    /// where the system draws none (`caption.rs`).
+    pub caption: Option<crate::caption::Caption>,
 }
 
 impl Engine {
@@ -105,6 +114,7 @@ impl Engine {
             (is(frame.and_then(|f| f.sidebar_browser.as_ref()))
                 || is(empty.as_ref())
                 || is(frame.and_then(|f| f.top_bar_browser.as_ref()))
+                || is(frame.and_then(|f| f.dev_bar_browser.as_ref()))
                 || is(float.as_ref()))
             .then_some(win)
         })
@@ -112,7 +122,7 @@ impl Engine {
 
     /// Close window `win`; its pages stay loaded in another one where they
     /// can move (`leave_window`). The last window does not close this way:
-    /// that is quitting (`quit`).
+    /// it hides on macOS (`hide_frame`) and asks to quit elsewhere.
     pub fn close_window(&self, win: WindowId) {
         let frame = {
             let inner = self.lock();
@@ -134,6 +144,8 @@ impl Engine {
     const GRAB_OVERLAP: i32 = 6;
     /// Height of the top bar (`magnetite://ui/topbar`).
     pub const TOP_BAR_HEIGHT: i32 = 42;
+    /// Height of the developer bar (`magnetite://ui/devbar`).
+    pub const DEV_BAR_HEIGHT: i32 = 36;
 
     /// Keep the window-drag strip along the top of the page area, above the
     /// page windows (see `mac::set_grab_strip`).
@@ -175,11 +187,31 @@ impl Engine {
     }
 
     /// Screen rectangle (DIP) the content windows must cover: the content
-    /// panel minus an inset so the page floats inside the frame. With the
+    /// panel minus an inset so the page floats inside the frame, and
+    /// without what a docked web panel takes (`WEB_PANEL_DOCKED`). With the
     /// sidebar hidden and no top bar the pages cover the window's own
     /// buttons: the floating sidebar has them then.
     pub fn content_rect(&self) -> Rect {
-        let r = self.content_panel_in_screen();
+        let area = self.page_area();
+        // Its own statement: `page_area` locks too.
+        let docked = {
+            let inner = self.lock();
+            (inner.win.web_panel).map(|_| inner.win.web_panel_width)
+        };
+        match docked.filter(|_| crate::content::WEB_PANEL_DOCKED) {
+            Some(width) => crate::content::beside_web_panel(&area, width),
+            None => area,
+        }
+    }
+
+    /// `content_rect` with the room a docked web panel takes: the whole
+    /// page area, which the panel is placed in.
+    pub(crate) fn page_area(&self) -> Rect {
+        Self::inset(&self.content_panel_in_screen())
+    }
+
+    /// The content panel `r` without the frame's inset around the pages.
+    fn inset(r: &Rect) -> Rect {
         let i = Self::CONTENT_INSET;
         Rect {
             x: r.x + i,
@@ -189,10 +221,48 @@ impl Engine {
         }
     }
 
+    /// What the page behind the tabs shows beside a docked web panel, in
+    /// the window (`Empty.tsx`): the gap beyond it, the grip to resize it,
+    /// and the button to close it, in reach while no page lies over it.
+    fn docked_controls_in_window(&self) -> Option<[Rect; 2]> {
+        let width = {
+            let inner = self.lock();
+            inner
+                .win
+                .web_panel
+                .filter(|_| crate::content::WEB_PANEL_DOCKED)?;
+            inner.win.web_panel_width
+        };
+        let area = Self::inset(&self.content_panel_in_window());
+        let panel = crate::content::web_panel_rect(&area, width);
+        let grip = Rect {
+            x: panel.x + panel.width,
+            width: crate::content::SPLIT_GAP,
+            ..panel.clone()
+        };
+        let side = i32::from(crate::panel_close::SIZE);
+        let button = Rect {
+            x: grip.x + grip.width + crate::panel_close::MARGIN,
+            y: panel.y + crate::panel_close::MARGIN,
+            width: side,
+            height: side,
+        };
+        Some([grip, button])
+    }
+
+    /// A docked web panel opened, closed or changed its width: the pages
+    /// take the room beside it, and the gap between them is the grip.
+    pub(crate) fn dock_web_panel(&self) {
+        self.reposition_contents();
+        self.apply_drag_regions();
+    }
+
     /// Draggable areas of the frame: the top bar's and the sidebar page's
     /// `app-region: drag` zones plus the whole content panel. Pages sit in
     /// child windows above the panel, so only the gaps around them (top
-    /// edge, sides, split gutters) end up moving the window.
+    /// edge, sides, split gutters) end up moving the window. Not the gap
+    /// and the button beside a docked web panel: a drag in the gap resizes
+    /// the panel, a click on the button closes it.
     pub(crate) fn apply_drag_regions(&self) {
         let (window, sidebar, top_bar) = {
             let inner = self.lock();
@@ -211,6 +281,7 @@ impl Engine {
             };
             (f.window.clone(), sidebar, top_bar)
         };
+        let caption = Self::caption_height(&self.lock());
         // The sidebar page reports bounds within itself, below the top bar.
         let below = |mut r: DraggableRegion| {
             r.bounds.y += self.top_bar_offset();
@@ -222,6 +293,35 @@ impl Engine {
         }];
         regions.extend(sidebar.into_iter().map(below));
         regions.extend(top_bar);
+        if caption > 0 {
+            // The row of our own window buttons, at the window's top above
+            // the pages: it drags the window, the buttons take clicks.
+            let panel = self.content_panel_in_window();
+            let row = Rect {
+                y: 0,
+                height: caption,
+                ..panel
+            };
+            let width = crate::caption::Caption::BUTTONS_WIDTH.min(row.width);
+            let buttons = Rect {
+                x: row.x + row.width - width,
+                width,
+                ..row.clone()
+            };
+            regions.push(DraggableRegion {
+                bounds: row,
+                draggable: 1,
+            });
+            regions.push(DraggableRegion {
+                bounds: buttons,
+                draggable: 0,
+            });
+        }
+        let controls = self.docked_controls_in_window().into_iter().flatten();
+        regions.extend(controls.map(|bounds| DraggableRegion {
+            bounds,
+            draggable: 0,
+        }));
         window.set_draggable_regions(Some(&regions));
     }
 
@@ -236,7 +336,7 @@ impl Engine {
     }
 
     /// The content panel's place in the window: right of the sidebar, below
-    /// the top bar. Worked out from the window's size, not asked of the
+    /// the top bar and the developer bar. Worked out from the window's size, not asked of the
     /// panel: Chromium lays out the nested body lazily, so the panel can
     /// still report where it was before a change.
     fn content_panel_in_window(&self) -> Rect {
@@ -250,11 +350,17 @@ impl Engine {
         } else {
             0
         };
-        let y = if inner.top_bar_visible {
+        let top_bar = if inner.top_bar_visible {
             Self::TOP_BAR_HEIGHT
         } else {
             0
         };
+        let dev_bar = if inner.win.dev_bar_visible {
+            Self::DEV_BAR_HEIGHT
+        } else {
+            0
+        };
+        let y = top_bar + Self::caption_height(&inner) + dev_bar;
         Rect {
             x,
             y,
@@ -263,8 +369,37 @@ impl Engine {
         }
     }
 
+    /// The height of the row of our own window buttons above the current
+    /// window's pages (`caption.rs`), 0 without one: a full screen window
+    /// has none, and the top bar has the buttons itself.
+    fn caption_height(inner: &crate::engine::Inner) -> i32 {
+        let row = (inner.win.frame.as_ref())
+            .is_some_and(|f| f.caption.is_some() && f.window.is_fullscreen() == 0);
+        if row && !inner.top_bar_visible {
+            crate::caption::Caption::HEIGHT
+        } else {
+            0
+        }
+    }
+
+    /// The buttons' row follows the window: maximised or not, and whether
+    /// it shows at all (`caption_height`). The callers place the pages anew.
+    pub(crate) fn sync_caption(&self) {
+        // Not under the lock: a new layout asks the views' delegates,
+        // which ask the engine.
+        let frame = {
+            let inner = self.lock();
+            let shown = Self::caption_height(&inner) > 0;
+            (inner.win.frame.as_ref())
+                .and_then(|f| Some((f.window.clone(), f.caption.clone()?, shown)))
+        };
+        if let Some((window, caption, shown)) = frame {
+            caption.sync(window.is_maximized() != 0, shown);
+        }
+    }
+
     /// `content_panel_in_window` in screen coordinates.
-    fn content_panel_in_screen(&self) -> Rect {
+    pub(crate) fn content_panel_in_screen(&self) -> Rect {
         let client = (self.frame_window())
             .map(|w| w.bounds())
             .unwrap_or_default();
@@ -306,7 +441,7 @@ impl Engine {
         match view {
             Some(view) => View::from(&view).set_visible(visible.into()),
             None if visible => {
-                let Some(view) = create_top_bar_view() else {
+                let Some(view) = create_bar_view("topbar", Self::TOP_BAR_HEIGHT) else {
                     return;
                 };
                 // Before the view is added: its browser is matched to its
@@ -318,6 +453,8 @@ impl Engine {
             }
             None => {}
         }
+        // The top bar has the window's buttons: our row above the pages goes.
+        self.sync_caption();
         window.layout();
         self.reposition_contents();
         self.apply_drag_regions();
@@ -327,6 +464,48 @@ impl Engine {
         if self.float_sidebar_shown() {
             self.show_float_sidebar(true);
         }
+    }
+
+    /// Show the developer bar above the current window's pages, or hide it.
+    /// Its page is made the first time. The pages move down by its height.
+    pub fn set_dev_bar_visible(&self, visible: bool) {
+        let frame = {
+            let mut inner = self.lock();
+            if std::mem::replace(&mut inner.win.dev_bar_visible, visible) == visible {
+                return;
+            }
+            let frame = inner.win.frame.as_ref();
+            frame.map(|f| {
+                (
+                    f.window.clone(),
+                    f.pages_column.clone(),
+                    f.dev_bar_view.clone(),
+                    f.caption.is_some(),
+                )
+            })
+        };
+        let Some((window, column, view, caption)) = frame else {
+            return;
+        };
+        match view {
+            Some(view) => View::from(&view).set_visible(visible.into()),
+            None if visible => {
+                let Some(view) = create_bar_view("devbar", Self::DEV_BAR_HEIGHT) else {
+                    return;
+                };
+                // Before the view is added, as for the top bar.
+                if let Some(f) = self.lock().win.frame.as_mut() {
+                    f.dev_bar_view = Some(view.clone());
+                }
+                // Below the row of the window's buttons, if there is one.
+                column.add_child_view_at(Some(&mut View::from(&view)), caption.into());
+            }
+            None => {}
+        }
+        window.layout();
+        self.reposition_contents();
+        self.apply_drag_regions();
+        self.update_edge_zone();
     }
 
     /// The window buttons of the top bar (Linux and Windows) and of the
@@ -355,21 +534,58 @@ impl Engine {
         }
     }
 
-    /// Close the frame window: asks to quit, as the window manager's close does.
+    /// Close the frame window, as the window manager's close does: the last
+    /// one hides on macOS and asks to quit elsewhere (`can_close`).
     pub fn close_frame(&self) {
         if let Some(w) = self.frame_window() {
             w.close();
         }
     }
 
-    /// Open `url` in an overlay below the top bar, `width` by `height`, its
-    /// top-left at (`x`, `y`) in the top bar page's coordinates: the top
-    /// bar's pop-ups (site controls, menus), which its short page cannot hold.
-    pub fn open_top_bar_popup(&self, url: &str, x: i32, y: i32, width: i32, height: i32) -> bool {
+    /// The last window was closed: on macOS it only goes out of sight, with
+    /// its pages as they are, and Magnetite runs on without a window until
+    /// `show_frame`. `EngineEvent::FrameHidden` follows.
+    #[cfg(target_os = "macos")]
+    fn hide_frame(&self) {
+        let Some(window) = self.frame_window() else {
+            return;
+        };
+        self.lock().frame_hidden = true;
+        window.hide();
+        self.emit(EngineEvent::FrameHidden);
+    }
+
+    /// Whether the last window is closed while Magnetite runs on.
+    pub fn frame_hidden(&self) -> bool {
+        self.lock().frame_hidden
+    }
+
+    /// Show the frame window, also after its close hid it (`hide_frame`).
+    pub fn show_frame(&self) {
+        self.lock().frame_hidden = false;
+        if let Some(w) = self.frame_window() {
+            w.show();
+        }
+    }
+
+    /// Open `url` in an overlay below the top bar (the developer bar with
+    /// `dev`), `width` by `height`, its top-left at (`x`, `y`) in that
+    /// bar's page's coordinates: the bars' pop-ups (site controls, menus,
+    /// panels), which their short pages cannot hold.
+    pub fn open_bar_popup(
+        &self,
+        dev: bool,
+        url: &str,
+        (x, y): (i32, i32),
+        (width, height): (i32, i32),
+    ) -> bool {
         let Some(bar) = (self.lock().win.frame.as_ref()).and_then(|f| {
-            f.top_bar_view
-                .as_ref()
-                .map(|v| View::from(v).bounds_in_screen())
+            let view = if dev {
+                &f.dev_bar_view
+            } else {
+                &f.top_bar_view
+            };
+            view.as_ref().map(|v| View::from(v).bounds_in_screen())
         }) else {
             return false;
         };
@@ -453,11 +669,31 @@ impl Engine {
     /// paints the same colour so there is no seam.
     pub fn set_chrome_color(&self, argb: u32) {
         self.lock().win.chrome_color = argb;
-        let panels =
-            (self.lock().win.frame.as_ref()).map(|f| (f.content_panel.clone(), f.body.clone()));
-        if let Some((content, body)) = panels {
-            content.set_background_color(argb);
-            body.set_background_color(argb);
+        let panels = (self.lock().win.frame.as_ref()).map(|f| {
+            [
+                f.content_panel.clone(),
+                f.body.clone(),
+                f.pages_column.clone(),
+            ]
+        });
+        for panel in panels.into_iter().flatten() {
+            panel.set_background_color(argb);
+        }
+        // Not under the lock: the buttons' callbacks read the colour.
+        let caption = (self.lock().win.frame.as_ref()).and_then(|f| f.caption.clone());
+        if let Some(caption) = caption {
+            caption.set_background(argb);
+        }
+        // A page window's own frame shows at its corners.
+        #[cfg(target_os = "windows")]
+        {
+            let pages: Vec<_> = {
+                let inner = self.lock();
+                let pages = inner.contents.values().filter_map(|c| c.window.clone());
+                let tools = inner.docked.values().filter_map(|d| d.window.clone());
+                pages.chain(tools).collect()
+            };
+            crate::win::set_frame_color(argb, pages.iter().map(ImplWindow::window_handle));
         }
     }
 
@@ -495,10 +731,20 @@ impl Engine {
     }
 
     pub(crate) fn reposition_contents(&self) {
-        let (split, peek) = {
+        let (split, peek, panel, panel_width) = {
             let inner = self.lock();
-            (inner.win.split.clone(), inner.win.peek)
+            let win = &inner.win;
+            (
+                win.split.clone(),
+                win.peek,
+                win.web_panel,
+                win.web_panel_width,
+            )
         };
+        if let Some(p) = panel {
+            let rect = crate::content::web_panel_rect(&self.page_area(), panel_width);
+            self.place(p, &rect);
+        }
         if let Some(p) = peek {
             self.place(p, &crate::content::peek_rect(&self.content_rect()));
             self.update_peek_backdrop();
@@ -519,10 +765,16 @@ impl Engine {
             .map(|(id, _)| *id)
             .collect();
         for id in ids {
-            if Some(id) != peek {
+            if Some(id) != peek && Some(id) != panel {
                 self.place(id, &rect);
             }
         }
+        if panel.is_some() && !crate::content::WEB_PANEL_DOCKED {
+            // The panel moved or changed its width: its grip and button
+            // follow.
+            self.show_dividers();
+        }
+        self.sync_panel_close();
         self.update_grab_strip();
         self.place_notifications();
     }
@@ -553,16 +805,18 @@ wrap_browser_view_delegate! {
 }
 
 /// The top bar's view: our UI at `magnetite://ui/topbar`, full width.
-fn create_top_bar_view() -> Option<BrowserView> {
+/// The view of a bar of Magnetite's own UI at `path` (`topbar`, `devbar`),
+/// `height` points high.
+fn create_bar_view(path: &str, height: i32) -> Option<BrowserView> {
     let engine = Engine::global();
     let mut client = MagnetiteClient::top_bar();
-    let mut delegate = TopBarViewDelegate::new();
+    let mut delegate = BarViewDelegate::new(height);
     let settings = BrowserSettings {
         background_color: engine.lock().win.chrome_color,
         ..Default::default()
     };
     // Next to the sidebar's page, also on a development server.
-    let url = format!("{}/topbar", engine.config().ui_url.trim_end_matches('/'));
+    let url = format!("{}/{path}", engine.config().ui_url.trim_end_matches('/'));
     browser_view_create(
         Some(&mut client),
         Some(&CefString::from(url.as_str())),
@@ -574,21 +828,23 @@ fn create_top_bar_view() -> Option<BrowserView> {
 }
 
 wrap_browser_view_delegate! {
-    struct TopBarViewDelegate {}
+    struct BarViewDelegate {
+        height: i32,
+    }
     impl ViewDelegate {
         // A size with no width counts as none: CEF would use the page's own.
         fn preferred_size(&self, _view: Option<&mut View>) -> Size {
-            Size { width: 1, height: Engine::TOP_BAR_HEIGHT }
+            Size { width: 1, height: self.height }
         }
         fn minimum_size(&self, _view: Option<&mut View>) -> Size {
-            Size { width: 1, height: Engine::TOP_BAR_HEIGHT }
+            Size { width: 1, height: self.height }
         }
         fn maximum_size(&self, _view: Option<&mut View>) -> Size {
-            Size { width: i32::MAX, height: Engine::TOP_BAR_HEIGHT }
+            Size { width: i32::MAX, height: self.height }
         }
-        // The window's column layout asks this, not the preferred size.
+        // A column layout asks this, not the preferred size.
         fn height_for_width(&self, _view: Option<&mut View>, _width: ::std::os::raw::c_int) -> ::std::os::raw::c_int {
-            Engine::TOP_BAR_HEIGHT
+            self.height
         }
     }
     impl BrowserViewDelegate {
@@ -599,7 +855,7 @@ wrap_browser_view_delegate! {
             _popup_browser_view: Option<&mut BrowserView>,
             _is_devtools: ::std::os::raw::c_int,
         ) -> ::std::os::raw::c_int {
-            // No popups from the top bar page.
+            // No popups from a bar's page.
             1
         }
     }
@@ -611,10 +867,16 @@ wrap_panel_delegate! {
     impl PanelDelegate {}
 }
 
+/// The smallest page area the frame can be resized to.
+const MIN_PAGE: Size = Size {
+    width: 320,
+    height: 240,
+};
+
 wrap_panel_delegate! {
     struct ContentPanelDelegate {}
     impl ViewDelegate {
-        fn minimum_size(&self, _view: Option<&mut View>) -> Size { Size { width: 320, height: 240 } }
+        fn minimum_size(&self, _view: Option<&mut View>) -> Size { MIN_PAGE }
     }
     impl PanelDelegate {}
 }
@@ -626,6 +888,13 @@ wrap_window_delegate! {
 
     impl ViewDelegate {
         fn preferred_size(&self, _view: Option<&mut View>) -> Size { Size { width: 1280, height: 860 } }
+        // The pages are windows of their own: in a frame narrower than the
+        // sidebar and a page, they would hang beside it.
+        fn minimum_size(&self, _view: Option<&mut View>) -> Size {
+            let engine = Engine::global();
+            let sidebar = if engine.sidebar_visible() { engine.sidebar_width() } else { 0 };
+            Size { width: sidebar + MIN_PAGE.width, height: MIN_PAGE.height + 40 }
+        }
     }
     impl PanelDelegate {}
     impl WindowDelegate {
@@ -668,15 +937,47 @@ wrap_window_delegate! {
             )
             .expect("sidebar view");
 
-            let mut sv = View::from(&sidebar);
+            // Right of the sidebar, top to bottom: the row of our own window
+            // buttons where the system draws none, the developer bar (added
+            // when it first shows), the content panel.
+            let mut pd = BodyPanelDelegate::new();
+            let pages = panel_create(Some(&mut pd)).expect("pages column");
+            pages.set_background_color(0xFF1B_1B1E);
+            let pages_layout = pages
+                .set_to_box_layout(Some(&BoxLayoutSettings {
+                    horizontal: 0,
+                    cross_axis_alignment: AxisAlignment::STRETCH,
+                    ..Default::default()
+                }))
+                .expect("box layout");
+            let caption = if crate::caption::Caption::wanted() {
+                crate::caption::Caption::new(self.win)
+            } else {
+                None
+            };
+            if let Some(caption) = &caption {
+                pages.add_child_view(Some(&mut caption.view()));
+            }
             let mut cv = View::from(&content);
+            pages.add_child_view(Some(&mut cv));
+            pages_layout.set_flex_for_view(Some(&mut cv), 1);
+
+            let mut sv = View::from(&sidebar);
+            let mut pv = View::from(&pages);
             body.add_child_view(Some(&mut sv));
-            body.add_child_view(Some(&mut cv));
-            layout.set_flex_for_view(Some(&mut cv), 1);
+            body.add_child_view(Some(&mut pv));
+            layout.set_flex_for_view(Some(&mut pv), 1);
             let mut bv = View::from(&body);
             window.add_child_view(Some(&mut bv));
             column.set_flex_for_view(Some(&mut bv), 1);
-            window.set_title(Some(&CefString::from("magnetite")));
+            window.set_title(Some(&CefString::from("Magnetite")));
+            // The taskbar, its preview and Alt+Tab show the window's own
+            // icon: Chromium's, unless it is set. macOS shows the app's.
+            #[cfg(not(target_os = "macos"))]
+            if let Some(icon) = crate::empty::app_icon() {
+                window.set_window_icon(Some(&mut icon.clone()));
+                window.set_window_app_icon(Some(&mut icon.clone()));
+            }
             window.center_window(Some(&Size { width: 1280, height: 860 }));
             window.show();
             window.layout();
@@ -692,11 +993,22 @@ wrap_window_delegate! {
                 sidebar_view: sidebar,
                 top_bar_view: None,
                 top_bar_browser: None,
+                pages_column: pages,
+                dev_bar_view: None,
+                dev_bar_browser: None,
                 empty,
+                caption,
                 content_panel: content,
                 sidebar_browser,
             });
             drop(inner);
+            // Windows ignores `show` while the window is still being created
+            // (the call above): the frame stayed invisible under its pages.
+            #[cfg(target_os = "windows")]
+            {
+                let window = window.clone();
+                Engine::post(Box::new(move || window.show()));
+            }
             let win = self.win;
             engine.in_window(win, || {
                 // Turned on before the window existed (the saved setting).
@@ -707,9 +1019,18 @@ wrap_window_delegate! {
             });
         }
 
-        fn on_window_bounds_changed(&self, _window: Option<&mut Window>, _new_bounds: Option<&Rect>) {
+        fn on_window_bounds_changed(&self, _window: Option<&mut Window>, new_bounds: Option<&Rect>) {
             let engine = Engine::global();
             engine.in_window(self.win, || {
+                // Our pages draw one background across the window: each
+                // needs the window's size, which only some of them see change.
+                if let Some(b) = new_bounds {
+                    engine.ui_eval_all(&format!(
+                        "window.__magnetite && window.__magnetite.windowSize({}, {})",
+                        b.width, b.height
+                    ));
+                }
+                engine.sync_caption();
                 engine.reposition_contents();
                 engine.apply_drag_regions();
                 engine.update_edge_zone();
@@ -720,10 +1041,25 @@ wrap_window_delegate! {
             });
         }
 
+        // Entering or leaving full screen takes or brings back the row of
+        // our own window buttons above the pages.
+        fn on_window_fullscreen_transition(&self, _window: Option<&mut Window>, is_completed: ::std::os::raw::c_int) {
+            if is_completed != 0 {
+                let engine = Engine::global();
+                engine.in_window(self.win, || {
+                    engine.sync_caption();
+                    engine.reposition_contents();
+                    engine.apply_drag_regions();
+                });
+            }
+        }
+
         // The window the user turns to is the current one.
         fn on_window_activation_changed(&self, _window: Option<&mut Window>, active: ::std::os::raw::c_int) {
             if active != 0 {
                 let engine = Engine::global();
+                // In front again, whichever way: no longer closed.
+                engine.lock().frame_hidden = false;
                 engine.enter(self.win);
                 engine.notifications_follow();
             }
@@ -759,9 +1095,10 @@ wrap_window_delegate! {
             }
         }
 
-        // Closing the only window is quitting, which the app does after
-        // saving; any other window closes, its pages going to the window
-        // that is current next.
+        // The only window does not close: on macOS it hides and Magnetite
+        // runs on, elsewhere closing it is quitting, which the app does
+        // after saving. Any other window closes, its pages going to the
+        // window that is current next.
         fn can_close(&self, _window: Option<&mut Window>) -> ::std::os::raw::c_int {
             let engine = Engine::global();
             if engine.is_quitting() {
@@ -780,13 +1117,16 @@ wrap_window_delegate! {
                 engine.leave_window(self.win, next);
                 1
             } else {
+                #[cfg(target_os = "macos")]
+                engine.hide_frame();
+                #[cfg(not(target_os = "macos"))]
                 engine.emit(EngineEvent::QuitRequested);
                 0
             }
         }
 
         fn on_key_event(&self, _window: Option<&mut Window>, event: Option<&KeyEvent>) -> ::std::os::raw::c_int {
-            let Some(shortcut) = event.and_then(|e| crate::keys::shortcut_for_key(e).or_else(|| crate::keys::yieldable_shortcut(e))) else { return 0 };
+            let Some(shortcut) = event.and_then(crate::keys::any_shortcut) else { return 0 };
             let engine = Engine::global();
             engine.in_window(self.win, || engine.emit(EngineEvent::Shortcut { from: None, shortcut }));
             1

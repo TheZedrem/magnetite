@@ -88,22 +88,36 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## Shipped with the app (macOS, Windows, Linux)
 
-- **CEF and Chromium**: CEF 156.0.30 (commit `6028375`) with Chromium
-  156.0.8078.96. That is the CEF library (`Chromium Embedded Framework.framework`
-  on macOS, `libcef.dll` on Windows, `libcef.so` on Linux) and the files next
-  to it (`.pak` resources, `icudtl.dat`, the V8 snapshot, SwiftShader and the
-  Vulkan loader). CEF is BSD-3-Clause (above). Chromium and its ~490
-  third-party components carry their own licences, listed in `CREDITS.html` of
-  the CEF distribution, which ships next to this file. Most are permissive.
+- **CEF and Chromium**: CEF 156.0.31 (commit `e603d97`) with Chromium
+  156.0.8078.111 on macOS with Apple silicon and on Linux and Windows on
+  x86_64, and with Chromium 156.0.8078.100 on the other systems. That is the
+  CEF library (`Chromium Embedded Framework.framework` on macOS, `libcef.dll`
+  on Windows, `libcef.so` on Linux) and the files next to it (`.pak`
+  resources, `icudtl.dat`, the V8 snapshot, SwiftShader and the Vulkan
+  loader). CEF is BSD-3-Clause (above). Chromium and its ~490 third-party
+  components carry their own licences, listed in `CREDITS.html` of the CEF
+  distribution, which ships next to this file. Most are permissive.
+- **Our own CEF build.** On macOS with Apple silicon and on Linux and Windows
+  on x86_64, the CEF library is one we build ourselves from those sources, in
+  [magnetite-cef](https://github.com/magnetite-browser/magnetite-cef)
+  (release `156.0.31-2`). It differs from CEF's official build in two ways:
+  the H.264, AAC and HEVC decoders and the H.264 encoder are on
+  (`proprietary_codecs`, `ffmpeg_branding=Chrome`), and CEF carries the
+  patches in that repository's `patches/` folder. On the other systems it is
+  CEF's official build, unchanged.
 - **Copyleft code inside the CEF library.** It contains code under the LGPL
   (FFmpeg and libusb, LGPL-2.1-or-later; Blink's WebKit-derived code,
   LGPL-2.0/2.1), the MPL (for example symphonia, Eigen, hunspell, and
   Mozilla's URL parser and certificate code) and, on macOS, the Apple Public
-  Source License. Magnetite ships the CEF library unmodified, as a separate
-  dynamic library. Its corresponding source is Chromium 156.0.8078.96
-  (<https://chromium.googlesource.com/chromium/src/+/refs/tags/156.0.8078.96>)
-  with CEF commit `6028375a4532fb89d23b58635f5c0d3a82c93959`
-  (<https://github.com/chromiumembedded/cef/tree/6028375a4532fb89d23b58635f5c0d3a82c93959>).
+  Source License. Magnetite ships the CEF library as a separate dynamic
+  library. Its corresponding source is Chromium 156.0.8078.111
+  (<https://chromium.googlesource.com/chromium/src/+/refs/tags/156.0.8078.111>)
+  or, on the other systems, 156.0.8078.100
+  (<https://chromium.googlesource.com/chromium/src/+/refs/tags/156.0.8078.100>),
+  with CEF commit `e603d97dd5cb8b0e37d8f1daa2bc5c7eab1aa7a5`
+  (<https://github.com/chromiumembedded/cef/tree/e603d97dd5cb8b0e37d8f1daa2bc5c7eab1aa7a5>).
+  For our own build it is also magnetite-cef at the commit its release
+  names: the patches, the build arguments and the build script.
   For at least three years after we last distribute this version, we give
   anyone who asks a copy of that source, for no more than the cost of
   distribution. Ask through the project's issue tracker.
@@ -137,7 +151,9 @@ carries its own notices there.
   first use, CEF's Chrome runtime downloads it from Google through Chromium's
   component updater, which is a connection to Google servers. Streaming
   services that require Verified Media Path only work with a VMP-signed app,
-  and that signing needs an agreement with Google (Widevine).
+  and that signing needs an agreement with Google (Widevine). On macOS their
+  pages are shown by WebKit, the system's own web engine, which is not
+  shipped either (`docs/spec/protected-video.md`).
 - **H.264 and AAC.** Stock CEF builds ship without these proprietary codecs.
   Adding them needs our own CEF build and a decision on patent licensing.
 
@@ -226,6 +242,7 @@ carries its own notices there.
 | objc2-core-graphics | Zlib OR Apache-2.0 OR MIT | magnetite |
 | objc2-encode | MIT | magnetite |
 | objc2-foundation | MIT | magnetite |
+| objc2-web-kit | Zlib OR Apache-2.0 OR MIT | magnetite |
 | once_cell | MIT OR Apache-2.0 | magnetite |
 | once_cell_polyfill | MIT OR Apache-2.0 | magnetite |
 | percent-encoding | MIT OR Apache-2.0 | magnetite |
@@ -234,6 +251,7 @@ carries its own notices there.
 | potential_utf | Unicode-3.0 | magnetite |
 | psl | MIT/Apache-2.0 | magnetite |
 | psl-types | MIT/Apache-2.0 | magnetite |
+| qrcode | MIT OR Apache-2.0 | magnetite |
 | rand | MIT OR Apache-2.0 | magnetite |
 | rand_core | MIT OR Apache-2.0 | magnetite |
 | regex | MIT OR Apache-2.0 | magnetite |
@@ -256,6 +274,7 @@ carries its own notices there.
 | stable_deref_trait | MIT OR Apache-2.0 | magnetite |
 | strsim | MIT | magnetite |
 | subtle | BSD-3-Clause | magnetite |
+| sys-locale | MIT OR Apache-2.0 | magnetite |
 | thiserror | MIT OR Apache-2.0 | magnetite |
 | tinystr | Unicode-3.0 | magnetite |
 | tinyvec | Zlib OR Apache-2.0 OR MIT | magnetite |
@@ -271,9 +290,19 @@ carries its own notices there.
 | utf8parse | Apache-2.0 OR MIT | magnetite |
 | utf_types | Apache-2.0 OR MIT | magnetite |
 | webpki-roots | CDLA-Permissive-2.0 | magnetite |
+| webview2-com | MIT | magnetite |
+| webview2-com-sys | MIT | magnetite |
+| windows | MIT OR Apache-2.0 | magnetite |
+| windows-collections | MIT OR Apache-2.0 | magnetite |
+| windows-core | MIT OR Apache-2.0 | magnetite |
+| windows-future | MIT OR Apache-2.0 | magnetite |
 | windows-link | MIT OR Apache-2.0 | magnetite |
+| windows-numerics | MIT OR Apache-2.0 | magnetite |
+| windows-result | MIT OR Apache-2.0 | magnetite |
+| windows-strings | MIT OR Apache-2.0 | magnetite |
 | windows-sys | MIT OR Apache-2.0 | magnetite |
 | windows-targets | MIT OR Apache-2.0 | magnetite |
+| windows-threading | MIT OR Apache-2.0 | magnetite |
 | windows_aarch64_msvc | MIT OR Apache-2.0 | magnetite |
 | writeable | Unicode-3.0 | magnetite |
 | yoke | Unicode-3.0 | magnetite |
@@ -303,7 +332,7 @@ text share one copy, preceded by all of their copyright lines.
 
 #### 1. MIT
 
-Used by: adler2, aead, anstream, anstyle, anstyle-parse, anstyle-query, anstyle-wincon, anyhow, arrayvec, bitflags, block-buffer, block2, bytes, cef, cef-dll-sys, cfg-if, chacha20, chacha20poly1305, cipher, clap, clap_builder, clap_lex, cmov, colorchoice, const-oid, cpufeatures, crypto-common, csstype, ctutils, digest, ed25519, either, flate2, form_urlencoded, getrandom, hkdf, hmac, http, httparse, hybrid-array, idna, idna_adapter, inout, is_terminal_polyfill, itertools, itoa, libc, log, objc2, objc2-app-kit, objc2-core-foundation, objc2-core-graphics, objc2-encode, objc2-foundation, once_cell, once_cell_polyfill, percent-encoding, png, poly1305, rand, rand_core, regex, regex-automata, regex-syntax, rustc-hash, rustls, rustls-pki-types, seahash, semver, serde, serde_core, serde_json, sha2, signature, smallvec, stable_deref_trait, thiserror, tinyvec, unicode-normalization, universal-hash, ureq-proto, url, utf8-zero, utf8_iter, utf8parse, utf_types, zeroize, zmij.
+Used by: adler2, aead, anstream, anstyle, anstyle-parse, anstyle-query, anstyle-wincon, anyhow, arrayvec, bitflags, block-buffer, block2, bytes, cef, cef-dll-sys, cfg-if, chacha20, chacha20poly1305, cipher, clap, clap_builder, clap_lex, cmov, colorchoice, const-oid, cpufeatures, crypto-common, csstype, ctutils, digest, ed25519, either, flate2, form_urlencoded, getrandom, hkdf, hmac, http, httparse, hybrid-array, idna, idna_adapter, inout, is_terminal_polyfill, itertools, itoa, libc, log, objc2, objc2-app-kit, objc2-core-foundation, objc2-core-graphics, objc2-encode, objc2-foundation, objc2-web-kit, once_cell, once_cell_polyfill, percent-encoding, png, poly1305, qrcode, rand, rand_core, regex, regex-automata, regex-syntax, rustc-hash, rustls, rustls-pki-types, seahash, semver, serde, serde_core, serde_json, sha2, signature, smallvec, stable_deref_trait, thiserror, tinyvec, unicode-normalization, universal-hash, ureq-proto, url, utf8-zero, utf8_iter, utf8parse, utf_types, webview2-com, webview2-com-sys, zeroize, zmij.
 
 ```
 Copyright (c) 2006-2009 Graydon Hoare
@@ -322,6 +351,7 @@ Copyright (c) 2015-2026 The RustCrypto Project Developers
 Copyright (c) 2016 Artyom Pavlov
 Copyright (c) 2016 Joe Wilm
 Copyright (c) 2016 Joseph Birr-Pixton <jpixton@gmail.com>
+Copyright (c) 2016 kennytm
 Copyright (c) 2016-2025 RustCrypto Developers
 Copyright (c) 2016-2026 The RustCrypto Project Developers
 Copyright (c) 2017 Artyom Pavlov
@@ -342,6 +372,7 @@ Copyright (c) 2019 MobileCoin, LLC
 Copyright (c) 2019-2025 RustCrypto Developers
 Copyright (c) 2019-2026 The RustCrypto Project Developers
 Copyright (c) 2020-2026 The RustCrypto Project Developers
+Copyright (c) 2021 Bill Avery
 Copyright (c) 2021-2026 RustCrypto Developers
 Copyright (c) 2022 Artyom Pavlov
 Copyright (c) 2022-2025 The RustCrypto Project Developers
@@ -439,7 +470,36 @@ ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation a
 
 #### 3. MIT
 
-Used by: addr, crc32fast, fdeflate, miniz_oxide, psl, psl-types, react, react-dom, scheduler, simd-adler32, tailwindcss, ureq.
+Used by: @types/react, windows, windows-collections, windows-core, windows-future, windows-link, windows-numerics, windows-result, windows-strings, windows-sys, windows-targets, windows-threading, windows_aarch64_msvc.
+
+```
+Copyright (c) Microsoft Corporation.
+
+MIT License
+
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE
+```
+
+#### 4. MIT
+
+Used by: addr, crc32fast, fdeflate, miniz_oxide, psl, psl-types, react, react-dom, scheduler, simd-adler32, sys-locale, tailwindcss, ureq.
 
 ```
 Copyright (c) 2016 Rushmore Mushambi
@@ -447,6 +507,7 @@ Copyright (c) 2017 Frommi
 Copyright (c) 2017-2024 oyvindln
 Copyright (c) 2018 Sam Rijs, Alex Crichton and contributors
 Copyright (c) 2019 Martin Algesten
+Copyright (c) 2021 1Password
 Copyright (c) 2021 Rushmore Mushambi
 Copyright (c) [2021] [Marvin Countryman]
 Copyright (c) Meta Platforms, Inc. and affiliates.
@@ -476,13 +537,12 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-#### 4. MIT
+#### 5. MIT
 
 Used by: aho-corasick, base64, lz4_flex, memchr, strsim, typenum.
 
 ```
 Copyright (c) 2014 Paho Lurie-Gregg
-Copyright (c) 2015 Alice Maz
 Copyright (c) 2015 Andrew Gallant
 Copyright (c) 2015 Danny Guo
 Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>
@@ -510,35 +570,6 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
-```
-
-#### 5. MIT
-
-Used by: @types/react, windows-link, windows-sys, windows-targets, windows_aarch64_msvc.
-
-```
-Copyright (c) Microsoft Corporation.
-
-MIT License
-
-
-    Permission is hereby granted, free of charge, to any person obtaining a copy
-    of this software and associated documentation files (the "Software"), to deal
-    in the Software without restriction, including without limitation the rights
-    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-    copies of the Software, and to permit persons to whom the Software is
-    furnished to do so, subject to the following conditions:
-
-    The above copyright notice and this permission notice shall be included in all
-    copies or substantial portions of the Software.
-
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-    SOFTWARE
 ```
 
 #### 6. Apache-2.0
@@ -1821,7 +1852,41 @@ Exhibit B - "Incompatible With Secondary Licenses" Notice
   defined by the Mozilla Public License, v. 2.0.
 ```
 
-#### 19. Unicode-3.0
+#### 19. Other
+
+Used by: webview2-com-sys.
+
+```
+Copyright (C) Microsoft Corporation. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+   * Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+   * Redistributions in binary form must reproduce the above
+copyright notice, this list of conditions and the following disclaimer
+in the documentation and/or other materials provided with the
+distribution.
+   * The name of Microsoft Corporation, or the names of its contributors
+may not be used to endorse or promote products derived from this
+software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+#### 20. Unicode-3.0
 
 Used by: unicode-normalization.
 

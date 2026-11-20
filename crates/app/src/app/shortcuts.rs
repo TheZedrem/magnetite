@@ -1,18 +1,67 @@
 //! Keys and menu bar items, and the command palette they open.
 
 use magnetite_core::split::Side;
-use magnetite_engine::{Action, Combo, ContentId, Engine, KeysError, Overrides, Shortcut};
-use serde_json::json;
+use magnetite_engine::{
+    Action, Combo, ContentId, Engine, First, KeysError, Overrides, Priorities, Shortcut,
+};
+use serde_json::{Value, json};
 
 use super::addresses::urlencode;
 use super::{LinkVariant, MagnetiteApp, PaletteMode};
+use crate::state::typed_site;
 
 impl MagnetiteApp {
-    /// Hand the engine the keys the shortcuts have now (Settings →
-    /// Shortcuts): at start, and whenever they change here or through sync.
+    /// Hand the engine the keys the shortcuts have now and who gets them
+    /// first, by shortcut and by site (Settings → Shortcuts, the site
+    /// panel): at start, and whenever they change here or through sync.
     pub(super) fn apply_shortcut_keys(&self, engine: &Engine) {
-        let keys = self.with_state(|s| s.settings.shortcuts.clone());
-        engine.set_shortcut_keys(&keys);
+        let (keys, first, sites) = self.with_state(|s| {
+            let settings = &s.settings;
+            (
+                settings.shortcuts.clone(),
+                settings.shortcut_priority.clone(),
+                settings.shortcut_sites.clone(),
+            )
+        });
+        engine.set_shortcut_keys(&keys, &first);
+        magnetite_engine::set_page_first_sites(sites);
+    }
+
+    /// The site (registrable domain) of the page at `url`, if a web page,
+    /// and whether its pages get the keys of every shortcut first.
+    pub(super) fn site_shortcuts(&self, url: &str) -> Value {
+        let site = typed_site(url);
+        let first = (site.as_ref())
+            .is_some_and(|site| self.with_state(|s| s.settings.shortcut_sites.contains(site)));
+        json!({ "site": site, "page_first": first })
+    }
+
+    /// From now on the pages of the site `url` names (a page's address,
+    /// or a name typed in Settings) get the keys of every shortcut first
+    /// (`page_first`), or each shortcut's own choice counts there again.
+    /// What names no site changes nothing.
+    pub(super) fn set_site_shortcuts(&self, engine: &Engine, url: &str, page_first: bool) {
+        let Some(site) = typed_site(url) else {
+            return;
+        };
+        self.with_state(|s| {
+            let sites = &mut s.settings.shortcut_sites;
+            sites.retain(|s| *s != site);
+            if page_first {
+                sites.push(site);
+                sites.sort();
+            }
+        });
+        self.apply_shortcut_keys(engine);
+        self.push_state(engine);
+    }
+
+    /// From now on a key of `action` pressed in a page goes to `first`
+    /// before the other.
+    pub(super) fn set_shortcut_first(&self, engine: &Engine, action: Action, first: First) {
+        self.with_state(|s| s.settings.shortcut_priority.set(action, first));
+        self.apply_shortcut_keys(engine);
+        self.push_state(engine);
     }
 
     /// Give `action` the keys `keys` (`None`: no keys), or tell why not.
@@ -24,17 +73,49 @@ impl MagnetiteApp {
         keys: Option<&str>,
     ) -> Result<(), KeysError> {
         let combo: Option<Combo> = keys.map(str::parse).transpose()?;
-        self.with_state(|s| s.settings.shortcuts.set(action, combo))?;
+        self.with_state(|s| {
+            s.settings.shortcuts.set(action, combo)?;
+            s.drop_shadowed_space_keys();
+            Ok(())
+        })?;
         self.apply_shortcut_keys(engine);
         self.push_state(engine);
         Ok(())
     }
 
-    /// Give `action` its default keys back, or every action (`None`).
+    /// Give space `id` the keys `keys` (`None`: no keys), or tell why not.
+    /// A shortcut or space that had them loses them.
+    pub(super) fn set_space_shortcut(
+        &self,
+        engine: &Engine,
+        id: &str,
+        keys: Option<&str>,
+    ) -> Result<(), KeysError> {
+        let combo: Option<Combo> = keys.map(str::parse).transpose()?;
+        self.with_state(|s| s.set_space_shortcut(id, combo))?;
+        // The keys may have been an action's.
+        self.apply_shortcut_keys(engine);
+        self.push_state(engine);
+        Ok(())
+    }
+
+    /// Give `action` its default keys back and let it go first to whom it
+    /// does by default, or every action (`None`); then no space has keys
+    /// of its own either, and no site gets the keys first.
     pub(super) fn reset_shortcut(&self, engine: &Engine, action: Option<Action>) {
-        self.with_state(|s| match action {
-            Some(action) => s.settings.shortcuts.reset(action),
-            None => s.settings.shortcuts = Overrides::default(),
+        self.with_state(|s| {
+            if let Some(action) = action {
+                s.settings.shortcuts.reset(action);
+                (s.settings.shortcut_priority).set(action, action.default_first());
+            } else {
+                s.settings.shortcuts = Overrides::default();
+                s.settings.shortcut_priority = Priorities::default();
+                s.settings.shortcut_sites.clear();
+                for space in &mut s.sidebar.spaces {
+                    space.shortcut = None;
+                }
+            }
+            s.drop_shadowed_space_keys();
         });
         self.apply_shortcut_keys(engine);
         self.push_state(engine);
@@ -80,9 +161,9 @@ impl MagnetiteApp {
             Shortcut::Forward => engine.content_go_forward(c),
             Shortcut::ZoomIn | Shortcut::ZoomOut => {
                 let up = shortcut == Shortcut::ZoomIn;
-                engine.set_content_zoom(c, magnetite_engine::zoom_step(zoom(), up));
+                engine.set_content_zoom(c, Some(magnetite_engine::zoom_step(zoom(), up)));
             }
-            Shortcut::ZoomReset => engine.set_content_zoom(c, 100),
+            Shortcut::ZoomReset => engine.set_content_zoom(c, None),
             Shortcut::Find | Shortcut::FindNext | Shortcut::FindPrevious => {
                 engine.content_find(c, shortcut);
             }
@@ -122,11 +203,8 @@ impl MagnetiteApp {
             | Shortcut::Find
             | Shortcut::FindNext
             | Shortcut::FindPrevious => self.page_command(engine, shortcut),
-            Shortcut::OpenDevTools => {
-                if let Some(c) = self.focused_content(None) {
-                    engine.content_show_devtools(c);
-                }
-            }
+            Shortcut::DevPanel(panel) => self.dev_panel(engine, None, panel),
+            Shortcut::DevReset => self.dev_reset(engine, None),
             Shortcut::CopyLink => {
                 let result = self.copy_link(engine, None, LinkVariant::Clean);
                 Self::ui_call(engine, "copied", &result);
@@ -144,7 +222,6 @@ impl MagnetiteApp {
                 Self::ui_call(engine, "openSitePanel", &json!({}));
             }
             Shortcut::NewTab => Self::open_palette(engine, PaletteMode::New, None, None),
-            Shortcut::NewPrivateWindow => crate::private::open_window(),
             // Without several windows (Settings) the key keeps what it did
             // before: a new tab.
             Shortcut::NewWindow => {
@@ -176,6 +253,9 @@ impl MagnetiteApp {
                 // A peek is in front: the key closes it, not the tab behind it.
                 if self.with_state(|s| s.peek.is_some()) {
                     self.close_peek(engine);
+                } else if engine.web_panel_focused() {
+                    // The keyboard is in the web panel: the key is for it.
+                    self.close_web_panel(engine);
                 } else if let Some(id) = self.with_state(|s| s.active_tab_id().map(str::to_owned)) {
                     self.close_tab(engine, &id);
                 }
@@ -190,6 +270,7 @@ impl MagnetiteApp {
                 }
                 self.push_state(engine);
             }
+            Shortcut::WebPanel => self.web_panel_key(engine),
             Shortcut::NextTab | Shortcut::PrevTab => {
                 self.cycle_tab(engine, shortcut == Shortcut::NextTab);
             }
@@ -207,7 +288,7 @@ impl MagnetiteApp {
                 // Spaces count from 1, in the footer's order.
                 let target = self.with_state(|s| {
                     let at = usize::from(n).checked_sub(1)?;
-                    let space = s.sidebar.spaces.get(at)?;
+                    let space = s.listed_spaces().nth(at)?;
                     (space.id != s.active_space).then(|| space.id.clone())
                 });
                 if let Some(id) = target {
@@ -233,25 +314,38 @@ impl MagnetiteApp {
                 }
             }
             Shortcut::NewSpace => Self::open_palette(engine, PaletteMode::NewSpace, None, None),
+            Shortcut::SpacePicker => Self::open_palette(engine, PaletteMode::Spaces, None, None),
+            Shortcut::SpaceKeys(keys) => {
+                let target = self.with_state(|s| {
+                    let space = s.space_for_keys(keys)?;
+                    (space.id != s.active_space).then(|| space.id.clone())
+                });
+                if let Some(id) = target {
+                    self.activate_space(engine, &id);
+                }
+            }
+            Shortcut::PrivateSpace => self.open_private_space(engine),
+            Shortcut::ClosePrivateSpace => self.close_private_space(engine),
+            Shortcut::HidePrivateSpace => self.hide_private_space(engine),
             Shortcut::NewMini => Self::open_palette(engine, PaletteMode::Quick, None, None),
             Shortcut::ClosePeek => self.close_peek(engine),
             Shortcut::PeekToTab => self.peek_to_tab(engine),
             Shortcut::PeekToSplit => self.peek_to_split(engine),
             Shortcut::NextSpace | Shortcut::PrevSpace => {
                 let target = self.with_state(|s| {
-                    let n = s.sidebar.spaces.len();
-                    let pos = s
-                        .sidebar
-                        .spaces
+                    // A hidden private space is no stop on the way.
+                    let spaces: Vec<&str> = s.listed_spaces().map(|sp| sp.id.as_str()).collect();
+                    let n = spaces.len();
+                    let pos = spaces
                         .iter()
-                        .position(|sp| sp.id == s.active_space)
+                        .position(|id| *id == s.active_space)
                         .unwrap_or(0);
                     let next = if shortcut == Shortcut::NextSpace {
                         (pos + 1) % n
                     } else {
                         (pos + n - 1) % n
                     };
-                    s.sidebar.spaces[next].id.clone()
+                    spaces[next].to_string()
                 });
                 self.activate_space(engine, &target);
             }

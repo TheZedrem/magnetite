@@ -14,7 +14,6 @@
 //! (authentic) ciphertext.
 
 use std::collections::HashMap;
-use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
@@ -29,6 +28,7 @@ use magnetite_sync_proto::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::devices::{self, DEVICES, Devices, Me, RemoteTab};
 use crate::lock;
 use crate::state::{Settings, SyncSettings};
 
@@ -103,6 +103,31 @@ pub fn code_words(data_dir: &Path) -> Option<String> {
     load_code(data_dir).map(|c| c.words())
 }
 
+/// What a phone scans to join the chain on `server` with the 24 `words`: a
+/// `magnetite://sync` link that carries both (docs/spec/sync.md, "The code
+/// as a QR code"). Spaces are `%20`, which every platform's link parser reads.
+pub fn join_link(server: &str, words: &str) -> String {
+    let mut link = url::Url::parse("magnetite://sync").expect("a constant link");
+    link.query_pairs_mut()
+        .append_pair("server", server)
+        .append_pair("words", words);
+    // A `+` of the input is written as `%2B`, so every `+` left is a space.
+    link.as_str().replace('+', "%20")
+}
+
+/// `text` as a QR code: one string per row, `1` for a dark square. `None`
+/// when the text is too long for one.
+pub fn qr_rows(text: &str) -> Option<Vec<String>> {
+    let code = qrcode::QrCode::new(text).ok()?;
+    let row = |squares: &[qrcode::Color]| {
+        squares
+            .iter()
+            .map(|c| if *c == qrcode::Color::Dark { '1' } else { '0' })
+            .collect()
+    };
+    Some(code.to_colors().chunks(code.width()).map(row).collect())
+}
+
 /// The address requests go to (no trailing slash). The server must use
 /// `https://`; plain `http://` is accepted only for this machine (`localhost`,
 /// `127.0.0.1`, `::1`). A path prefix is fine; user info and queries are not.
@@ -132,7 +157,8 @@ fn server_base(url: &str) -> Result<String, String> {
 /// words could otherwise send every search here to an address of its choice.
 /// `shortcuts` is left out while no shortcut has other keys, so a version
 /// from before them writes the same bytes; such a version writes without
-/// them, which reads as "all on their default keys" here.
+/// them, which reads as "all on their default keys" here. The same goes
+/// for `shortcut_priority` and `shortcut_sites`.
 #[derive(Serialize, Deserialize)]
 struct SyncedSettings {
     auto_archive_hours: u32,
@@ -140,6 +166,13 @@ struct SyncedSettings {
     external_links: String,
     #[serde(default, skip_serializing_if = "magnetite_engine::Overrides::is_empty")]
     shortcuts: magnetite_engine::Overrides,
+    #[serde(
+        default,
+        skip_serializing_if = "magnetite_engine::Priorities::is_empty"
+    )]
+    shortcut_priority: magnetite_engine::Priorities,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    shortcut_sites: Vec<String>,
 }
 
 impl SyncedSettings {
@@ -149,6 +182,8 @@ impl SyncedSettings {
             unload_minutes: s.unload_minutes,
             external_links: s.external_links.clone(),
             shortcuts: s.shortcuts.clone(),
+            shortcut_priority: s.shortcut_priority.clone(),
+            shortcut_sites: s.shortcut_sites.clone(),
         }
     }
     fn apply(self, s: &mut Settings) {
@@ -156,6 +191,8 @@ impl SyncedSettings {
         s.unload_minutes = self.unload_minutes;
         s.external_links = self.external_links;
         s.shortcuts = self.shortcuts;
+        s.shortcut_priority = self.shortcut_priority;
+        s.shortcut_sites = self.shortcut_sites;
     }
 }
 
@@ -176,6 +213,8 @@ pub enum Job {
         /// what a device always keeps of its own): there is nothing to write,
         /// even where it differs from the server's.
         sidebar_unchanged: bool,
+        /// This device among the chain's devices (`devices` module).
+        me: Me,
     },
     /// Stop syncing on this device; the chain stays on the server.
     Leave,
@@ -201,6 +240,16 @@ pub enum Outcome {
     /// Pushed successfully (or nothing to push); remember the new versions.
     Pushed {
         versions: Vec<(String, u64)>,
+    },
+    /// The tabs open on the chain's other devices, those sent here that
+    /// this device took with this round (`sent`: to open now), and which of
+    /// the tabs it took over no device lists any more (`forgotten`): their
+    /// handover is done. `version`: the `devices` collection's, to remember.
+    Devices {
+        tabs: Vec<RemoteTab>,
+        sent: Vec<RemoteTab>,
+        forgotten: Vec<String>,
+        version: u64,
     },
     Error(String),
     Disconnected,
@@ -244,6 +293,7 @@ struct SyncRequest {
     snapshot: Box<SidebarSnapshot>,
     settings: Box<Settings>,
     sidebar_unchanged: bool,
+    me: Me,
 }
 
 /// Shared by the UI thread and the sync thread.
@@ -313,11 +363,13 @@ impl SyncClient {
                 snapshot,
                 settings,
                 sidebar_unchanged,
+                me,
             } => {
                 let request = SyncRequest {
                     snapshot,
                     settings,
                     sidebar_unchanged,
+                    me,
                 };
                 if lock(&self.shared.pending).replace(request).is_some() {
                     return; // the wake-up queued for the older one runs this
@@ -371,7 +423,9 @@ fn run(mut w: Worker, rx: &Receiver<Msg>, shared: &Shared, notify: &Notify) {
                 // Not inside the `match`: its lock would last the whole sync.
                 let request = lock(&shared.pending).take();
                 request.map_or_else(Vec::new, |r| {
-                    w.sync(&r.snapshot, &r.settings, r.sidebar_unchanged)
+                    let mut outcomes = w.sync(&r.snapshot, &r.settings, r.sidebar_unchanged);
+                    outcomes.extend(w.devices(&r.me));
+                    outcomes
                 })
             }
             Msg::DeleteRemote { server, code } => w.delete_remote(&server, &code),
@@ -534,19 +588,19 @@ impl Worker {
         };
         let mut res = result.map_err(|e| format!("cannot reach the sync server: {e}"))?;
         let status = res.status().as_u16();
-        // ureq's own limit counts the bytes on the wire; a compressed answer
-        // can unpack to far more. Count what comes out of the decoder.
-        let mut body = Vec::new();
-        res.body_mut()
+        // ureq applies the limit to the decoded body (since 3.5.2), so a
+        // compressed answer counts unpacked.
+        let body = res
+            .body_mut()
             .with_config()
             .limit(MAX_REPLY)
-            .reader()
-            .take(MAX_REPLY + 1)
-            .read_to_end(&mut body)
-            .map_err(|e| e.to_string())?;
-        if body.len() as u64 > MAX_REPLY {
-            return Err("the sync server sent more data than a collection can hold".into());
-        }
+            .read_to_vec()
+            .map_err(|e| match e {
+                ureq::Error::BodyExceedsLimit(_) => {
+                    "the sync server sent more data than a collection can hold".to_string()
+                }
+                e => e.to_string(),
+            })?;
         Ok(Reply { status, body })
     }
 
@@ -791,6 +845,86 @@ impl Worker {
         }
     }
 
+    /// Read the tabs open on the chain's other devices, and write which of
+    /// them this device took over. Only this device's entry changes; when
+    /// another device wrote in between, the round starts over. A version
+    /// older than one this device has seen is refused, as in `sync`: an old
+    /// copy could list a tab again whose handover is done.
+    fn devices(&mut self, me: &Me) -> Vec<Outcome> {
+        let Some(code) = self.code.clone() else {
+            return Vec::new();
+        };
+        let keys = code.keys();
+        let id = keys.collection_id(DEVICES);
+        let path = format!("/collections/{id}");
+        let unreadable = || "devices: cannot read them; is Magnetite up to date?".to_string();
+        let applied = self.settings.versions.get(DEVICES).copied().unwrap_or(0);
+        for _ in 0..4 {
+            let seen = applied.max(self.known.get(DEVICES).copied().unwrap_or(0));
+            let back = |has: &str| {
+                vec![Outcome::Error(format!(
+                    "devices: the server has {has} but this device has version {seen}; not going back"
+                ))]
+            };
+            let (version, mut all) = match self.request(&keys, "GET", &path, None) {
+                Ok(r) if r.status == 200 => {
+                    let remote: CollectionResponse = match r.json() {
+                        Ok(c) => c,
+                        Err(e) => return vec![Outcome::Error(e)],
+                    };
+                    if remote.version < seen {
+                        return back(&format!("version {}", remote.version));
+                    }
+                    // Data this version cannot read is not written over.
+                    let read = keys
+                        .open(&id, remote.version, &remote.sealed())
+                        .ok()
+                        .and_then(|data| serde_json::from_slice::<Devices>(&data).ok());
+                    match read {
+                        Some(all) => (remote.version, all),
+                        None => return vec![Outcome::Error(unreadable())],
+                    }
+                }
+                // No device listed a tab yet.
+                Ok(r) if r.status == 404 && seen == 0 => (0, Devices::default()),
+                Ok(r) if r.status == 404 => return back("none"),
+                Ok(r) => return vec![Outcome::Error(r.error())],
+                Err(e) => return vec![Outcome::Error(e)],
+            };
+            self.known.insert(DEVICES.to_string(), version);
+            let round = devices::round(&mut all, me, crate::state::now());
+            let done = |version| {
+                vec![Outcome::Devices {
+                    tabs: round.tabs,
+                    sent: round.sent,
+                    forgotten: me
+                        .taken
+                        .iter()
+                        .filter(|id| !round.taken.contains(id))
+                        .cloned()
+                        .collect(),
+                    version,
+                }]
+            };
+            if !round.write {
+                return done(version);
+            }
+            let bytes = serde_json::to_vec(&all).unwrap_or_default();
+            match self.push(&keys, DEVICES, version, &bytes) {
+                Ok(written) => {
+                    self.known.insert(DEVICES.to_string(), written);
+                    return done(written);
+                }
+                // Another device wrote first: read again.
+                Err(e) if e.contains("another device wrote first") => {}
+                Err(e) => return vec![Outcome::Error(e)],
+            }
+        }
+        vec![Outcome::Error(
+            "devices: other devices kept writing first; trying again later".into(),
+        )]
+    }
+
     /// Erase `code`'s chain on `server`. This device left it already, so only
     /// a failure is reported; the pending record stays for another try.
     fn delete_remote(&self, server: &str, code: &SyncCode) -> Vec<Outcome> {
@@ -842,6 +976,24 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn join_link_carries_server_and_words() {
+        let words = SyncCode::generate().words();
+        let link = join_link("https://sync.example.org/a b+c", &words);
+        assert!(link.starts_with(
+            "magnetite://sync?server=https%3A%2F%2Fsync.example.org%2Fa%20b%2Bc&words="
+        ));
+        assert!(!link.contains('+') && !link.contains(' '));
+        // Read back by a parser that, like a phone's, takes `+` as itself.
+        let read = link.rsplit_once("&words=").unwrap().1.replace("%20", " ");
+        assert_eq!(read, words);
+
+        let rows = qr_rows(&link).unwrap();
+        assert!(rows.iter().all(|r| r.len() == rows.len()));
+        // The finder pattern's corner.
+        assert!(rows[0].starts_with("1111111"));
+    }
     use magnetite_core::{Profile, SidebarSnapshot, Space};
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::TcpListener;
@@ -859,8 +1011,10 @@ mod tests {
             id: "s1".into(),
             title: title.into(),
             icon: None,
+            icon_image: None,
             accent: None,
             profile_id: "default".into(),
+            shortcut: None,
             pinned: vec![],
             today: vec![],
             bookmarks: Vec::new(),
@@ -881,6 +1035,7 @@ mod tests {
             Outcome::ConnectFailed(e) => format!("ConnectFailed({e})"),
             Outcome::Pulled { .. } => "Pulled".into(),
             Outcome::Pushed { .. } => "Pushed".into(),
+            Outcome::Devices { .. } => "Devices".into(),
             Outcome::Error(e) => format!("Error({e})"),
             Outcome::Disconnected => "Disconnected".into(),
         }
@@ -983,6 +1138,94 @@ mod tests {
             panic!("{:?}", out.iter().map(describe).collect::<Vec<_>>())
         };
         assert_eq!(versions, &[(SIDEBAR.into(), 1), (SETTINGS.into(), 1)]);
+    }
+
+    /// A worker whose server holds a phone's sent tab in `devices`, at the
+    /// version in the first counter (0: nothing there); it answers writes
+    /// with the status in the second.
+    fn worker_with_sent_tab(name: &str) -> (Worker, Arc<AtomicU64>, Arc<AtomicU64>) {
+        let (serving, put) = (Arc::new(AtomicU64::new(3)), Arc::new(AtomicU64::new(200)));
+        let code = SyncCode::generate();
+        let keys = code.keys();
+        let id = keys.collection_id(DEVICES);
+        let server = {
+            let (serving, put) = (serving.clone(), put.clone());
+            fake_server(move |method, _| {
+                let version = serving.load(Ordering::SeqCst);
+                if method == "PUT" {
+                    let status = u16::try_from(put.load(Ordering::SeqCst)).unwrap();
+                    return (status, format!(r#"{{"version":{}}}"#, version + 1));
+                }
+                if version == 0 {
+                    return (404, r#"{"error":"no such collection"}"#.into());
+                }
+                let plain = br#"{"devices":[{"id":"phone","name":"iPhone","tabs":[
+                    {"id":"a","url":"https://a.example/","later":true}]}]}"#;
+                let sealed = keys.seal(&id, version, plain).unwrap();
+                let body = CollectionResponse::new(version, sealed);
+                (200, serde_json::to_string(&body).unwrap())
+            })
+        };
+        let dir = data_dir(name);
+        save_code(&dir, &code).unwrap();
+        let settings = SyncSettings {
+            server_url: server,
+            ..SyncSettings::default()
+        };
+        (Worker::new(dir, settings), serving, put)
+    }
+
+    fn me() -> Me {
+        Me {
+            id: "mac".into(),
+            name: "Mac".into(),
+            taken: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_sent_tab_opens_only_once_taking_it_is_written() {
+        let (mut w, _, put) = worker_with_sent_tab("devices-claim");
+        // Another device keeps writing first: the tab is not this one's.
+        put.store(409, Ordering::SeqCst);
+        let out = w.devices(&me());
+        assert!(
+            matches!(out.as_slice(), [Outcome::Error(e)] if e.contains("kept writing first")),
+            "{:?}",
+            out.iter().map(describe).collect::<Vec<_>>()
+        );
+        put.store(200, Ordering::SeqCst);
+        let out = w.devices(&me());
+        let [Outcome::Devices { sent, version, .. }] = out.as_slice() else {
+            panic!("{:?}", out.iter().map(describe).collect::<Vec<_>>())
+        };
+        assert_eq!((sent[0].id.as_str(), *version), ("a", 4));
+    }
+
+    #[test]
+    fn an_older_devices_collection_is_refused() {
+        let (mut w, serving, _) = worker_with_sent_tab("devices-rollback");
+        w.settings.versions.insert(DEVICES.into(), 5);
+        // Replayed, or deleted: either could bring a finished handover back.
+        for old in [3, 0] {
+            serving.store(old, Ordering::SeqCst);
+            let out = w.devices(&me());
+            assert!(
+                matches!(out.as_slice(), [Outcome::Error(e)] if e.contains("not going back")),
+                "{old}: {:?}",
+                out.iter().map(describe).collect::<Vec<_>>()
+            );
+        }
+        // What the worker wrote counts too, before the app has stored it.
+        w.settings.versions.clear();
+        serving.store(6, Ordering::SeqCst);
+        assert!(matches!(
+            w.devices(&me()).as_slice(),
+            [Outcome::Devices { version: 7, .. }]
+        ));
+        assert!(
+            matches!(w.devices(&me()).as_slice(), [Outcome::Error(e)] if e.contains("not going back"))
+        );
     }
 
     #[test]
@@ -1441,6 +1684,7 @@ mod tests {
             snapshot: Box::new(snapshot("Work")),
             settings: Box::new(settings_with(&w.settings)),
             sidebar_unchanged: false,
+            me: Me::default(),
         };
         client.submit(sync());
         let _connection = stalled.accept().unwrap(); // the worker is now stuck

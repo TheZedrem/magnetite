@@ -46,6 +46,14 @@ pub(crate) struct WindowState {
     pub split: Option<magnetite_core::split::SplitNode<ContentId>>,
     /// Content window shown as a peek overlay, if any.
     pub peek: Option<ContentId>,
+    /// Content window shown as a web panel: over the pages, at the
+    /// sidebar's edge of the page area, if any.
+    pub web_panel: Option<ContentId>,
+    /// The width asked for the web panel, in points; none: the usual.
+    pub web_panel_width: Option<u32>,
+    /// The close button of a docked web panel, and the page whose window
+    /// it is an overlay of (`panel_close.rs`).
+    pub panel_close: Option<(ContentId, OverlayController)>,
     /// The page last shown alone (`show_content`) and not hidden since.
     pub shown: Option<ContentId>,
     /// Last draggable regions reported by the sidebar page (its own
@@ -53,6 +61,9 @@ pub(crate) struct WindowState {
     pub sidebar_drag: Vec<DraggableRegion>,
     /// Last draggable regions reported by the top bar page (window coordinates).
     pub top_bar_drag: Vec<DraggableRegion>,
+    /// The developer bar shows above this window's pages
+    /// (`set_dev_bar_visible`).
+    pub dev_bar_visible: bool,
     /// The split view's dividers as last laid out (`update_dividers`),
     /// shown together with the docked DevTools' ones (`show_dividers`).
     pub split_dividers: Vec<magnetite_core::split::Divider>,
@@ -75,9 +86,13 @@ impl WindowState {
             pending_sidebar_browser: None,
             split: None,
             peek: None,
+            web_panel: None,
+            web_panel_width: None,
+            panel_close: None,
             shown: None,
             sidebar_drag: Vec::new(),
             top_bar_drag: Vec::new(),
+            dev_bar_visible: false,
             split_dividers: Vec::new(),
             focused_pane: None,
             float_bar: None,
@@ -101,15 +116,32 @@ pub(crate) struct Inner {
     pub next_id: ContentId,
     pub router: Option<Arc<BrowserSideRouter>>,
     pub quitting: bool,
+    /// The last window was closed and Magnetite goes on without one
+    /// (macOS, `Engine::hide_frame`).
+    pub frame_hidden: bool,
     /// Content windows locked to a host (pinned tabs, favorites): user
     /// navigations to another host are redirected to the application.
     pub locks: HashMap<ContentId, String>,
     /// Which parts of Chromium's password manager and autofill are on
     /// (`autofill.rs`), for the profiles made from now on.
     pub autofill: crate::AutofillPrefs,
+    /// Where downloads go (`downloads.rs`), for the profiles made from
+    /// now on.
+    pub downloads: crate::DownloadPrefs,
+    /// The zoom, in percent, every site starts with (`site.rs`), for the
+    /// profiles made from now on.
+    pub default_zoom: u32,
+    /// Spell check and the languages websites are asked for
+    /// (`languages.rs`), for the profiles made from now on.
+    pub languages: crate::LanguagePrefs,
     /// Pages the app muted. Kept here because a page gets its browser a
     /// moment after it is asked for: the mute is applied once it has one.
     pub muted: HashSet<ContentId>,
+    /// Which tabs pages capture (`tabshare.rs`).
+    pub shares: crate::tabshare::Shares,
+    /// Pages shown as on a phone (`set_mobile_view`). Kept here for the
+    /// same reason, and to give it back after device mode.
+    pub mobile: HashSet<ContentId>,
     /// When one of our own pages was last reloaded after its renderer died,
     /// by browser identifier (`may_reload_ui`).
     pub ui_reloads: HashMap<i32, std::time::Instant>,
@@ -119,9 +151,11 @@ pub(crate) struct Inner {
     /// an extension's pop-up window. `quit` closes them; each one left open
     /// would keep the app running.
     pub foreign: HashMap<i32, Browser>,
-    /// Keeps the watch on each profile's extension pins alive
-    /// (`extensions::watch_pins`).
-    pub pin_watches: Vec<Registration>,
+    /// The tab of an extension that CEF hands over next (`content.rs`).
+    pub pending_tab: Option<crate::content::PendingTab>,
+    /// Keeps the watches on each profile's Chromium preferences alive
+    /// (`extensions::watch_pins`, `autofill::watch`).
+    pub pref_watches: Vec<Registration>,
     /// Profile ids whose context Chromium has finished making: only then
     /// can a browser be made in it (`context_ready`).
     pub ready_contexts: HashSet<String>,
@@ -135,6 +169,8 @@ pub(crate) struct Inner {
     /// Where DevTools open, and the docked ones per page.
     pub devtools_dock: crate::DevToolsDock,
     pub docked: HashMap<ContentId, crate::devdock::DockedDevTools>,
+    /// The panel `DevTools` that are opening show first, per page.
+    pub pending_panels: HashMap<ContentId, crate::DevPanel>,
     /// The docked DevTools' size the user dragged, per side.
     pub devtools_size: crate::DevToolsSize,
     /// The device device mode used last (`device.rs`), to start with next.
@@ -171,6 +207,10 @@ pub(crate) struct Inner {
     pub sidebar_width: i32,
     /// Installed extensions per profile (`extensions.rs`).
     pub extensions: crate::extensions::ExtensionCache,
+    /// The sites whose pages the system's engine shows (`system.rs`).
+    pub system_sites: Vec<String>,
+    /// The serial the next page made gets (`ContentState::serial`).
+    pub next_serial: u64,
 }
 
 impl Inner {
@@ -239,19 +279,27 @@ impl Engine {
                 next_id: 1,
                 router: None,
                 quitting: false,
+                frame_hidden: false,
                 locks: HashMap::new(),
                 autofill: crate::AutofillPrefs::default(),
+                downloads: crate::DownloadPrefs::default(),
+                default_zoom: 100,
+                languages: crate::LanguagePrefs::default(),
                 muted: HashSet::new(),
+                shares: crate::tabshare::Shares::default(),
+                mobile: HashSet::new(),
                 ui_reloads: HashMap::new(),
                 contexts: HashMap::new(),
                 foreign: HashMap::new(),
-                pin_watches: Vec::new(),
+                pending_tab: None,
+                pref_watches: Vec::new(),
                 ready_contexts: HashSet::new(),
                 queued: Vec::new(),
                 chrome_toolbar: config.chrome_toolbar,
                 top_bar_visible: false,
                 devtools_dock: crate::DevToolsDock::default(),
                 docked: HashMap::new(),
+                pending_panels: HashMap::new(),
                 devtools_size: crate::DevToolsSize::default(),
                 last_device: None,
                 overlay: None,
@@ -266,6 +314,8 @@ impl Engine {
                 permission_requests: HashMap::new(),
                 sidebar_width: config.sidebar_width,
                 extensions: crate::extensions::ExtensionCache::default(),
+                system_sites: Vec::new(),
+                next_serial: 0,
             }),
             current: std::sync::atomic::AtomicU32::new(1),
             delegate,
@@ -379,7 +429,8 @@ impl Engine {
             .top_bar_visible()
             .then(|| self.top_bar_browser())
             .flatten();
-        for frame in [browser, top_bar]
+        let dev_bar = self.dev_bar_browser();
+        for frame in [browser, top_bar, dev_bar]
             .into_iter()
             .flatten()
             .filter_map(|b| b.main_frame())
@@ -398,6 +449,7 @@ impl Engine {
             self.docked_sidebar_browser(),
             self.float_sidebar_browser(),
             self.top_bar_browser(),
+            self.dev_bar_browser(),
             self.empty_browser(),
             overlay,
         ]
@@ -442,6 +494,19 @@ impl Engine {
             .frame
             .as_ref()
             .and_then(|f| f.top_bar_browser.clone())
+    }
+
+    pub(crate) fn dev_bar_browser(&self) -> Option<Browser> {
+        self.lock()
+            .win
+            .frame
+            .as_ref()
+            .and_then(|f| f.dev_bar_browser.clone())
+    }
+
+    /// The browser a dialog of the system's opens over: the sidebar's.
+    pub(crate) fn dialog_host(&self) -> Option<BrowserHost> {
+        self.docked_sidebar_browser().and_then(|b| b.host())
     }
 
     fn docked_sidebar_browser(&self) -> Option<Browser> {
@@ -512,7 +577,8 @@ impl Engine {
     /// The request context for `profile`; `None` is the global context.
     /// Other profiles get their own cache directory below the root cache
     /// path (separate cookies, storage and extensions); ephemeral ones keep
-    /// everything in memory until Magnetite quits. Chromium finishes a new
+    /// everything in memory, until `forget_contexts` or until Magnetite
+    /// quits. Chromium finishes a new
     /// context a little later (`context_is_ready`).
     pub(crate) fn request_context(
         &self,
@@ -524,7 +590,10 @@ impl Engine {
         }
         let settings = if profile.ephemeral {
             // An empty cache path makes CEF create an in-memory context.
-            RequestContextSettings::default()
+            RequestContextSettings {
+                accept_language_list: CefString::from(self.config.accept_languages.as_str()),
+                ..Default::default()
+            }
         } else {
             let dir = self.config.profile_dir(&profile.id);
             if let Err(e) = std::fs::create_dir_all(&dir) {
@@ -533,6 +602,7 @@ impl Engine {
             RequestContextSettings {
                 cache_path: CefString::from(dir.to_string_lossy().as_ref()),
                 persist_session_cookies: 1,
+                accept_language_list: CefString::from(self.config.accept_languages.as_str()),
                 ..Default::default()
             }
         };
@@ -540,6 +610,28 @@ impl Engine {
         let ctx = request_context_create_context(Some(&settings), Some(&mut handler))?;
         self.lock().contexts.insert(profile.id.clone(), ctx.clone());
         Some(ctx)
+    }
+
+    /// Let go of the in-memory contexts of the profiles `ids`, which nothing
+    /// uses any more: Chromium drops such a context, with its cookies and
+    /// storage, once its last page has closed. A popup window a page of
+    /// theirs opened (`foreign`) would keep the context alive: it closes.
+    pub fn forget_contexts(&self, ids: &[String]) {
+        let popups: Vec<Browser> = self.lock().foreign.values().cloned().collect();
+        for host in popups.iter().filter_map(ImplBrowser::host) {
+            let context = host.request_context().and_then(|c| self.context_id_of(&c));
+            if context.is_some_and(|id| ids.contains(&id)) {
+                host.close_browser(1);
+            }
+        }
+        crate::system::backend::release_stores(ids);
+        let mut inner = self.lock();
+        for id in ids {
+            if inner.contexts.remove(id).is_some() {
+                crate::trace(&format!("letting go of in-memory context {id}"));
+            }
+            inner.ready_contexts.remove(id);
+        }
     }
 
     /// Whether a browser can be made in `profile`'s context now: always in
@@ -577,12 +669,20 @@ impl Engine {
     /// folder of a context it has made until it quits, and writes to it
     /// again.
     pub fn remove_profile_dirs(&self, ids: &[String]) {
+        self.forget_system_stores(ids);
         for id in ids {
             let path = self.config.profile_dir(id);
             if path.is_dir() {
                 remove_profile_dir(&path);
             }
         }
+    }
+
+    /// A number no page made before has: `ContentState::serial`.
+    pub(crate) fn next_serial(&self) -> u64 {
+        let mut inner = self.lock();
+        inner.next_serial += 1;
+        inner.next_serial
     }
 
     /// Lock a content window to `host` (`None` removes the lock).
@@ -717,6 +817,24 @@ pub(crate) fn prepare_context(ctx: &RequestContext) -> bool {
     let autofill = Engine::global().lock().autofill;
     if !autofill.apply(ctx) {
         crate::trace("cannot set the password and autofill preferences");
+    }
+    crate::autofill::watch(ctx);
+    // Downloads where the user's settings send them.
+    let downloads = Engine::global().lock().downloads.clone();
+    if !downloads.apply(ctx) {
+        crate::trace("cannot set the download preferences");
+    }
+    // The zoom sites start with, as the user's settings have it.
+    let zoom = Engine::global().lock().default_zoom;
+    // Also 100 percent: a profile may still hold an earlier choice.
+    if !crate::site::apply_default_zoom(ctx, zoom) {
+        crate::trace("cannot set the default zoom");
+    }
+    // Spell check and languages as the user's settings have them.
+    let spellcheck = Engine::global().lock().languages.spellcheck;
+    // Also when it is on, as at first: a profile may still hold "off".
+    if !crate::languages::apply_spellcheck(ctx, spellcheck) {
+        crate::trace("cannot set the language preferences");
     }
     set
 }

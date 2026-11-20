@@ -6,7 +6,8 @@
 //! `cefsimple` example (Apache-2.0 OR MIT). Next to them: tweaks to CEF's
 //! own windows (pinned, rounded corners, the focus ring of a split page,
 //! hidden or shown, shown without taking focus), the watch on two-finger
-//! swipes, stale tooltips, pages wrongly marked covered, and helpers for the
+//! swipes, stale tooltips, pages wrongly marked covered, the cursor of a
+//! window without the keyboard, and helpers for the
 //! child modules:
 //!
 //! - `chrome`: our child windows over the page area (drag strip, peek
@@ -15,7 +16,9 @@
 //! - `hotkey`: the system-wide quick search key;
 //! - `pill`: the link-hover status pill;
 //! - `pressure`: the system's memory pressure signal;
-//! - `share`: the share menu, the pasteboard and the save panel.
+//! - `quit`: Cmd+Q quits on the second press;
+//! - `share`: the share menu, the pasteboard and the save panel;
+//! - `webkit`: pages in `WebKit`, the system's own web engine.
 //!
 //! Everything runs on the main thread (CEF's UI thread on macOS). CEF's
 //! screen rectangles have a top-left origin; `screen_rect` turns them into
@@ -26,10 +29,13 @@ mod default_browser;
 mod hotkey;
 mod pill;
 mod pressure;
+mod quit;
 mod share;
+pub(crate) mod webkit;
 
 pub use chrome::{
-    DividerKey, hide_peek_backdrop, set_dividers, set_edge_zone, set_grab_strip, show_peek_backdrop,
+    DividerKey, hide_peek_backdrop, set_dividers, set_edge_zone, set_grab_strip, set_panel_close,
+    show_peek_backdrop,
 };
 pub use default_browser::{handles, set_handler};
 pub use hotkey::set_quick_search_hotkey;
@@ -39,13 +45,12 @@ pub use share::{copy_file, copy_png, copy_text, save_png, share_png, show_share_
 
 use crate::engine::Engine;
 use crate::events::EngineEvent;
-use cef::ImplWindow;
 use cef::application_mac::{CefAppProtocol, CrAppControlProtocol, CrAppProtocol};
 use objc2::{
     ClassType, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, extern_methods,
     msg_send,
     rc::Retained,
-    runtime::{AnyObject, Bool, NSObject, NSObjectProtocol, ProtocolObject},
+    runtime::{AnyObject, Bool, NSObject, NSObjectProtocol, ProtocolObject, Sel},
     sel,
 };
 use objc2_app_kit::{
@@ -98,12 +103,10 @@ define_class! {
         }
 
         /// Called when the user clicks the app dock icon while the application is
-        /// already running.
+        /// already running: the window shows, also after its close hid it.
         #[unsafe(method(applicationShouldHandleReopen:hasVisibleWindows:))]
         unsafe fn application_should_handle_reopen(&self, _sender: &NSApplication, _has_visible_windows: Bool) -> Bool {
-            if let Some(window) = Engine::global().frame_window() {
-                window.show();
-            }
+            Engine::global().show_frame();
             Bool::NO
         }
 
@@ -194,10 +197,25 @@ define_class!(
         /// The standard |-applicationShouldTerminate:| is not supported, and code paths
         /// leading to it must be redirected.
         #[unsafe(method(terminate:))]
-        unsafe fn terminate(&self, _sender: &AnyObject) {
+        unsafe fn terminate(&self, _sender: Option<&AnyObject>) {
             let engine = Engine::global();
             if engine.is_quitting() { return; }
+            // Cmd+Q counts on the second press only.
+            if !quit::confirmed(self.mtm()) { return; }
             engine.emit(EngineEvent::QuitRequested);
+        }
+
+        /// The window with the keyboard, as accessibility sees it. That is
+        /// mostly a page, which is a part of the frame (`mark_as_part`):
+        /// tools that move or resize "the focused window" get the frame.
+        #[unsafe(method_id(accessibilityFocusedWindow))]
+        unsafe fn accessibility_focused_window(&self) -> Option<Retained<AnyObject>> {
+            let focused: Option<Retained<AnyObject>> =
+                msg_send![super(self), accessibilityFocusedWindow];
+            focused.map(|focused| match focused.downcast::<NSWindow>() {
+                Ok(window) => whole_window(window).into(),
+                Err(other) => other,
+            })
         }
     }
 
@@ -294,24 +312,148 @@ pub fn pin_window(handle: cef::sys::cef_window_handle_t) {
 }
 
 /// Tell accessibility that the window holding the view `handle` is a part of
-/// another window, not one to switch to. AppKit calls a frameless window that
-/// can take the keyboard a dialog, which window switchers (`AltTab`) list next
-/// to the frame: one more "Magnetite" for every loaded page.
+/// the window it is a child of, not a window of its own:
+///
+/// - AppKit calls a frameless window that can take the keyboard a dialog,
+///   which window switchers (`AltTab`) list next to the frame: one more
+///   "Magnetite" for every loaded page. Hence the subrole.
+/// - Tools that move or resize "the window under the pointer" walk up from
+///   the element there to the first `AXWindow` and set its position. As a
+///   group whose parent is the frame, a page leads them to the frame; as a
+///   window it was moved out of the frame alone.
 pub fn mark_as_part(handle: cef::sys::cef_window_handle_t) {
     if handle.is_null() {
         return;
     }
-    // SAFETY: CEF hands us a live NSView*; `setAccessibilitySubrole:` takes
-    // an NSString.
-    unsafe {
-        let view: &AnyObject = &*handle.cast::<AnyObject>();
-        let window: *mut AnyObject = msg_send![view, window];
-        if window.is_null() {
-            return;
-        }
-        let subrole = objc2_foundation::ns_string!("AXUnknown");
-        let _: () = msg_send![&*window, setAccessibilitySubrole: subrole];
+    // SAFETY: CEF hands us a live NSView*.
+    let view: &objc2_app_kit::NSView = unsafe { &*handle.cast() };
+    if let Some(window) = view.window() {
+        mark_window_as_part(&window);
     }
+}
+
+/// `mark_as_part` for the window itself.
+fn mark_window_as_part(window: &NSWindow) {
+    let subrole = objc2_foundation::ns_string!("AXUnknown");
+    teach_windows_parts();
+    // SAFETY: `setAccessibilitySubrole:` takes an NSString; the mark is a
+    // static string kept under a key of our own.
+    unsafe {
+        let _: () = msg_send![window, setAccessibilitySubrole: subrole];
+        objc2::ffi::objc_setAssociatedObject(
+            std::ptr::from_ref::<NSWindow>(window).cast_mut().cast(),
+            part_key(),
+            std::ptr::from_ref(part_role()).cast_mut().cast(),
+            objc2::ffi::OBJC_ASSOCIATION_RETAIN_NONATOMIC,
+        );
+    }
+}
+
+/// The accessibility role of a window marked by `mark_as_part`.
+fn part_role() -> &'static objc2_foundation::NSString {
+    objc2_foundation::ns_string!("AXGroup")
+}
+
+/// The key a window's mark is kept under (its address is the key).
+fn part_key() -> *const std::ffi::c_void {
+    static KEY: u8 = 0;
+    std::ptr::from_ref(&KEY).cast()
+}
+
+/// The window that `window` is a part of: its parent, if `mark_as_part` was
+/// called for it. `None` too while a marked window has no parent (hidden, or
+/// shown on its own as a detached overlay is): it is a window then.
+fn whole_of(window: &NSWindow) -> Option<Retained<NSWindow>> {
+    // SAFETY: reads what `mark_window_as_part` stored, or null.
+    let mark = unsafe {
+        objc2::ffi::objc_getAssociatedObject(std::ptr::from_ref(window).cast(), part_key())
+    };
+    if mark.is_null() {
+        return None;
+    }
+    window.parentWindow()
+}
+
+type RoleImp = unsafe extern "C-unwind" fn(&NSWindow, Sel) -> *const objc2_foundation::NSString;
+type ParentImp = unsafe extern "C-unwind" fn(&NSWindow, Sel) -> *mut AnyObject;
+
+/// AppKit's own answers, which unmarked windows keep.
+static WINDOW_ACCESSIBILITY: std::sync::OnceLock<(RoleImp, ParentImp)> = std::sync::OnceLock::new();
+
+/// Make every `NSWindow` answer accessibility's role and parent as a part of
+/// its parent window while it is one (`whole_of`); once per process.
+///
+/// On `NSWindow` and by a mark, not by AppKit's setters or a subclass of the
+/// window's class: the parent has to be asked for each time (a page window
+/// has none when it is created and gets another when it changes windows),
+/// and Chromium's windows are observed, which rules out giving them a class.
+fn teach_windows_parts() {
+    use objc2::ffi::{class_getInstanceMethod, class_replaceMethod, method_getTypeEncoding};
+    use objc2::runtime::Imp;
+
+    extern "C-unwind" fn role(this: &NSWindow, cmd: Sel) -> *const objc2_foundation::NSString {
+        if whole_of(this).is_some() {
+            return part_role();
+        }
+        let (original, _) = WINDOW_ACCESSIBILITY
+            .get()
+            .expect("kept before the replacements are installed");
+        // SAFETY: AppKit's method, called as AppKit would.
+        unsafe { original(this, cmd) }
+    }
+    extern "C-unwind" fn parent(this: &NSWindow, cmd: Sel) -> *mut AnyObject {
+        if let Some(whole) = whole_of(this) {
+            return Retained::autorelease_ptr(whole).cast();
+        }
+        let (_, original) = WINDOW_ACCESSIBILITY
+            .get()
+            .expect("kept before the replacements are installed");
+        // SAFETY: AppKit's method, called as AppKit would.
+        unsafe { original(this, cmd) }
+    }
+
+    static INSTALLED: std::sync::Once = std::sync::Once::new();
+    let class = NSWindow::class();
+    let (role_sel, parent_sel) = (sel!(accessibilityRole), sel!(accessibilityParent));
+    // AppKit's answers are kept before either replacement is in place: a
+    // replacement may be called the moment it is.
+    WINDOW_ACCESSIBILITY.get_or_init(|| {
+        let implementation = |sel: Sel| {
+            class
+                .instance_method(sel)
+                .expect("NSWindow answers the accessibility protocol")
+                .implementation()
+        };
+        // SAFETY: these are the implementations of the two getters.
+        unsafe {
+            (
+                std::mem::transmute::<Imp, RoleImp>(implementation(role_sel)),
+                std::mem::transmute::<Imp, ParentImp>(implementation(parent_sel)),
+            )
+        }
+    });
+    // SAFETY: the replacements have the types of the getters they replace,
+    // and are installed on `NSWindow` itself even where it only inherits
+    // the method.
+    INSTALLED.call_once(|| unsafe {
+        let class = std::ptr::from_ref(class).cast_mut();
+        for (sel, imp) in [
+            (role_sel, std::mem::transmute::<RoleImp, Imp>(role)),
+            (parent_sel, std::mem::transmute::<ParentImp, Imp>(parent)),
+        ] {
+            let types = method_getTypeEncoding(class_getInstanceMethod(class, sel));
+            class_replaceMethod(class, sel, imp, types);
+        }
+    });
+}
+
+/// `window`, or the window it is a part of (`mark_as_part`), however deep.
+fn whole_window(window: Retained<NSWindow>) -> Retained<NSWindow> {
+    let mut whole = window;
+    while let Some(parent) = whole_of(&whole) {
+        whole = parent;
+    }
+    whole
 }
 
 /// Give a frameless child window rounded corners, a clear background and a
@@ -769,6 +911,60 @@ pub fn hover_without_focus(handle: cef::sys::cef_window_handle_t) {
     HOVER_WINDOWS.with(|w| w.borrow_mut().insert(Retained::as_ptr(&window).addr()));
 }
 
+/// Show `cursor` (the `NSCursor` a page of ours asked for) although the
+/// window holding the view `handle` does not have the keyboard. Chromium
+/// sets a page's cursor only in the key window
+/// (`-[RenderWidgetHostViewCocoa shouldChangeCurrentCursor]`), and with the
+/// keyboard in a page that is the page's window: the sidebar still showed
+/// its hover, but never the resize arrows on its edge or the hand on a row.
+///
+/// Only while the keyboard is in a window of the same family (the frame, its
+/// pages and panels) and this window is the one under the pointer; Chromium
+/// keeps doing the rest, also the arrow when the pointer leaves the view.
+///
+/// # Safety
+///
+/// `handle` is null or a live `NSView`, and `cursor` is null or a live
+/// `NSCursor`, both for the length of the call.
+pub unsafe fn show_cursor_without_focus(handle: cef::sys::cef_window_handle_t, cursor: *mut u8) {
+    use objc2_app_kit::{NSCursor, NSView, NSWindow};
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    if handle.is_null() || cursor.is_null() {
+        return;
+    }
+    // SAFETY: the caller passes a live NSView; we are on the main thread.
+    let view: &NSView = unsafe { &*handle.cast::<NSView>() };
+    let (Some(window), Some(key)) = (
+        view.window(),
+        NSApplication::sharedApplication(mtm).keyWindow(),
+    ) else {
+        return;
+    };
+    if window.isKeyWindow() || root_window(&window) != root_window(&key) {
+        return;
+    }
+    let under_pointer =
+        NSWindow::windowNumberAtPoint_belowWindowWithWindowNumber(NSEvent::mouseLocation(), 0, mtm);
+    if under_pointer != window.windowNumber() {
+        return;
+    }
+    // SAFETY: the caller passes a live `NSCursor`.
+    let cursor: &NSCursor = unsafe { &*cursor.cast::<NSCursor>() };
+    cursor.set();
+}
+
+/// The window `window` is attached to, through all its parents.
+pub(crate) fn root_window(window: &objc2_app_kit::NSWindow) -> Retained<objc2_app_kit::NSWindow> {
+    use objc2::Message as _;
+    let mut root = window.retain();
+    while let Some(parent) = root.parentWindow() {
+        root = parent;
+    }
+    root
+}
+
 /// The corner radius a page window shows: macOS rounds titled windows itself
 /// (16 pt since macOS 26) and that clips more than our layer's `own` radius
 /// when it is larger. The window's radius has no public API, so it is read
@@ -793,21 +989,25 @@ fn visible_corner(view: &objc2_app_kit::NSView, own: f64) -> f64 {
 
 /// Outline the page window whose content view is `handle` in `argb` (the
 /// focused page of a split), or remove the outline (`None`). The outline is
-/// its own layer on top of the page, inset by a point and concentric with the
-/// corner the page really shows (`visible_corner`), so nothing clips it and
-/// the curve matches the page's.
+/// its own layer on top of the page, along its very edge and with the corner
+/// the page really shows (`visible_corner`): no rim of the page shows outside
+/// it, and the curve matches the page's.
 pub fn set_focus_ring(handle: cef::sys::cef_window_handle_t, argb: Option<u32>) {
     use objc2_app_kit::NSView;
     use objc2_foundation::{NSArray, NSString};
     const NAME: &str = "magnetite-focus-ring";
     const WIDTH: f64 = 2.0;
-    const INSET: f64 = 1.0;
     if handle.is_null() {
         return;
     }
     // SAFETY: CEF hands us a live NSView of a page window; main thread.
     let view: &NSView = unsafe { &*handle.cast::<NSView>() };
-    let Some(content) = view.window().and_then(|w| w.contentView()) else {
+    // A system page's own view lies over the content view: the outline is
+    // drawn on what holds it.
+    let Some(content) = view
+        .window()
+        .and_then(|w| webkit::holder_in(&w).or_else(|| w.contentView()))
+    else {
         return;
     };
     content.setWantsLayer(true);
@@ -843,16 +1043,8 @@ pub fn set_focus_ring(handle: cef::sys::cef_window_handle_t, argb: Option<u32>) 
         });
         let bounds: objc2_foundation::NSRect = msg_send![&*host, bounds];
         let radius: f64 = msg_send![&*host, cornerRadius];
-        let frame = objc2_foundation::NSRect::new(
-            objc2_foundation::NSPoint::new(bounds.origin.x + INSET, bounds.origin.y + INSET),
-            objc2_foundation::NSSize::new(
-                bounds.size.width - 2.0 * INSET,
-                bounds.size.height - 2.0 * INSET,
-            ),
-        );
-        let _: () = msg_send![&*ring, setFrame: frame];
-        let _: () =
-            msg_send![&*ring, setCornerRadius: (visible_corner(view, radius) - INSET).max(0.0)];
+        let _: () = msg_send![&*ring, setFrame: bounds];
+        let _: () = msg_send![&*ring, setCornerRadius: visible_corner(view, radius)];
         // Crisp on every screen: the layer draws at the window's pixel density.
         let scale = view.window().map_or(1.0, |w| w.backingScaleFactor());
         let _: () = msg_send![&*ring, setContentsScale: scale];
@@ -889,6 +1081,7 @@ fn borderless_window(mtm: MainThreadMarker, rect: NSRect, shadow: bool) -> Retai
     window.setHasShadow(shadow);
     window.setExcludedFromWindowsMenu(true);
     window.setBackgroundColor(Some(&NSColor::clearColor()));
+    mark_window_as_part(&window);
     window
 }
 

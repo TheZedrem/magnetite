@@ -1,10 +1,11 @@
 import { memo, useEffect, useRef, useState } from "react";
 import { Favicon } from "./Favicon";
-import { ChevronDown, Close, FolderIcon, HomeArrow, KeepActiveIcon, SmartFolderIcon, SnoozeIcon, Speaker, SpeakerOff, WakeIcon, WarningIcon } from "./Icons";
+import { ChevronDown, Close, FolderIcon, HomeArrow, KeepActiveIcon, PhoneIcon, ScreenShareIcon, SmartFolderIcon, SnoozeIcon, Speaker, SpeakerOff, WakeIcon, WarningIcon } from "./Icons";
 import { ago, findFolder, localInputValue, snoozeChoices, wakeLabel } from "./smart";
 import { Glyph, glyphFor } from "./Glyphs";
-import { dragging, dropIndex, endDrag, indexAfterTaking, overRowMiddle, rowZone, sideOf, splittable, startDrag } from "./dnd";
-import { findTab, hostOf, send, splitIds, type FavoriteList, type Folder, type SidebarNode, type Side, type Snoozed, type SplitNode, type TabItem, type TabRuntime, type UiState } from "./bridge";
+import { dragging, dropIndex, endDrag, indexAfterTaking, movedIds, overRowMiddle, rowZone, sideOf, splittable, startDrag } from "./dnd";
+import { errorCount } from "./DevBar";
+import { findTab, hostOf, IS_MAC, send, splitGroup, splitIds, type DeviceTab, type FavoriteList, type Folder, type SidebarNode, type Side, type Snoozed, type SplitNode, type TabItem, type TabRuntime, type UiState } from "./bridge";
 import { SEPARATOR, type MenuItem } from "./ContextMenu";
 
 export type Section = "favorites" | "pinned" | "today";
@@ -58,27 +59,39 @@ export function tabMenu(ctx: RowContext, tab: TabItem, section: Section, at: { x
   const onScreen = ctx.state.panes.includes(tab.id);
   const inSplit = ctx.inSplit.has(tab.id);
   if (ctx.state.runtime[tab.id]?.loaded) items.push({ label: "Reload", onClick: () => send({ cmd: "reload", id: tab.id }) });
-  items.push({ label: "Share…", onClick: () => send({ cmd: "share", id: tab.id, x: at.x, y: at.y }) });
+  // The system's share menu: only macOS has one here.
+  if (IS_MAC) items.push({ label: "Share…", onClick: () => send({ cmd: "share", id: tab.id, x: at.x, y: at.y }) });
   items.push({ label: "Copy link", onClick: () => navigator.clipboard?.writeText(tab.url) });
   items.push(SEPARATOR);
-  if (section === "today") items.push({ label: "Pin tab", onClick: () => send({ cmd: "pin", id: tab.id }) });
+  // The private space has only Today tabs, and nothing of it is kept or moves out.
+  const inPrivate = ctx.state.private_space === ctx.spaceId && section !== "favorites";
+  if (section === "today" && !inPrivate) items.push({ label: "Pin tab", onClick: () => send({ cmd: "pin", id: tab.id }) });
   if (section === "pinned") {
     items.push({ label: "Unpin tab", onClick: () => send({ cmd: "unpin", id: tab.id }) });
     if (tab.home_url && tab.home_url !== tab.url) items.push({ label: "Back to pinned page", title: tab.home_url, onClick: () => send({ cmd: "reset_tab", id: tab.id }) });
   }
-  if (section !== "favorites") items.push({ label: "Add to favorites", onClick: () => send({ cmd: "move_tab", id: tab.id, space: ctx.spaceId, section: "favorites", index: 999 }) });
+  if (inPrivate) {
+    // Nothing to keep.
+  } else if (section !== "favorites") items.push({ label: "Add to favorites", onClick: () => send({ cmd: "move_tab", id: tab.id, space: ctx.spaceId, section: "favorites", index: 999 }) });
   else items.push({ label: "Remove from favorites", onClick: () => send({ cmd: "move_tab", id: tab.id, space: ctx.spaceId, section: "today", index: 0 }) });
-  items.push({ label: "Add to bookmarks", onClick: () => send({ cmd: "add_bookmark", id: tab.id }) });
+  if (!inPrivate) items.push({ label: "Add to bookmarks", onClick: () => send({ cmd: "add_bookmark", id: tab.id }) });
   // Spared from unloading and auto-archive until it is let go again.
   // Favorites and pinned tabs stay loaded anyway.
   if (section === "today") items.push({ label: tab.keep_active ? "✓ Keep active" : "Keep active", onClick: () => send({ cmd: "set_keep_active", id: tab.id, keep: !tab.keep_active }) });
-  if (ctx.state.active_tab && ctx.state.active_tab !== tab.id && !onScreen && ctx.state.panes.length < MAX_PANES) {
+  // Over the page in front instead of in its place (a translator, a password manager).
+  if (section !== "today") items.push({ label: tab.panel ? "✓ Open as panel" : "Open as panel", onClick: () => send({ cmd: "set_web_panel", id: tab.id, panel: !tab.panel }) });
+  // Sites that have a page for phones serve the panel that one.
+  if (section !== "today" && tab.panel) items.push({ label: tab.panel_mobile ? "✓ Mobile view" : "Mobile view", onClick: () => send({ cmd: "set_panel_mobile", id: tab.id, mobile: !tab.panel_mobile }) });
+  if (ctx.state.active_tab && ctx.state.active_tab !== tab.id && !onScreen && !tab.panel && ctx.state.panes.length < MAX_PANES) {
     items.push({ label: "Open in split view", onClick: () => send({ cmd: "add_split", id: tab.id }) });
   }
   if (inSplit) {
     items.push({ label: "Remove from split view", onClick: () => send({ cmd: "remove_split", id: tab.id }) });
     items.push({ label: "Separate all tabs", onClick: () => send({ cmd: "separate_all", id: tab.id }) });
   }
+  // The same address as a new Today tab (a private one in the private space),
+  // as "Duplicate tab" in the command bar. A favorite has its own entry below.
+  if (section !== "favorites") items.push({ label: "Duplicate tab", onClick: () => send({ cmd: "new_tab", url: tab.url }) });
   items.push({ label: "Rename", onClick: () => ctx.setRenaming(tab.id) });
   if (tab.custom_title) items.push({ label: "Use page title", onClick: () => send({ cmd: "rename_tab", id: tab.id, title: "" }) });
   if (section === "favorites") {
@@ -96,10 +109,19 @@ export function tabMenu(ctx: RowContext, tab: TabItem, section: Section, at: { x
       });
     }
     items.push({ label: "New profile for this favorite…", onClick: () => ctx.newProfileFor(tab.id) });
+    // For every space, or for this one alone.
+    const here = spaces.find((sp) => sp.id === ctx.spaceId);
+    if (here && spaces.filter((sp) => sp.id !== ctx.state.private_space).length > 1) {
+      const own = (tab.only_in ?? []).filter((id) => spaces.some((sp) => sp.id === id));
+      items.push(SEPARATOR);
+      items.push({ label: `${own.length === 0 ? "● " : "○ "}Show in every space`, onClick: () => own.length > 0 && send({ cmd: "set_favorite_spaces", id: tab.id, spaces: [] }) });
+      items.push({ label: `${own.length > 0 ? "● " : "○ "}Show only in ${here.title}`, onClick: () => send({ cmd: "set_favorite_spaces", id: tab.id, spaces: [here.id] }) });
+    }
   }
-  if (spaces.length > 1) {
+  const targets = inPrivate ? [] : spaces.filter((sp) => sp.id !== ctx.state.private_space);
+  if (targets.length > 1) {
     items.push(SEPARATOR);
-    for (const sp of spaces) {
+    for (const sp of targets) {
       if (sp.id === ctx.spaceId) continue;
       items.push({ label: `Move to ${sp.title}`, onClick: () => send({ cmd: "move_tab", id: tab.id, space: sp.id, section: "today", index: 0 }) });
     }
@@ -107,7 +129,7 @@ export function tabMenu(ctx: RowContext, tab: TabItem, section: Section, at: { x
   items.push(SEPARATOR);
   // A smart folder's own item: its row has snooze in place of close, which
   // only unloads it.
-  items.push({ label: section === "today" ? "Archive" : "Close", danger: section === "today", onClick: () => send({ cmd: "close_tab", id: tab.id }) });
+  items.push({ label: section === "today" && !inPrivate ? "Archive" : "Close", danger: section === "today", onClick: () => send({ cmd: "close_tab", id: tab.id }) });
   return items;
 }
 
@@ -125,9 +147,39 @@ export function FavoriteLists({ ctx, lists }: { ctx: RowContext; lists: Favorite
   ));
 }
 
+/** What one tile of the favorites shows: a favorite, or the favorites of one split. */
+type Tile = [TabItem, ...TabItem[]];
+
+/** On tile `el` and not at its left or right edge: where a dropped tab joins it in a split. */
+function overMiddle(e: React.DragEvent, el: HTMLElement): boolean {
+  const r = el.getBoundingClientRect();
+  const x = e.clientX - r.left;
+  return x > 10 && x < r.width - 10;
+}
+
 /**
- * The favorites of one profile: an icon per favorite. Drop a tab on the list
- * (also on its title while collapsed) to add it to this profile's favorites.
+ * The page of tile `el` nearest to the pointer: one of a split's halves (also
+ * from the gap between two of them), or the tile itself for a single favorite.
+ */
+function pageAt(e: React.DragEvent, el: HTMLElement): HTMLElement {
+  const off = (page: HTMLElement) => {
+    const r = page.getBoundingClientRect();
+    return Math.max(r.left - e.clientX, e.clientX - r.right, 0);
+  };
+  return [...el.querySelectorAll<HTMLElement>("[data-page]")].reduce<HTMLElement | null>((best, page) => (best && off(best) <= off(page) ? best : page), null) ?? el;
+}
+
+/** `tabs` as the one tile they make; none without a tab. */
+function asTile(tabs: TabItem[]): Tile[] {
+  const [first, ...rest] = tabs;
+  return first ? [[first, ...rest]] : [];
+}
+
+/**
+ * The favorites of one profile: an icon per favorite. A tab dragged over the
+ * list joins the tile it is on in a split, or goes between two tiles, where
+ * a line marks its place. Dropped on the title (also while the list is
+ * collapsed) it is added at the end.
  */
 function Favorites({ ctx, list, title }: { ctx: RowContext; list: FavoriteList; title?: string }) {
   const { state } = ctx;
@@ -139,14 +191,87 @@ function Favorites({ ctx, list, title }: { ctx: RowContext; list: FavoriteList; 
       return !o;
     });
   };
+  /** The tab or split being carried over this list (`id` stands for it) and where it would go: before tile `index` of the others. */
+  const [place, setPlace] = useState<{ id: string; index: number } | null>(null);
+  /** The tab `id` carried over a tile: dropped, it joins page `cell` of tile `tile` in a split, on `side`. */
+  const [join, setJoin] = useState<{ id: string; tile: string; cell: string; side: Side } | null>(null);
+  /** A tab this list takes: nothing of the private space is kept. */
+  const takes = (d: ReturnType<typeof dragging>): d is NonNullable<typeof d> =>
+    d?.kind === "tab" && (state.private_space !== ctx.spaceId || state.sidebar.favorites.some((f) => f.items.some((t) => t.id === d.id)));
+  // The favorites of one split are one tile, where the first of them stands,
+  // with its pages in reading order.
+  const tiles = list.items.flatMap((t) => {
+    const split = state.splits.find((s) => splitIds(s).includes(t.id));
+    if (!split) return asTile([t]);
+    const pages = splitIds(split).flatMap((id) => list.items.find((x) => x.id === id) ?? []);
+    return list.items.find((x) => pages.includes(x)) === t ? asTile(pages) : [];
+  });
+  const without = (moved: string[]) => tiles.filter((tile) => !moved.includes(tile[0].id));
+  // What a drag over this list shows. The tiles stay where they are: a line
+  // between two of them marks where the carried one would go, and a tile it
+  // would join previews the pair. A place left over from a drag that ended
+  // elsewhere counts for nothing.
+  const d = dragging();
+  const moved = d ? movedIds(d) : [];
+  const joining = join && d?.id === join.id ? join : null;
+  const others = without(moved);
+  const before = place && d?.id === place.id && !joining ? place.index : null;
+  // Before the tile it stands before anyway: nothing to mark.
+  const own = tiles.findIndex((tile) => moved.includes(tile[0].id));
+  const mark = before === null || before === own ? null : others[before] ? { tile: others[before][0].id, side: "left" } : { tile: others.at(-1)?.[0].id, side: "right" };
+  // A tile has no room for its name: it is edited in a row under the tiles.
+  const renamed = list.items.find((t) => t.id === ctx.renaming);
   return (
     <div
       className="shrink-0 px-2 pt-3"
-      onDragOver={(e) => dragging()?.kind === "tab" && e.preventDefault()}
+      onDragOver={(e) => {
+        const d = dragging();
+        if (!takes(d)) return;
+        e.preventDefault();
+        const rest = without(movedIds(d));
+        const target = e.target as HTMLElement;
+        const overTile = target.closest<HTMLElement>("[data-fav]");
+        const k = rest.findIndex((tile) => tile[0].id === overTile?.dataset.fav);
+        const onto = rest[k];
+        // On a tile, the carried tab joins it: the two form a split, the tab
+        // beside the page under the pointer, on the half of that page.
+        // Between two tiles (their facing edges and the gap) it goes there.
+        const joins = onto && splittable(d) && onto.length < MAX_PANES && !onto.some((t) => t.panel) && !findTab(state, d.id)?.panel;
+        if (overTile && onto && joins && overMiddle(e, overTile)) {
+          // Over the place the carried tab would join, the preview stays.
+          if (target.closest("[data-ghost]")) return;
+          const page = pageAt(e, overTile);
+          const next = { id: d.id, tile: onto[0].id, cell: page.dataset.page ?? onto[0].id, side: sideOf(e, page) };
+          return setJoin((j) => (j && j.id === next.id && j.cell === next.cell && j.side === next.side ? j : next));
+        }
+        setJoin(null);
+        // Over the title: the end. Over the carried tile itself: where it
+        // is. Over a gap: where the edge passed on the way there said.
+        const own = tiles.findIndex((tile) => tile[0].id === overTile?.dataset.fav);
+        const next = overTile && onto ? (sideOf(e, overTile) === "left" ? k : k + 1) : target.closest(".favs-title") ? rest.length : overTile && own >= 0 ? own : null;
+        if (next !== null) setPlace((p) => (p?.id === d.id && p.index === next ? p : { id: d.id, index: next }));
+      }}
+      onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) { setPlace(null); setJoin(null); } }}
       onDrop={(e) => {
         e.preventDefault();
         const d = dragging();
-        if (d?.kind === "tab") send({ cmd: "move_tab", id: d.id, space: ctx.spaceId, section: "favorites", index: list.items.length, profile: list.profile_id });
+        if (takes(d) && join?.id === d.id) {
+          // Beside the page it joins, in this list, then into a split with it.
+          const items = list.items.filter((t) => t.id !== d.id);
+          const at = items.findIndex((t) => t.id === join.cell) + (join.side === "right" ? 1 : 0);
+          send({ cmd: "move_tab", id: d.id, space: ctx.spaceId, section: "favorites", index: at, profile: list.profile_id });
+          send({ cmd: "split_insert", target: join.cell, tab: d.id, side: join.side });
+        } else if (takes(d)) {
+          // The index counts the list without what moves, as the app takes it
+          // out first: the place of the tile it lands before (where the first
+          // of its pages stands in the list), else the end.
+          const moved = movedIds(d);
+          const items = list.items.filter((t) => !moved.includes(t.id));
+          const before = place?.id === d.id ? without(moved)[place.index] : undefined;
+          send({ cmd: "move_tab", id: d.id, space: ctx.spaceId, section: "favorites", index: before ? items.findIndex((t) => before.includes(t)) : items.length, profile: list.profile_id, split: d.pair });
+        }
+        setPlace(null);
+        setJoin(null);
         endDrag();
       }}
     >
@@ -159,25 +284,70 @@ function Favorites({ ctx, list, title }: { ctx: RowContext; list: FavoriteList; 
       )}
       {(open || !title) && (
         <div className="favs">
-          {list.items.map((t) => {
-            const rt = state.runtime[t.id];
+          {tiles.map((tile) => {
+            const page = (t: TabItem) => {
+              const rt = state.runtime[t.id];
+              return {
+                "data-active": state.active_tab === t.id || state.web_panel === t.id || undefined,
+                "data-unloaded": !rt?.loaded || undefined,
+                "data-shared": rt?.shared || undefined,
+                onClick: () => send(t.panel ? { cmd: "toggle_web_panel", id: t.id } : { cmd: "activate_tab", id: t.id }),
+                onContextMenu: (e: React.MouseEvent) => { e.preventDefault(); ctx.openMenu(e.clientX, e.clientY, tabMenu(ctx, t, "favorites", { x: e.clientX, y: e.clientY })); },
+                title: [t.title, title, t.panel && "panel", rt?.shared && "being shared"].filter(Boolean).join(" · "),
+                children: <Favicon url={t.url} src={rt?.favicon} loading={rt?.loading} />,
+              };
+            };
+            const [t] = tile;
+            const drag = {
+              "data-fav": t.id,
+              "data-carried": moved.includes(t.id) || undefined,
+              draggable: true,
+              onDragEnd: () => { setPlace(null); setJoin(null); endDrag(); },
+            };
+            const joined = joining?.tile === t.id ? joining : null;
+            const carried = joined && findTab(state, joined.id);
+            // Where the carried tile would go: a line in the gap beside this one.
+            const line = mark?.tile === t.id && <span className="fav-insert" data-side={mark.side} />;
+            if (tile.length === 1 && !joined) {
+              const { children, ...props } = page(t);
+              return <button key={t.id} className="fav no-drag" data-panel={t.panel || undefined} {...drag} onDragStart={(e) => startDrag(e, { kind: "tab", id: t.id })} {...props}>{children}{line}</button>;
+            }
+            // A split: one tile with a half per page. It drags as one item.
+            const ids = tile.map((x) => x.id);
             return (
-              <button
+              <div
                 key={t.id}
-                className="fav no-drag"
-                data-active={state.active_tab === t.id || undefined}
-                data-unloaded={!rt?.loaded || undefined}
-                draggable
-                onDragStart={(e) => startDrag(e, { kind: "tab", id: t.id })}
-                onDragEnd={endDrag}
-                onClick={() => send({ cmd: "activate_tab", id: t.id })}
-                onContextMenu={(e) => { e.preventDefault(); ctx.openMenu(e.clientX, e.clientY, tabMenu(ctx, t, "favorites", { x: e.clientX, y: e.clientY })); }}
-                title={title ? `${t.title} · ${title}` : t.title}
+                className="fav fav-split no-drag"
+                data-on-screen={ids.includes(state.active_tab ?? "") || undefined}
+                data-wide={tile.length > 2 || undefined}
+                {...drag}
+                onDragStart={(e) => startDrag(e, tile.length === 1 ? { kind: "tab", id: t.id } : { kind: "tab", id: t.id, pair: true, group: ids })}
               >
-                <Favicon url={t.url} src={rt?.favicon} loading={rt?.loading} />
-              </button>
+                {tile.map((x) => {
+                  const own = <button key={x.id} className="fav-page" data-page={x.id} {...page(x)} />;
+                  if (joined?.cell !== x.id || !carried) return own;
+                  const ghost = <span key="ghost" className="fav-page" data-ghost><Favicon url={carried.url} src={state.runtime[carried.id]?.favicon} /></span>;
+                  return joined.side === "left" ? [ghost, own] : [own, ghost];
+                })}
+                {line}
+              </div>
             );
           })}
+        </div>
+      )}
+      {renamed && (
+        <div className="row fav-rename">
+          <Favicon url={renamed.url} src={state.runtime[renamed.id]?.favicon} />
+          <RenameInput
+            value={renamed.title}
+            label={`Name of the favorite ${renamed.title || hostOf(renamed.url)}`}
+            onCommit={(title, from) => {
+              // Left as it was: no rename, so the title keeps following the page.
+              if (title !== from) send({ cmd: "rename_tab", id: renamed.id, title });
+              ctx.setRenaming(null);
+            }}
+            onCancel={() => ctx.setRenaming(null)}
+          />
         </div>
       )}
     </div>
@@ -201,7 +371,7 @@ export function TabRow({ ctx, tab, section, index, folderId, onDropAt }: {
     <TabRowInner
       tab={tab}
       rt={ctx.state.runtime[tab.id]}
-      active={ctx.state.active_tab === tab.id}
+      active={ctx.state.active_tab === tab.id || ctx.state.web_panel === tab.id}
       renaming={ctx.renaming === tab.id}
       section={section}
       index={index}
@@ -251,6 +421,7 @@ const TabRowInner = memo(
       <div
         className={"row drop"}
         data-active={active || undefined}
+        data-dev={(rt?.dev?.local && ctx.state.settings.developer.enabled) || undefined}
         data-unloaded={!rt?.loaded || undefined}
         data-before={over === "before" || undefined}
         data-after={over === "after" || undefined}
@@ -276,14 +447,19 @@ const TabRowInner = memo(
           const side = over === "left" || over === "right" ? over : null;
           setOver(null);
           if (d && d.id !== tab.id) {
-            if (side && splittable(d)) send({ cmd: "split_insert", target: tab.id, tab: d.id, side });
-            else onDropAt(dropIndex(e, index));
+            if (side && splittable(d)) {
+              // Onto a pinned tab: pinned beside it, so the split is kept as one item.
+              if (section === "pinned" && !snoozable) onDropAt(side === "left" ? index : index + 1);
+              send({ cmd: "split_insert", target: tab.id, tab: d.id, side });
+            } else onDropAt(dropIndex(e, index));
           }
           endDrag();
         }}
         onClick={(e) => {
           if (renaming) return;
-          if (e.altKey) send({ cmd: "add_split", id: tab.id });
+          // A pinned tab that opens as a web panel: the click opens and closes it.
+          if (tab.panel && section === "pinned") send({ cmd: "toggle_web_panel", id: tab.id });
+          else if (e.altKey) send({ cmd: "add_split", id: tab.id });
           else send({ cmd: "activate_tab", id: tab.id });
         }}
         onDoubleClick={(e) => {
@@ -326,9 +502,9 @@ const TabRowInner = memo(
           ) : renaming ? (
             <RenameInput
               value={tab.title}
-              onCommit={(title) => {
+              onCommit={(title, from) => {
                 // Left as it was: no rename, so the title keeps following the page.
-                if (title !== tab.title) send({ cmd: "rename_tab", id: tab.id, title });
+                if (title !== from) send({ cmd: "rename_tab", id: tab.id, title });
                 ctx.setRenaming(null);
               }}
               onCancel={() => ctx.setRenaming(null)}
@@ -339,10 +515,21 @@ const TabRowInner = memo(
               {tab.title || hostOf(tab.url)}
             </span>
           )}
-          {(rt?.media?.playing || rt?.muted) && (
+          {((rt?.media?.playing && !rt.media.silent) || rt?.muted) && (
             <button className="slot" title={rt.muted ? "Unmute tab" : "Mute tab"} onClick={(e) => { e.stopPropagation(); send({ cmd: "set_muted", id: tab.id, muted: !rt.muted }); }}>
               {rt.muted ? <SpeakerOff width={14} height={14} /> : <Speaker width={14} height={14} />}
             </button>
+          )}
+          {rt?.shared && (
+            <span className="shared" title="This tab is being shared" role="img" aria-label="Being shared">
+              <ScreenShareIcon width={13} height={13} />
+            </span>
+          )}
+          {!!rt?.dev?.errors && !active && (
+            <span className="dev-errors" title={`${rt.dev.errors} error${rt.dev.errors === 1 ? "" : "s"} in the console`} aria-label={`${rt.dev.errors} console errors`}>{errorCount(rt.dev.errors)}</span>
+          )}
+          {tab.panel && section === "pinned" && (
+            <span className="panel-mark" data-open={active || undefined} title="Opens as a web panel" aria-label="Opens as a web panel" />
           )}
           {tab.keep_active && section === "today" && (
             <span className="kept" title="Kept active: this tab is not unloaded" aria-label="Kept active">
@@ -394,14 +581,18 @@ const TabRowInner = memo(
 /**
  * Title editor in place of a title: Return or leaving the field saves, Esc
  * cancels (and goes no further: it would also hide the floating sidebar).
+ * `onCommit` also gets the title the edit started from (`value` may have
+ * followed the page since). `label` names the field where no title stood.
  */
-export function RenameInput({ value, onCommit, onCancel }: { value: string; onCommit: (title: string) => void; onCancel: () => void }) {
+export function RenameInput({ value, label, onCommit, onCancel }: { value: string; label?: string; onCommit: (title: string, from: string) => void; onCancel: () => void }) {
+  const [from] = useState(value);
   return (
     <input
       autoFocus
       className="rename"
-      defaultValue={value}
-      onBlur={(e) => onCommit(e.currentTarget.value)}
+      aria-label={label}
+      defaultValue={from}
+      onBlur={(e) => onCommit(e.currentTarget.value, from)}
       onKeyDown={(e) => {
         if (e.key === "Enter") e.currentTarget.blur();
         if (e.key === "Escape") {
@@ -503,6 +694,7 @@ export function FolderRow({ ctx, folder, index, depth, parentId, onDropAt }: { c
   const glyph = glyphFor(folder.icon);
   const changeIcon = (x: number, y: number) =>
     ctx.pickIcon({ x, y }, glyph ?? undefined, (g) => send({ cmd: "set_folder_icon", id: folder.id, icon: g }), true);
+  const share: MenuItem = { label: "Copy link to share", onClick: () => send({ cmd: "share_folder", id: folder.id }) };
   const menu: MenuItem[] = smart
     ? [
         ...(status?.needs_approval
@@ -514,6 +706,7 @@ export function FolderRow({ ctx, folder, index, depth, parentId, onDropAt }: { c
         { label: "Rename folder", onClick: () => ctx.setRenaming(folder.id) },
         { label: "Change icon…", onClick: () => changeIcon(menuAt.current.x, menuAt.current.y) },
         { label: open ? "Collapse" : "Expand", onClick: toggle },
+        share,
         SEPARATOR,
         { label: "Stop updating (keep tabs)", onClick: () => send({ cmd: "smart_unlink", id: folder.id }) },
         { label: "Delete folder and its items", danger: true, onClick: () => send({ cmd: "delete_folder", id: folder.id }) },
@@ -522,6 +715,7 @@ export function FolderRow({ ctx, folder, index, depth, parentId, onDropAt }: { c
         { label: "Rename folder", onClick: () => ctx.setRenaming(folder.id) },
         { label: "Change icon…", onClick: () => changeIcon(menuAt.current.x, menuAt.current.y) },
         { label: open ? "Collapse" : "Expand", onClick: toggle },
+        share,
         {
           label: "New folder inside",
           onClick: () => {
@@ -574,7 +768,7 @@ export function FolderRow({ ctx, folder, index, depth, parentId, onDropAt }: { c
           const zone = over;
           setOver(null);
           if (!d || !zone) return;
-          if (d.kind === "tab") send({ cmd: "move_tab", id: d.id, space: ctx.spaceId, section: "pinned", index: 0, folder: folder.id });
+          if (d.kind === "tab") send({ cmd: "move_tab", id: d.id, space: ctx.spaceId, section: "pinned", index: 0, folder: folder.id, split: d.pair });
           else if (zone === "inside") send({ cmd: "move_folder", id: d.id, index: 0, folder: folder.id });
           else onDropAt(zone === "before" ? index : index + 1);
           endDrag();
@@ -646,8 +840,8 @@ export function NodeList({ ctx, nodes, depth, folderId }: { ctx: RowContext; nod
   const dropTab = (index: number) => {
     const d = dragging();
     if (!d) return;
-    const at = indexAfterTaking(nodes, d.id, index);
-    if (d.kind === "tab") send({ cmd: "move_tab", id: d.id, space: ctx.spaceId, section: "pinned", index: at, folder: folderId });
+    const at = indexAfterTaking(nodes, movedIds(d), index);
+    if (d.kind === "tab") send({ cmd: "move_tab", id: d.id, space: ctx.spaceId, section: "pinned", index: at, folder: folderId, split: d.pair });
     else send({ cmd: "move_folder", id: d.id, index: at, folder: folderId });
   };
   return (
@@ -684,9 +878,18 @@ export function SplitRow({ ctx, split, owner, index, onDropAt }: { ctx: RowConte
   const joining = join ? findTab(ctx.state, placing(dragging())) : null;
   const ghost = joining && <SplitCell key="ghost" tab={joining} rt={ctx.state.runtime[joining.id]} ghost />;
   const reorder = (e: React.DragEvent) => index !== undefined && onDropAt && setOver(dropIndex(e, index) === index ? "before" : "after");
+  // Pinning the split or adding it to the favorites takes the pages that
+  // stand with the row; nothing of the private space is kept.
+  const today = !!owner && ctx.state.sidebar.spaces.some((sp) => sp.id === ctx.spaceId && sp.today.some((t) => t.id === owner));
+  const keep: MenuItem[] = !owner || ctx.state.private_space === ctx.spaceId ? [] : [
+    today ? { label: "Pin split", onClick: () => send({ cmd: "pin", id: owner }) } : { label: "Unpin split", onClick: () => send({ cmd: "unpin", id: owner }) },
+    { label: "Add split to favorites", onClick: () => send({ cmd: "move_tab", id: owner, space: ctx.spaceId, section: "favorites", index: 999, split: true }) },
+    SEPARATOR,
+  ];
   const menu = (e: React.MouseEvent, id: string) => {
     e.preventDefault();
     ctx.openMenu(e.clientX, e.clientY, [
+      ...keep,
       { label: "Remove from split view", onClick: () => send({ cmd: "remove_split", id }) },
       { label: "Separate all tabs", onClick: () => send({ cmd: "separate_all", id }) },
       ...(onScreen ? [
@@ -712,7 +915,7 @@ export function SplitRow({ ctx, split, owner, index, onDropAt }: { ctx: RowConte
           e.dataTransfer.setDragImage(cell, e.clientX - r.left, e.clientY - r.top);
         }
         const id = cell?.dataset.cell;
-        startDrag(e, { kind: "tab", id: owner, pair: true, cell: id });
+        startDrag(e, { kind: "tab", id: owner, pair: true, cell: id, group: splitGroup(ctx.state, split, owner) });
         // A frame later, so the picture under the pointer is taken first.
         if (id) requestAnimationFrame(() => setLifted(id));
       }}
@@ -749,7 +952,11 @@ export function SplitRow({ ctx, split, owner, index, onDropAt }: { ctx: RowConte
         setOver(null);
         setLifted(null);
         const tab = placing(d);
-        if (join && tab) send({ cmd: d?.pair ? "split_reorder" : "split_insert", target: join.cell, tab, side: join.side });
+        if (join && tab) {
+          // Onto a pinned split: pinned with it.
+          if (!d?.pair && owner && !today && index !== undefined && onDropAt) onDropAt(index + 1);
+          send({ cmd: d?.pair ? "split_reorder" : "split_insert", target: join.cell, tab, side: join.side });
+        }
         else if (d && !(d.pair && d.id === owner) && index !== undefined && onDropAt) onDropAt(dropIndex(e, index));
         endDrag();
       }}
@@ -794,11 +1001,32 @@ function SplitCell({ tab, rt, active, ghost, lifted, onRemove, ...events }: {
     <div className="split-cell" data-cell={ghost ? undefined : tab.id} data-ghost={ghost || undefined} data-lifted={lifted || undefined} data-active={active || undefined} data-unloaded={!ghost && !rt?.loaded ? true : undefined} title={tab.url} {...events}>
       <Favicon url={tab.url} src={rt?.favicon} loading={rt?.loading} />
       <span className="title">{tab.title || hostOf(tab.url)}</span>
+      {!ghost && rt?.shared && (
+        <span className="shared" title="This tab is being shared" role="img" aria-label="Being shared">
+          <ScreenShareIcon width={13} height={13} />
+        </span>
+      )}
       {onRemove && (
         <button className="close" title="Remove from split view" aria-label="Remove from split view" onClick={(e) => { e.stopPropagation(); onRemove(); }}>
           <Close width={12} height={12} />
         </button>
       )}
     </div>
+  );
+}
+
+/** A tab open on another device of the sync chain, marked by the device's
+ *  icon on the right. A click takes it over: it opens here, and its device
+ *  closes it at its next sync. */
+export function DeviceTabRow({ tab }: { tab: DeviceTab }) {
+  const hint = `Open on ${tab.device}. Click to continue here.`;
+  return (
+    <button className="row device-tab w-full" title={hint} onClick={() => send({ cmd: "take_device_tab", id: tab.id })}>
+      <Favicon url={tab.url} />
+      <span className="title text-left">{tab.title || hostOf(tab.url)}</span>
+      <span className="from-device" aria-label={`Open on ${tab.device}`}>
+        <PhoneIcon width={13} height={13} />
+      </span>
+    </button>
   );
 }

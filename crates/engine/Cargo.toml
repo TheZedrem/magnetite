@@ -17,7 +17,10 @@ dox = ["cef/dox"]
 magnetite-core.workspace = true
 # Our fork of cef-rs: its bindings follow the CEF version magnetite-cef
 # builds, not the one upstream has published (docs/adr/0001-cef-bindings.md).
-cef = { git = "https://github.com/magnetite-browser/cef-rs", rev = "d02cf0401baf79e6a24b6d175e024983d59c7f0e", default-features = false }
+cef = { git = "https://github.com/magnetite-browser/cef-rs", rev = "893437b069abfdae3b7b48be0458374d9ce30942", default-features = false }
+# Named only so that its build script tells ours where the CEF build is
+# (`build.rs`); the same crate `cef` depends on.
+cef-dll-sys = { git = "https://github.com/magnetite-browser/cef-rs", rev = "893437b069abfdae3b7b48be0458374d9ce30942", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -31,13 +34,37 @@ adblock = { version = "0.13", default-features = false, features = ["embedded-do
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 block2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSArray", "NSBundle", "NSURL", "NSString", "NSEnumerator", "NSGeometry", "NSData", "NSNotification", "NSOperation", "block2"] }
+objc2-foundation = { version = "0.3", features = [
+    "NSArray", "NSBundle", "NSURL", "NSString", "NSEnumerator", "NSGeometry", "NSData", "NSNotification", "NSOperation", "block2",
+    "NSDate", "NSDictionary", "NSError", "NSHTTPCookie", "NSHTTPCookieStorage", "NSKeyValueObserving", "NSSet", "NSURLRequest", "NSURLResponse",
+    "NSURLSession", "NSUUID",
+] }
 objc2-core-graphics = { version = "0.3", default-features = false, features = ["std", "objc2", "CGColor"] }
 objc2-app-kit = { version = "0.3", default-features = false, features = [
     "block2", "objc2-core-foundation", "NSScreen", "NSGraphics", "NSImage", "NSSavePanel", "NSPanel", "NSColor",
     "NSBox", "NSTextField", "NSControl", "NSFont", "NSParagraphStyle", "NSAnimation", "NSAnimationContext",
     "NSButton", "NSCell", "NSFontDescriptor", "NSTrackingArea", "NSCursor",
-    "NSApplication", "NSEvent", "NSMenu", "NSMenuItem", "NSPasteboard", "NSResponder", "NSSharingService", "NSView", "NSWindow", "NSWorkspace",
+    "NSApplication", "NSBitmapImageRep", "NSEvent", "NSImageRep", "NSMenu", "NSMenuItem", "NSPasteboard", "NSResponder", "NSSharingService", "NSView", "NSWindow", "NSWorkspace",
+] }
+
+# The system's own web engine, for the pages Chromium is refused on
+# (`system.rs`, `mac/webkit.rs`).
+objc2-web-kit = { version = "0.3", default-features = false, features = [
+    "std", "block2", "objc2-app-kit", "objc2-core-foundation",
+    "WKFrameInfo", "WKHTTPCookieStore", "WKNavigation", "WKNavigationAction", "WKNavigationDelegate", "WKPreferences", "WKUIDelegate",
+    "WKWebView", "WKWebViewConfiguration", "WKWebsiteDataRecord", "WKWebsiteDataStore", "WKWindowFeatures",
+] }
+
+# The system's own web engine on Windows: WebView2, Edge's engine, which
+# ships with the system (`system.rs`, `win/webview2.rs`). COM, through the
+# bindings Microsoft's `windows` crate makes of its SDK.
+[target.'cfg(target_os = "windows")'.dependencies]
+webview2-com = "0.39"
+windows-core = "0.62"
+windows = { version = "0.62", features = [
+    "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Graphics_Imaging", "Win32_Networking_WinHttp",
+    "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_LibraryLoader", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
 ] }
 
 [lints]

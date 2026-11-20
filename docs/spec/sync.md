@@ -32,9 +32,27 @@ repository, <https://github.com/magnetite-browser/magnetite-sync>
    leaves.
 4. While syncing, the page shows the server, the time of the last sync and
    the last error, with "Sync now" and "Show sync code".
+   The shown code has a QR code beside its words, which holds the code and
+   the server for Magnetite's phone apps (see "The code as a QR code").
 5. "Leave on this device" forgets the code here; the chain and the other
    devices stay as they are. "Delete sync chain…" (click twice) also erases
    the chain on the server for every device.
+
+## The code as a QR code
+
+Beside the 24 words, the page draws a QR code that holds the link
+
+    magnetite://sync?server=<address of the server>&words=<the 24 words>
+
+with both values percent-encoded and the words separated by `%20`. It is
+there for Magnetite's phone apps (`magnetite-ios`, `magnetite-android`):
+their "Scan QR Code" step, where a chain is joined, reads the link and joins
+with it, so neither the words nor the address of an own server are typed.
+The browser itself does not read the link, and a phone app without that
+step joins with the words, as a computer does. The QR code is as secret as
+the words and shows only while they show. It is made on the device; a link is
+used and not plain text, so a phone's camera app does not offer to search
+the web for the words.
 
 ## When and how it syncs
 
@@ -60,10 +78,45 @@ repository, <https://github.com/magnetite-browser/magnetite-sync>
 
 | Collection | Content |
 |---|---|
-| `sidebar` | profiles, favorites, spaces with their pinned trees (folders, smart folder definitions), Today tabs and bookmarks |
-| `settings` | when Today tabs are archived, when inactive tabs are suspended, where links from other apps open (a tab, a peek or a mini window; a version that does not know a choice uses a new tab), the shortcuts with other keys or none (`shortcuts.md`) |
+| `sidebar` | profiles, favorites, spaces (name, glyph or own icon, colour) with their pinned trees (folders, smart folder definitions), Today tabs and bookmarks |
+| `settings` | when Today tabs are archived, when inactive tabs are suspended, where links from other apps open (a tab, a peek or a mini window; a version that does not know a choice uses a new tab), the shortcuts with other keys or none, who gets their keys first, and the sites that get them all first (`shortcuts.md`) |
+| `devices` | per device: the tabs open on it that it lists for the others (phones do), and which tabs of other devices it took over |
 
 The server never sees these names, only ids derived from the sync code.
+
+## Tabs of other devices
+
+The sidebar is replaced as a whole, so a device that only looks at it, a
+phone, must not write it. What a phone has open travels in `devices`
+instead, where every device changes only its own entry and writes the
+collection as the version after the one it read; when another device wrote
+first, it reads again. Devices cannot overwrite each other there.
+
+- A tab open on another device shows in the Today list of the space it is
+  open in there (in the space in front if this device does not have that
+  one), below this device's tabs, with the device's icon on the right. It is
+  not a tab here: it has no page and is not in the sidebar that syncs.
+- A click takes it over: it opens here as a Today tab in front, and this
+  device notes its id as taken. The other device sees that at its next sync,
+  closes the tab and stops listing it; this device then forgets the id.
+- A tab another device took is no longer shown here.
+- A tab the other device sent here ("Send to Desktop") is taken without a
+  click: it opens in the background, marked unread. With several desktops
+  in the chain it opens on one: a desktop opens it only after its note of
+  having taken it is stored, and the others see that note.
+- A desktop lists no tabs of its own: its Today tabs are in the sidebar
+  already. Its entry holds only what it took, and is gone when that is
+  nothing. It names itself by its kind ("Mac", "Linux PC"), never by the
+  computer's name.
+- Entries not written for 90 days are dropped with the next write. Fields a
+  newer version wrote are kept.
+- Never in the private space, and not in a space kept on this device
+  alone: the tab then opens in the space in front, or, if that is such a
+  space too, in the first space that syncs. Only a device none of whose
+  spaces sync opens it in the space in front regardless.
+- A tab with an address Magnetite does not open from stored data (a local
+  file, for example) is not shown and not taken: it stays open on its
+  device.
 
 Not synced: the archive, downloads, cookies and logins, which pages are
 open, split views, the search engine (a device holding the words could
@@ -86,7 +139,7 @@ should not reach a private device, turn it on at the work device.
 - On the other devices the space goes with their next sync.
 - A separate profile that only such spaces use stays on the device with
   them: the profile, its favorites, and tabs in other spaces that run in
-  it are not sent either. Settings → Isolation marks it "only on this
+  it are not sent either. Settings → Spaces marks the space "only on this
   device". On the other devices that profile and its favorites stay, as
   for any profile a sidebar does not name, until they are removed there.
   As soon as a synced space uses the profile it is sent again. The default

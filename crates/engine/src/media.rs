@@ -40,6 +40,8 @@ pub struct MediaState {
     pub pip: bool,
     /// A stream without an end (live video): nothing to seek in.
     pub live: bool,
+    /// A muted video: it has no sound to control, but can pop out.
+    pub silent: bool,
     pub can_next: bool,
     pub can_prev: bool,
 }
@@ -91,6 +93,11 @@ impl Engine {
         if let Ok(media) = parse_report(json) {
             #[cfg(target_os = "macos")]
             crate::pip::follow(id, media.as_ref());
+            // Chromium's video window has a taskbar button of its own.
+            #[cfg(target_os = "windows")]
+            if media.as_ref().is_some_and(|m| m.pip) {
+                crate::win::brand_video_window();
+            }
             self.emit(EngineEvent::MediaChanged { id, media });
         }
     }
@@ -128,8 +135,12 @@ impl Engine {
 
     /// Enter or leave picture-in-picture for the page's playing video.
     pub fn content_picture_in_picture(&self, id: ContentId, enter: bool) {
-        const ENTER: &str = "(() => { const vs = [...document.querySelectorAll('video')]; \
-            const v = vs.find(v => !v.paused && v.readyState > 1) || vs.find(v => v.readyState > 1); \
+        // The playing video, else (a page can pause its video the moment the
+        // tab is hidden) the loaded one most of which is in the viewport.
+        const ENTER: &str = "(() => { const vs = [...document.querySelectorAll('video')].filter(v => v.readyState > 1); \
+            const seen = v => { const r = v.getBoundingClientRect(); \
+            return Math.max(0, Math.min(r.right, innerWidth) - Math.max(r.left, 0)) * Math.max(0, Math.min(r.bottom, innerHeight) - Math.max(r.top, 0)); }; \
+            const v = vs.find(v => !v.paused) || vs.sort((a, b) => seen(b) - seen(a))[0]; \
             if (!v || v.disablePictureInPicture || document.pictureInPictureElement) return false; \
             return v.requestPictureInPicture().then(() => true, () => false); })()";
         const LEAVE: &str = "document.pictureInPictureElement ? document.exitPictureInPicture().then(() => true, () => false) : false";
@@ -150,27 +161,11 @@ impl Engine {
         self.evaluate_in_page(id, CLOSE, false);
     }
 
-    /// Evaluate `expression` in page `id`; with `gesture`, as if the user
-    /// had just clicked (entering picture-in-picture needs that). Goes
-    /// through the `DevTools` protocol in-process (`Runtime.evaluate`, its
-    /// `userGesture` set from `gesture`).
+    /// Evaluate `expression` in page `id` (`evaluate`).
     fn evaluate_in_page(&self, id: ContentId, expression: &str, gesture: bool) {
-        let Some(host) = self.content_browser_host(id) else {
-            return;
-        };
-        let Some(mut params) = dictionary_value_create() else {
-            return;
-        };
-        params.set_string(
-            Some(&CefString::from("expression")),
-            Some(&CefString::from(expression)),
-        );
-        params.set_bool(Some(&CefString::from("userGesture")), i32::from(gesture));
-        host.execute_dev_tools_method(
-            0,
-            Some(&CefString::from("Runtime.evaluate")),
-            Some(&mut params),
-        );
+        if let Some(host) = self.content_browser_host(id) {
+            evaluate(&host, expression, gesture);
+        }
     }
 
     fn content_main_frame(&self, id: ContentId) -> Option<Frame> {
@@ -182,6 +177,28 @@ impl Engine {
     }
 }
 
+/// Evaluate `expression` in the page of `host`; with `gesture`, as if the
+/// user had just clicked (entering picture-in-picture needs that). Goes
+/// through the `DevTools` protocol in-process (`Runtime.evaluate`, its
+/// `userGesture` set from `gesture`), which also reaches a tab's empty
+/// first document, where `Frame::execute_java_script` does nothing. UI
+/// thread only.
+pub(crate) fn evaluate(host: &BrowserHost, expression: &str, gesture: bool) {
+    let Some(mut params) = dictionary_value_create() else {
+        return;
+    };
+    params.set_string(
+        Some(&CefString::from("expression")),
+        Some(&CefString::from(expression)),
+    );
+    params.set_bool(Some(&CefString::from("userGesture")), i32::from(gesture));
+    host.execute_dev_tools_method(
+        0,
+        Some(&CefString::from("Runtime.evaluate")),
+        Some(&mut params),
+    );
+}
+
 // ---- renderer process ----
 
 thread_local! {
@@ -189,8 +206,18 @@ thread_local! {
     static CONTROLS: RefCell<HashMap<i32, (V8Context, V8Value)>> = RefCell::new(HashMap::new());
 }
 
-fn is_web_url(url: &str) -> bool {
+pub(crate) fn is_web_url(url: &str) -> bool {
     url.starts_with("https://") || url.starts_with("http://") || url.starts_with("file://")
+}
+
+/// Whether `context` is the world the page's own scripts run in. CEF calls
+/// `on_context_created` for every script world of a frame, also the
+/// separate ones extensions run their content scripts in; our page scripts
+/// belong in the page's own.
+pub(crate) fn is_own_world(frame: &Frame, context: &V8Context) -> bool {
+    frame
+        .v8_context()
+        .is_some_and(|main| main.is_same(Some(&mut context.clone())) != 0)
 }
 
 /// Install the page script in a web page's main frame. Called from
@@ -199,14 +226,9 @@ pub(crate) fn install(browser: &Browser, frame: &Frame, context: &V8Context) {
     if frame.is_main() == 0 || !is_web_url(&CefString::from(&frame.url()).to_string()) {
         return;
     }
-    // CEF calls this for every script world of the frame, also the separate
-    // ones extensions run their content scripts in. The hook belongs in the
-    // page's own: installed again elsewhere it would take over `CONTROLS`
-    // with a copy that knows none of the page's handlers.
-    let own_world = frame
-        .v8_context()
-        .is_some_and(|main| main.is_same(Some(&mut context.clone())) != 0);
-    if !own_world {
+    // Installed again in another world it would take over `CONTROLS` with
+    // a copy that knows none of the page's handlers.
+    if !is_own_world(frame, context) {
         return;
     }
     let mut handler = MediaReport::new();
@@ -311,7 +333,7 @@ mod tests {
         assert!(parse_report("null").unwrap().is_none());
         let long = "x".repeat(500);
         let json = format!(
-            r#"{{"playing":true,"title":"{long}","artist":"A","video":false,"pip":false,"live":false,"can_next":true,"can_prev":false}}"#
+            r#"{{"playing":true,"title":"{long}","artist":"A","video":false,"pip":false,"live":false,"silent":false,"can_next":true,"can_prev":false}}"#
         );
         let state = parse_report(&json).unwrap().unwrap();
         assert!(state.playing && state.can_next);

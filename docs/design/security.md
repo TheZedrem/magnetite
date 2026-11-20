@@ -26,11 +26,14 @@ name.
 - The quick search (`Cmd+Option+N`) is the command bar page in a window of
   its own, with the same rules as every overlay: our UI only, the same
   commands as the command bar. What it opens goes through `open_mini` as
-  typed input (`url_policy::Source::User`), checked like any. A mini
+  typed input (`url_policy::Source::User`), checked like any, and so does
+  what is typed into a mini window's address field (`mini_navigate`). The
+  field is a native text field of the window, not a page. A mini
   window's page is a web page like a tab's (`Kind::Content`), never one of
   our privileged pages unless the user opened `magnetite://ui/` there.
-- The system-wide key is a Carbon hot key (`mac/hotkey.rs`): macOS reports
-  that one combination, not other typing, and Magnetite asks for no
+- The system-wide key is a Carbon hot key (`mac/hotkey.rs`) on macOS and a
+  registered hot key (`win/hotkey.rs`) on Windows: the system reports that
+  one combination, not other typing, and Magnetite asks for no
   accessibility or input-monitoring permission.
 
 ## Addresses by where they come from
@@ -54,10 +57,29 @@ search; search and site search addresses are `https://` with `%s` only
 (`Settings::sanitised`). Tabs from sync and the import that fail the policy
 are dropped (`state::drop_unsafe_tabs`).
 
+An address for another app (`mailto:`, `zoommtg:`, a desktop app's own
+scheme at the end of a sign-in: any scheme neither Chromium nor Magnetite
+loads) never opens in a tab and is never given to the system unasked.
+Chromium asks "Open <app>?", naming the site, as in Chrome
+(`crates/engine/src/applink.rs`). A page that wants such an address in a
+new tab or popup gets no tab: its own document goes there, which it could
+have done itself. A new tab whose first address redirects to one has its
+empty document ask, so the question names no site; a tab that shows a page
+which did not ask keeps the failed load.
+
 Magnetite asks the system to become the default browser only on the user's
-click (Settings → General, or the welcome page's switch once "Start
+click (Settings → Links, or the welcome page's switch once "Start
 browsing" is pressed), and macOS confirms with the user
-(`Engine::make_default_browser`).
+(`Engine::make_default_browser`); on Windows the user chooses in Windows'
+own Settings, which that click opens.
+
+On Windows another program hands over a link by starting Magnetite with it.
+The command registered for that is `magnetite.exe --single-argument %1`:
+what follows the marker is the link, whatever it looks like, for Chromium's
+command line and for ours (`split_link`). A link can therefore not pass
+options such as `--data-dir` or Chromium's switches. It then goes through
+the policy above as a link from another app, whether Magnetite was running
+(`on_already_running_app_relaunch`) or starts with it.
 
 A new tab or peek opened by a page, or by an extension, runs in the opener's
 profile (`OpenUrlRequested.context`), so a page in a private or separate
@@ -79,7 +101,21 @@ from a context Magnetite did not make is not opened.
   (`adopt_sidebar`).
 - They leave no history: their pages are not recorded (`history.rs`,
   `record_visit`), in a tab or a peek.
-- Their favicons are not cached on disk.
+- Their favicons are not cached on disk, and the icon address of a tab
+  that is not saved is not saved either (`saved_form`).
+- The private space (`state/private.rs`) goes further: the space and its
+  profiles are never saved or synced, and each tab the user opens there has
+  an in-memory profile of its own; a page opened from such a tab runs in
+  that tab's profile. A profile is taken off the list once nothing runs in
+  it (`release_private_profiles`), and the engine lets go of its context
+  (`Engine::forget_contexts`) and closes the popup windows still open in
+  it, so Chromium drops it with its cookies and storage. Nothing moves into
+  the space or out of it (`move_tab`, `keep_space`, `open_tab_from`), and
+  its profiles cannot be given to another space or tab.
+- In-memory contexts are off-the-record children of the default profile,
+  so Chromium runs the default profile's extensions in them if, and only
+  if, "Allow in Incognito" is on for the extension. Such an extension sees
+  every private tab it runs in.
 - The sidebar (default context) never loads a remote favicon of a page in
   another profile: it would send the default profile's cookies to that site.
 
@@ -89,7 +125,7 @@ from a context Magnetite did not make is not opened.
   `sync.key` and `smart-accounts.json` are 0600 from the moment they exist
   and are written whole (`files.rs`).
 - The history (`history.json`) holds address, title and time of visits to
-  `http(s)` pages only, is never synced, is capped (10,000 visits) and
+  `http(s)` pages only, is never synced, is capped (25,000 visits) and
   pruned to the period set in Settings ("Don't keep history" records
   nothing and deletes the file). Removing or clearing visits writes the
   file at once.
@@ -98,6 +134,30 @@ from a context Magnetite did not make is not opened.
 - `MAGNETITE_DEVTOOLS_PORT` works in development builds only. A data folder
   that ever ran with `--mock-keychain` keeps that mode (Chromium resets its
   protected settings when the key changes) and Settings says so.
+
+## Developer features
+
+- Console errors are counted only for local pages, and only counted (their
+  texts are not kept): served by this computer or a host the user named (`dev::is_local`, on the parsed host, so `localhost.example.org` is
+  not local).
+- Developer mode for a site that this computer does not serve (the switch
+  in its site controls) gives it the bar, the caution border and the error count,
+  nothing more: no reset of its data by key.
+- Waiting for a server connects only to loopback addresses, whatever the
+  page's host resolves to.
+- "Reset page" clears site data only for a page this computer serves; on
+  any other page, a named "also local" host included, the key only reloads.
+- No program outside Magnetite can reach a page: there is no remote
+  debugging port and no socket for other programs. A bridge that let coding
+  agents read local pages was built and taken out again (ADR-0014).
+- The picture of an element copied as context is a 0600 file in the data
+  folder, removed at quit.
+- A recording is made only when the user starts one, of one page, and
+  written only to the user's Downloads folder under a name Magnetite makes.
+  The page's pictures and the video's pieces travel between the app and
+  Magnetite's own UI pages (`magnetite://ui`), which web pages cannot reach.
+- The time zone a page is shown in is checked to be a zone's name before it
+  goes to the browser.
 
 ## Pages and extensions are untrusted input
 
@@ -112,6 +172,51 @@ from a context Magnetite did not make is not opened.
 - Site boundaries (domain lock, clearing site data) use the Public Suffix
   List, so tenants of shared hosts such as `github.io` stay apart.
 - Every profile id has its own data folder (`profile_dir_name`).
+
+## Pages in the system's engine
+
+Pages of some sites are shown by the system's own web engine instead of
+Chromium (WebKit on macOS, WebView2 on Windows;
+`docs/spec/protected-video.md`, ADR-0015). What
+holds for them:
+
+- Only the sites of a list the user sees and can change get such a page,
+  and only at `http://` and `https://` addresses. Its main frame is not
+  sent to any other scheme: an app's own scheme, `mailto:`, a `data:` or
+  a `blob:` address opens nothing. The one exception is the note that
+  Magnetite itself loads where a page failed to load.
+- A link out of such a page reaches the app as a link out of a Chromium
+  page does (`OpenUrlRequested`, source "page"), with the page's profile,
+  and goes through the same checks.
+- A profile's data in that engine is apart from every other profile's, and
+  a private profile's is in memory only (`mac/webkit.rs` and
+  `win/webview2.rs`, `store`). On macOS it lies outside the data folder,
+  where the system's engine keeps it, and the file that names the stores
+  is written for the user alone (0600). On Windows it lies in the data
+  folder, as the file does.
+- The icon of such a page is fetched by a request of its own, in a session
+  without a place for cookies, so it cannot tie two profiles together. It
+  goes over `https://` only, also after a redirect, to an address without
+  a name or password, and ends when more than 1 MiB arrives.
+- A profile's store is opened on disk only under an identifier that is
+  written to the data folder, and the identifier stays there until the
+  engine has removed the store: no store is left that Magnetite cannot
+  find again to delete. If that file cannot be read, no store is opened
+  on disk and deleting the engine's data reports the failure.
+- The engine's check of addresses against a list of fraudulent sites is
+  off, as Chromium's Safe Browsing is: it would ask a service. WebView2's
+  developer tools are off.
+- What Magnetite adds to Chromium pages is absent there: ad blocking,
+  Global Privacy Control, the permission prompts. Settings and the site
+  panel say so for the first two, and the site panel has no permission
+  rows for such a page. The engine asks for camera and microphone with a
+  prompt of its own, each time.
+- The engine is the system's and is updated with it, not with Magnetite.
+- The page's view lives in a window of AppKit's attached to the page's own
+  window (macOS), or in a child window of the page's own (Windows). It is
+  made by Magnetite, shows only that view and is closed with the page.
+- WebView2's loader is linked into Magnetite, not loaded from a file
+  beside it.
 
 ## Network
 
@@ -230,9 +335,20 @@ panel instead of Chromium's bubble at the page's top left (`prompts.rs`).
 - macOS replaces the app only when the new bundle has the same bundle id,
   is signed by the same Apple developer team as the running app (a build
   without a team does not update itself) and Gatekeeper accepts it
-  (notarized); otherwise, and on Linux and Windows, the release page opens.
+  (notarized); otherwise, and on Linux, the release page opens.
   A failed install leaves the running app untouched; one install runs at a
   time.
+- Windows: a Magnetite put there by its installer downloads the release's
+  installer, checks it against the manifest and runs it without questions;
+  a copy unpacked from the zip opens the release page. The installer says
+  when it stands ready, and only then Magnetite quits. An installation for
+  all users makes Windows ask for an administrator each time (there is no
+  service that installs unasked); refused, nothing changes and Magnetite
+  stays open. The installer starts Magnetite again as the user, never
+  with the administrator's rights. The checked installer waits in the
+  user's temporary folder until it runs: a program already running as
+  that user could swap it before the administrator is asked, as it could
+  show any other request of its own.
 - Versions compare by semantic versioning (`1.0.0-beta.10` is newer than
   `beta.9`); an older signed release is never installed over a newer one.
 - Checks run at start and once a day, `https://` only, and can be turned

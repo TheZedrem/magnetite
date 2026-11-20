@@ -33,6 +33,15 @@ impl EngineDelegate for MagnetiteApp {
                 engine.set_site_code(self.with_state(|s| s.settings.site_code.clone()));
                 // Before any profile exists: each gets these when it is made.
                 engine.set_autofill(autofill);
+                magnetite_engine::set_global_privacy_control(
+                    self.with_state(|s| s.settings.global_privacy_control),
+                );
+                engine.set_downloads(&self.with_state(|s| s.settings.downloads.clone()));
+                engine.set_default_zoom(self.with_state(|s| s.settings.page_zoom));
+                engine.set_languages(&self.with_state(|s| s.settings.languages.clone()));
+                // Before the first page: its address decides its engine.
+                engine
+                    .set_system_engine_sites(self.with_state(|s| s.settings.system_engine.hosts()));
                 engine.set_sidebar_width(width);
                 engine.set_top_bar_visible(self.with_state(|s| s.settings.appearance.top_bar));
                 if toolbar {
@@ -59,6 +68,7 @@ impl EngineDelegate for MagnetiteApp {
             | EngineEvent::ContentCreated { .. } => {}
             EngineEvent::SidebarLoaded => self.push_state(engine),
             EngineEvent::ContentClosed { id } => {
+                self.record_page_closed(engine, id);
                 self.with_prompts(|p| p.open.retain(|q| q.content != id));
                 self.show_prompts(engine);
                 // Closed by the app, the window is unknown here by now; one
@@ -71,6 +81,7 @@ impl EngineDelegate for MagnetiteApp {
                         s.peek = None;
                     }
                     s.minis.retain(|m| m.content != id);
+                    s.drop_phone(id);
                     let tab = s.content_to_tab.remove(&id);
                     if let Some(rt) = tab.as_ref().and_then(|tab| s.runtime.get_mut(tab)) {
                         rt.unload();
@@ -98,17 +109,23 @@ impl EngineDelegate for MagnetiteApp {
                 self.push_state(engine);
             }
             EngineEvent::UrlChanged { id, url } => {
+                self.website_opened(&url);
                 self.with_state(|s| {
                     if let Some(p) = s.page_outside_mut(id) {
                         p.url.clone_from(&url);
                     }
-                    s.record_visit(id, &url);
+                    // The phone of a responsive split shows what its tab
+                    // shows: one visit, the tab's.
+                    if !s.is_phone(id) {
+                        s.record_visit(id, &url);
+                    }
                     if let Some(tab) = s.content_to_tab.get(&id).cloned()
                         && let Some(t) = s.find_tab_mut(&tab)
                     {
-                        t.url = url;
+                        t.url.clone_from(&url);
                     }
                 });
+                self.dev_url_changed(engine, id, &url);
                 self.push_state(engine);
             }
             EngineEvent::FaviconChanged { id, url } => {
@@ -126,6 +143,14 @@ impl EngineDelegate for MagnetiteApp {
                     }
                 });
                 self.show_state_paced(engine);
+            }
+            EngineEvent::ShareChanged { id, shared } => {
+                self.with_state(|s| {
+                    if let Some(rt) = s.page_runtime(id) {
+                        rt.shared = shared;
+                    }
+                });
+                self.push_state(engine);
             }
             EngineEvent::Download(report) => {
                 let changed = self.with_state(|s| {
@@ -153,11 +178,20 @@ impl EngineDelegate for MagnetiteApp {
                 self.show_prompts(engine);
             }
             EngineEvent::ExtensionPinsChanged => self.show_state(engine),
+            EngineEvent::AutofillChanged(autofill) => {
+                self.with_state(|s| s.settings.autofill = autofill);
+                self.save_soon();
+                engine.set_autofill(autofill);
+                self.tell_settings_pages(engine);
+            }
             EngineEvent::ExtensionMenu(action) => match action {
                 ExtensionMenuAction::Open(id) => self.open_extension(engine, &id),
                 ExtensionMenuAction::TogglePin(id) => {
-                    let pinned = self.with_state(|s| s.settings.pinned_extensions.contains(&id));
-                    self.pin_extension(engine, &id, !pinned);
+                    let pinned = self.with_state(|s| {
+                        let front = s.front_context().map(|c| c.id).unwrap_or_default();
+                        s.pins(&front).contains(&id)
+                    });
+                    self.pin_extension(engine, &id, !pinned, None);
                 }
                 ExtensionMenuAction::Manage => {
                     self.open_url(engine, "chrome://extensions", false);
@@ -179,6 +213,11 @@ impl EngineDelegate for MagnetiteApp {
                 can_go_back,
                 can_go_forward,
             } => {
+                if loading {
+                    self.dev_load_started(id);
+                } else {
+                    self.dev_load_ended(id);
+                }
                 self.with_state(|s| {
                     if let Some(rt) = s.page_runtime(id) {
                         rt.loading = loading;
@@ -204,8 +243,20 @@ impl EngineDelegate for MagnetiteApp {
                     UrlSource::OtherApp => url_policy::Source::OtherApp,
                     UrlSource::Chromium => url_policy::Source::Chromium,
                 };
+                if source == url_policy::Source::OtherApp {
+                    self.leave_private_space(engine);
+                }
+                // A link from another app to a site with a rule belongs to
+                // the rule's space.
+                let ruled = (source == url_policy::Source::OtherApp)
+                    .then(|| self.link_rule_space(&url))
+                    .flatten();
                 let (target, from_mini) = self.with_state(|s| {
-                    let from_peek = from.is_some() && from == s.peek.as_ref().map(|p| p.content);
+                    // A web panel counts as the peek does: narrow, and over
+                    // the page, it is no place for a second page.
+                    let from_peek = from.is_some()
+                        && (from == s.peek.as_ref().map(|p| p.content)
+                            || from == engine.web_panel_content());
                     let ask = Ask {
                         source,
                         locked,
@@ -213,31 +264,21 @@ impl EngineDelegate for MagnetiteApp {
                         own_window,
                         background,
                         from_peek,
+                        ruled: ruled.is_some(),
                     };
                     let from_mini = from.is_some_and(|c| s.minis.iter().any(|m| m.content == c));
                     (ask.target(&s.settings.external_links), from_mini)
                 });
-                // A link from another app to a site with a rule opens in the
-                // rule's space: as a tab there, or as a peek or mini window
-                // with that space's logins.
-                let ruled = (source == url_policy::Source::OtherApp)
-                    .then(|| self.link_rule_space(&url))
-                    .flatten();
-                let context = match &ruled {
-                    Some((_, profile)) => Some(profile.as_str()),
-                    None => context.as_deref(),
-                };
+                let context = context.as_deref();
                 match target {
                     Target::Peek => self.open_peek(engine, &url, source, context),
                     Target::Mini => self.open_mini(engine, &url, source, context),
                     Target::Tab => {
-                        if let Some((space, _)) = &ruled
+                        if let Some(space) = &ruled
                             && self.with_state(|s| s.active_space != *space)
                         {
                             self.activate_space(engine, space);
                         }
-                        // In the rule's space the tab takes that space's profile.
-                        let context = context.filter(|_| ruled.is_none());
                         self.open_url_from(engine, &url, background, source, context);
                     }
                 }
@@ -248,12 +289,19 @@ impl EngineDelegate for MagnetiteApp {
                     engine.activate_frame();
                 }
             }
+            EngineEvent::ExtensionTabOpened {
+                id,
+                url,
+                background,
+                context,
+            } => self.keep_extension_tab(engine, id, &url, background, &context),
             // Keys and menu bar items from a mini window act on its page.
             EngineEvent::Shortcut {
                 from: Some(id),
                 shortcut,
             } if self.is_mini(id) => self.mini_shortcut(engine, id, shortcut),
             EngineEvent::MiniToTab { id, space } => self.mini_to_tab(engine, id, space.as_deref()),
+            EngineEvent::MiniNavigate { id, input } => self.mini_navigate(engine, id, &input),
             // Keys from a page window act on that page (peek, split pane).
             EngineEvent::Shortcut {
                 shortcut: Shortcut::CopyLink,
@@ -287,12 +335,19 @@ impl EngineDelegate for MagnetiteApp {
                 }
             }
             EngineEvent::Shortcut {
-                shortcut: Shortcut::OpenDevTools,
+                shortcut: Shortcut::DevPanel(panel),
                 from,
-            } => {
-                if let Some(c) = self.focused_content(from) {
-                    engine.content_show_devtools(c);
-                }
+            } => self.dev_panel(engine, from, panel),
+            EngineEvent::Shortcut {
+                shortcut: Shortcut::DevReset,
+                from,
+            } => self.dev_reset(engine, from),
+            EngineEvent::ConsoleError { id } => self.dev_console_error(engine, id),
+            EngineEvent::ScreencastFrame { id, jpeg } => self.record_picture(engine, id, jpeg),
+            EngineEvent::LoadFailed { id, url, refused } => {
+                self.with_state(|s| s.load_failed(id, &url));
+                self.push_state(engine);
+                self.dev_load_failed(engine, id, &url, refused);
             }
             EngineEvent::Shortcut { shortcut, .. } => self.handle_shortcut(engine, shortcut),
             EngineEvent::SiteChanged { id, state } => {
@@ -326,7 +381,10 @@ impl EngineDelegate for MagnetiteApp {
                 DividerAction::Release => self.push_state(engine),
                 DividerAction::Equalize => self.split_equalize(engine, &path),
             },
+            EngineEvent::WebPanelResized { id, width } => self.web_panel_resized(engine, id, width),
+            EngineEvent::WebPanelClose => self.close_web_panel(engine),
             EngineEvent::ContentFocused { id } => {
+                self.page_focused(engine, id);
                 // Clicking into a split page makes it the active tab, so the
                 // address row and sidebar follow the page you work in.
                 let changed = self.with_state(|s| {
@@ -354,12 +412,16 @@ impl EngineDelegate for MagnetiteApp {
                 self.show_state_paced(engine);
             }
             EngineEvent::Relaunched { argv, cwd } => {
-                // Parsed as at start: an option's value is no address.
+                // Parsed as at start: an option's value is no address, and
+                // what follows `--single-argument` is one link (Windows).
                 let cwd = cwd.unwrap_or_default();
-                let args = crate::parse_cli(argv)
+                let (argv, link) = crate::split_link(argv);
+                let given = crate::parse_cli(argv)
                     .map(|cli| cli.urls)
                     .unwrap_or_default();
-                let urls: Vec<String> = args.iter().map(|a| launch_url(a, &cwd)).collect();
+                let urls: Vec<String> = (given.iter().chain(&link))
+                    .map(|a| launch_url(a, &cwd))
+                    .collect();
                 if urls.is_empty() {
                     engine.activate_frame();
                 }
@@ -370,8 +432,15 @@ impl EngineDelegate for MagnetiteApp {
                     s.persist();
                     s.history.save();
                 });
+                // The picture of the last element copied as context.
+                let _ = std::fs::remove_file(self.context_picture());
                 engine.quit();
             }
+            // Nothing closed, but a quit may never come: save as for one.
+            EngineEvent::FrameHidden => self.with_state(|s| {
+                s.persist();
+                s.history.save();
+            }),
             EngineEvent::MemoryPressure(level) => self.unload_under_pressure(engine, level),
             EngineEvent::Tick => {
                 // Installed or removed extensions show up in the sidebar.
@@ -420,6 +489,8 @@ impl EngineDelegate for MagnetiteApp {
                 | UiCommand::SyncLeave
                 | UiCommand::SyncDeleteChain
                 | UiCommand::SetShortcut { .. }
+                | UiCommand::SetShortcutFirst { .. }
+                | UiCommand::SetSpaceShortcut { .. }
                 | UiCommand::ResetShortcut { .. }
                 | UiCommand::RecordShortcut { .. }
         );
@@ -427,10 +498,31 @@ impl EngineDelegate for MagnetiteApp {
         if settings_only && !trusted.iter().any(|page| origin.starts_with(page)) {
             return Err("only the Settings page may do that".into());
         }
-        // Pictures are stored from Settings alone: the welcome page has no
-        // use for them.
-        if matches!(cmd, UiCommand::SetAppearanceImage { .. })
-            && !origin.starts_with("magnetite://ui/settings")
+        // Which sites get the shortcuts' keys first is chosen in the site
+        // panel (the sidebar, the top bar's window) and in Settings alone.
+        let site_panel = origin.strip_prefix("magnetite://ui/").is_some_and(|page| {
+            let pages = ["?", "#", "popup", "settings"];
+            page.is_empty() || pages.iter().any(|p| page.starts_with(p))
+        });
+        if matches!(cmd, UiCommand::SetSiteShortcuts { .. }) && !site_panel {
+            return Err("only the site panel and Settings may do that".into());
+        }
+        // Pictures are stored from Settings and the space dialog alone: the
+        // welcome page has no use for them.
+        let picture_pages = ["magnetite://ui/settings", "magnetite://ui/space?"];
+        if matches!(
+            cmd,
+            UiCommand::SetAppearanceImage { .. } | UiCommand::SetSpaceIconImage { .. }
+        ) && !picture_pages.iter().any(|page| origin.starts_with(page))
+        {
+            return Err("only Settings and the space dialog may do that".into());
+        }
+        // Nor has any other page a use for the list of every site's
+        // permissions: Settings alone may read or change it.
+        if matches!(
+            cmd,
+            UiCommand::AllPermissions { .. } | UiCommand::SetProfilePermission { .. }
+        ) && !origin.starts_with("magnetite://ui/settings")
         {
             return Err("only the Settings page may do that".into());
         }
@@ -447,21 +539,23 @@ impl EngineDelegate for MagnetiteApp {
 
 impl MagnetiteApp {
     /// The space a rule names for a link from another app to `url`
-    /// (Settings → General), with that space's profile: `(space, profile)`.
-    fn link_rule_space(&self, url: &str) -> Option<(String, String)> {
+    /// (Settings → Links).
+    fn link_rule_space(&self, url: &str) -> Option<String> {
         self.with_state(|s| {
-            let id = (s.settings).link_space(url, |id| s.space(id).is_some())?;
-            let space = s.space(id)?;
-            Some((space.id.clone(), space.profile_id.clone()))
+            (s.settings)
+                .link_space(url, |id| s.space(id).is_some())
+                .cloned()
         })
     }
 
     /// Open `urls` as links from another app: as macOS hands them over,
-    /// following the setting for links from outside. There is one peek, and
-    /// opening it closes the one before: of several addresses the last gets
-    /// it, the others become background tabs.
+    /// following the setting for links from outside, except those to a site
+    /// with a rule, which become tabs in the rule's space. There is one
+    /// peek, and opening it closes the one before: of several addresses the
+    /// last gets it, the others become background tabs.
     pub(super) fn open_from_other_app(&self, engine: &Engine, urls: Vec<String>) {
         let peek = self.with_state(|s| s.settings.external_links == "peek");
+        self.leave_private_space(engine);
         // The space in front when the links arrive: where those without a
         // rule belong, also after one with a rule brought its space forward.
         let front = self.with_state(|s| s.active_space.clone());
@@ -471,7 +565,7 @@ impl MagnetiteApp {
                 // A background tab: in the space a rule names for its site,
                 // else in the one in front.
                 match self.link_rule_space(&url) {
-                    Some((space, _)) => self.open_background_in_space(engine, &url, &space),
+                    Some(space) => self.open_background_in_space(engine, &url, &space),
                     None => {
                         self.open_url_from(engine, &url, true, url_policy::Source::OtherApp, None);
                     }
@@ -528,21 +622,24 @@ struct Ask {
     /// The user chose "Open Link in New Window".
     own_window: bool,
     background: bool,
-    /// The peek asked: what it opens becomes a tab.
+    /// The peek or a web panel asked: what it opens becomes a tab.
     from_peek: bool,
+    /// A link from another app to a site with a rule (Settings → Links).
+    ruled: bool,
 }
 
 impl Ask {
     /// "Open Link in New Window" gets a mini window. A link from another app
-    /// goes where Settings say (`external_links`:
-    /// "tab", "peek" or "mini"). A page locked to its site, or one that asks
+    /// goes where Settings say (`external_links`: "tab", "peek" or "mini"),
+    /// unless a rule names a space for its site: then it is a tab there. A
+    /// page locked to its site, or one that asks
     /// for a new window, gets a peek, unless it is the peek itself or the
     /// link opens in the background. Everything else becomes a tab.
     fn target(&self, external_links: &str) -> Target {
         if self.own_window {
             return Target::Mini;
         }
-        if self.source == url_policy::Source::OtherApp {
+        if self.source == url_policy::Source::OtherApp && !self.ruled {
             match external_links {
                 "peek" => return Target::Peek,
                 "mini" => return Target::Mini,
@@ -570,6 +667,7 @@ mod tests {
             own_window: false,
             background: false,
             from_peek: false,
+            ruled: false,
         }
     }
 
@@ -592,6 +690,17 @@ mod tests {
         // Only links from other apps: a page's or the UI's never.
         assert_eq!(ask(Source::Page).target("mini"), Target::Tab);
         assert_eq!(ask(Source::User).target("mini"), Target::Tab);
+    }
+
+    #[test]
+    fn a_link_with_a_rule_becomes_a_tab_whatever_the_setting_says() {
+        let ruled = Ask {
+            ruled: true,
+            ..ask(Source::OtherApp)
+        };
+        for setting in ["tab", "peek", "mini"] {
+            assert_eq!(ruled.target(setting), Target::Tab);
+        }
     }
 
     #[test]
@@ -621,6 +730,9 @@ mod tests {
     #[test]
     fn launch_arguments_that_are_existing_files_become_file_addresses() {
         let dir = crate::files::test_dir("launch-url");
+        std::fs::create_dir_all(&dir).unwrap();
+        // Windows has no folder names with a colon.
+        #[cfg(unix)]
         std::fs::create_dir_all(dir.join("https:").join("a.example")).unwrap();
         std::fs::write(dir.join("my page.html"), "").unwrap();
         let file_url = url::Url::from_file_path(dir.join("my page.html"))

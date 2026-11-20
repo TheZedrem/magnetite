@@ -12,8 +12,11 @@
 //!
 //! Installing: on macOS the app bundle is replaced in place when Magnetite
 //! may write next to it and Gatekeeper accepts the new bundle (Developer ID
-//! signed and notarized); then it restarts. Otherwise, and on Linux and
-//! Windows, the release page opens for a manual download.
+//! signed and notarized); then it restarts. On Windows a Magnetite put
+//! there by its installer downloads the new installer and runs it without
+//! questions; that one waits for Magnetite to quit, installs and starts
+//! it again (`fetch_installer`, `run_installer`). Otherwise, and on
+//! Linux, the release page opens for a manual download.
 //!
 //! The Linux rpm and deb packages are updated by the system's package
 //! manager from Magnetite's package repository (ADR-0011). Magnetite then
@@ -45,6 +48,9 @@ pub const FIRST_CHECK_AFTER_SECS: i64 = 30;
 
 /// The app being replaced, inside the staging folder next to it.
 const OLD_APP: &str = "old.app";
+
+/// The extended attribute macOS marks downloaded files with.
+const QUARANTINE: &str = "com.apple.quarantine";
 
 /// Largest manifest or signature accepted.
 const MAX_MANIFEST: u64 = 64 * 1024;
@@ -324,16 +330,99 @@ pub fn install(asset: &Asset, bundle: &Path) -> Result<PathBuf, String> {
     result.map(|()| staging)
 }
 
-fn stage_and_swap(asset: &Asset, bundle: &Path, staging: &Path) -> Result<(), String> {
+/// The package `asset` names, if it is what the signed manifest says:
+/// its size and its SHA-256 (blocking).
+fn download(asset: &Asset) -> Result<Vec<u8>, String> {
     let data = get(&agent(local_feed(&asset.url)), &asset.url, asset.size)?;
     let hash = hex(&Sha256::digest(&data));
     if data.len() as u64 != asset.size || !hash.eq_ignore_ascii_case(asset.sha256.trim()) {
         return Err("The download does not match the signed update.".into());
     }
+    Ok(data)
+}
+
+/// Whether this Magnetite was put where it is by its Windows installer,
+/// which can then update it: the installer leaves its uninstaller next to
+/// the program. A copy unpacked from the zip has none.
+pub fn installed_by_setup() -> bool {
+    cfg!(target_os = "windows")
+        && std::env::current_exe()
+            .ok()
+            .and_then(|exe| Some(exe.parent()?.join("unins000.exe").exists()))
+            .unwrap_or(false)
+}
+
+/// Whether Magnetite can install an update by itself here.
+pub fn can_install() -> bool {
+    replaceable_bundle().is_some() || installed_by_setup()
+}
+
+/// Windows: download the installer `asset` names, check it against the
+/// signed manifest and save it (blocking). Returns where it is.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub fn fetch_installer(asset: &Asset) -> Result<PathBuf, String> {
+    let data = download(asset)?;
+    // One folder for every try: the last installer does not pile up.
+    let dir = std::env::temp_dir().join("magnetite-update");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Cannot prepare the update: {e}"))?;
+    let path = dir.join("Magnetite-setup.exe");
+    std::fs::write(&path, &data).map_err(|e| format!("Cannot save the update: {e}"))?;
+    Ok(path)
+}
+
+/// How long the installer may take to stand ready: Windows may be asking
+/// for an administrator meanwhile, and waits for an answer.
+#[cfg(target_os = "windows")]
+const INSTALLER_WAIT: Duration = Duration::from_secs(600);
+
+/// Windows: start `installer` as an update (no questions, the folder and
+/// the users of the installed copy) and wait until it stands ready
+/// (blocking). Then Magnetite must quit: the installer waits for that,
+/// installs and starts Magnetite again.
+///
+/// Magnetite quits only once the installer runs with the rights it needs.
+/// An installation for all users makes Windows ask for an administrator
+/// first; refused, the installer ends and Magnetite stays open.
+#[cfg(target_os = "windows")]
+pub fn run_installer(installer: &Path) -> Result<(), String> {
+    let mut child = std::process::Command::new(installer)
+        .args([
+            "/VERYSILENT",
+            "/SUPPRESSMSGBOXES",
+            "/NORESTART",
+            "/UPDATE=1",
+        ])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("Cannot start the update: {e}"))?;
+    let started = std::time::Instant::now();
+    let mut ended = None;
+    while started.elapsed() < INSTALLER_WAIT {
+        if magnetite_engine::installer_ready() {
+            return Ok(());
+        }
+        // The installer that asked for an administrator hands over to a
+        // second one and may end before that one stands ready.
+        if matches!(child.try_wait(), Ok(Some(_)) | Err(_)) {
+            let since = *ended.get_or_insert_with(std::time::Instant::now);
+            if since.elapsed() > Duration::from_secs(5) {
+                return Err("The update was not installed. Try again, and allow the installer to make changes when Windows asks.".into());
+            }
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    Err("The update did not start.".into())
+}
+
+fn stage_and_swap(asset: &Asset, bundle: &Path, staging: &Path) -> Result<(), String> {
+    let data = download(asset)?;
     let zip = staging.join("update.zip");
     std::fs::write(&zip, &data).map_err(|e| format!("Cannot save the update: {e}"))?;
     let unpacked = staging.join("new");
-    run("/usr/bin/ditto", &["-x", "-k"], &[&zip, &unpacked])?;
+    unpack(&zip, &unpacked)?;
     let new_app = std::fs::read_dir(&unpacked)
         .map_err(|e| e.to_string())?
         .filter_map(Result::ok)
@@ -379,6 +468,25 @@ fn stage_and_swap(asset: &Asset, bundle: &Path, staging: &Path) -> Result<(), St
         });
     }
     Ok(())
+}
+
+/// Unpack the downloaded `zip` into `into`, free of the quarantine mark.
+/// macOS puts that mark on every file Magnetite writes
+/// (`LSFileQuarantineEnabled`), and on what the programs it starts write:
+/// ditto marks each file it unpacks, whatever the zip carries. So the mark
+/// comes off afterwards, from everything unpacked. Left on, macOS would run
+/// the new app from a read-only copy elsewhere (app translocation), where
+/// the next update finds nothing it may replace. The caller has checked the
+/// zip against the signed manifest and lets Gatekeeper assess the app
+/// itself, which is what the mark is for.
+fn unpack(zip: &Path, into: &Path) -> Result<(), String> {
+    run("/usr/bin/ditto", &["-x", "-k"], &[zip, into])?;
+    // `-s`: links themselves are marked too. A file without the mark is
+    // fine for `-r`; a mark that stays makes it fail.
+    run("/usr/bin/xattr", &["-d", "-r", "-s", QUARANTINE], &[into]).map_err(|_| {
+        "Cannot prepare the update (it stays marked as a download). Download it from the release page."
+            .to_string()
+    })
 }
 
 /// After Magnetite quits: start `bundle` again and delete `cleanup`, which
@@ -529,6 +637,21 @@ mod tests {
         path
     }
 
+    /// One at a time for the tests that write a fake binary and run it.
+    /// While one test has its file open for writing, another test's start
+    /// of a process copies that open file into the new process, and Linux
+    /// then refuses to run the file ("Text file busy"): the version read
+    /// came back empty now and then.
+    #[cfg(unix)]
+    static FAKE_BINARIES: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[cfg(unix)]
+    fn one_at_a_time() -> std::sync::MutexGuard<'static, ()> {
+        FAKE_BINARIES
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     /// Watching a binary as `SystemBinary::detect` would at start.
     #[cfg(unix)]
     fn watching(path: PathBuf) -> SystemBinary {
@@ -539,6 +662,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_replaced_newer_binary_is_reported_once_per_change() {
+        let _turn = one_at_a_time();
         let dir = crate::files::test_dir("system-binary-newer");
         std::fs::create_dir_all(&dir).unwrap();
         let mut binary = watching(fake_binary(&dir, "magnetite 9.9.9", 1_000));
@@ -556,6 +680,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_replaced_binary_that_is_not_newer_is_ignored_for_that_change() {
+        let _turn = one_at_a_time();
         let dir = crate::files::test_dir("system-binary-not-newer");
         std::fs::create_dir_all(&dir).unwrap();
         let mut binary = watching(fake_binary(&dir, "magnetite 9.9.9", 1_000));
@@ -577,6 +702,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_replaced_binary_without_a_version_is_tried_again() {
+        let _turn = one_at_a_time();
         let dir = crate::files::test_dir("system-binary-retry");
         std::fs::create_dir_all(&dir).unwrap();
         let mut binary = watching(fake_binary(&dir, "magnetite 0.0.1", 1_000));
@@ -589,5 +715,44 @@ mod tests {
         fake_binary(&dir, "magnetite 9.9.9", 2_000);
         assert_eq!(binary.replaced().as_deref(), Some("9.9.9"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// What `unpack` meets in an installed Magnetite: every unpacked file
+    /// marked as downloaded, links included.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn an_unpacked_update_carries_no_quarantine_mark() {
+        let dir = crate::files::test_dir("update-quarantine");
+        let app = dir.join("src/Magnetite.app");
+        std::fs::create_dir_all(&app).unwrap();
+        std::fs::write(app.join("magnetite"), b"binary").unwrap();
+        std::os::unix::fs::symlink("magnetite", app.join("link")).unwrap();
+        let zip = dir.join("update.zip");
+        run(
+            "/usr/bin/ditto",
+            &["-c", "-k", "--keepParent"],
+            &[&app, &zip],
+        )
+        .unwrap();
+        // ditto hands the zip's mark on to every file it unpacks, which
+        // leaves them as a ditto started by the app does.
+        let mark = "0081;00000000;Magnetite;";
+        run("/usr/bin/xattr", &["-w", QUARANTINE, mark], &[&zip]).unwrap();
+
+        let unpacked = dir.join("new");
+        unpack(&zip, &unpacked).unwrap();
+
+        let unpacked_app = unpacked.join("Magnetite.app");
+        let binary = unpacked_app.join("magnetite");
+        assert_eq!(std::fs::read(&binary).unwrap(), b"binary");
+        for path in [unpacked_app.join("link"), binary, unpacked_app] {
+            // `xattr -p` fails for an attribute that is not there.
+            assert!(
+                run("/usr/bin/xattr", &["-s", "-p", QUARANTINE], &[&path]).is_err(),
+                "{} is quarantined",
+                path.display()
+            );
+        }
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

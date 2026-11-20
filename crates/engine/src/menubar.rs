@@ -27,6 +27,7 @@ use objc2_foundation::{NSData, NSSize, NSString};
 
 use crate::engine::ContextProfile;
 use crate::engine::Engine;
+use crate::events::DevPanel;
 use crate::events::{EngineEvent, ExtensionMenuAction, Shortcut};
 use crate::keymap::{Action, Combo};
 
@@ -51,6 +52,17 @@ define_class!(
                 if let Some(mini) = engine.key_mini() {
                     engine.emit(EngineEvent::Shortcut { from: Some(mini), shortcut });
                     return;
+                }
+                // The last window is closed: a command brings it back, and
+                // that is all a new window or a close asks for.
+                if engine.frame_hidden() {
+                    engine.activate_frame();
+                    if matches!(
+                        shortcut,
+                        Shortcut::NewWindow | Shortcut::CloseWindow | Shortcut::CloseTab
+                    ) {
+                        return;
+                    }
                 }
                 // "Close Tab" from a window that is not ours closes that
                 // window, not the tab in front of the main one.
@@ -320,9 +332,11 @@ pub fn install(mtm: MainThreadMarker) {
 
     b.menu("File");
     b.command("New Tab", "t", CMD, S::NewTab);
-    b.command("New Private Window", "p", SHIFT_CMD, S::NewPrivateWindow);
     b.command("New Window", "n", CMD, S::NewWindow);
     b.command("New Space…", "n", SHIFT_CMD, S::NewSpace);
+    b.command("Private Space", "p", SHIFT_CMD, S::PrivateSpace);
+    b.command("Hide Private Space", "d", SHIFT_CMD, S::HidePrivateSpace);
+    b.command("Close Private Space", "x", SHIFT_CMD, S::ClosePrivateSpace);
     b.command("New Split View…", "=", SHIFT_CMD, S::NewSplit);
     b.command("New Mini Window", "n", OPT_CMD, S::NewMini);
     b.command("Open Location…", "l", CMD, S::FocusAddress);
@@ -357,6 +371,7 @@ pub fn install(mtm: MainThreadMarker) {
 
     b.menu("View");
     b.command("Toggle Sidebar", "s", CMD, S::ToggleSidebar);
+    b.command("Toggle Web Panel", "p", OPT_CMD, S::WebPanel);
     b.command("Reload Page", "r", CMD, S::Reload);
     b.separator();
     b.command("Zoom In", "+", CMD, S::ZoomIn);
@@ -364,6 +379,15 @@ pub fn install(mtm: MainThreadMarker) {
     b.command("Actual Size", "0", CMD, S::ZoomReset);
     b.separator();
     b.command("Developer Tools", "i", OPT_CMD, S::ToggleDevTools);
+    b.command("Console", "j", OPT_CMD, S::DevPanel(DevPanel::Console));
+    b.command(
+        "Pick an Element",
+        "c",
+        OPT_CMD,
+        S::DevPanel(DevPanel::Picker),
+    );
+    b.command("Network", "e", OPT_CMD, S::DevPanel(DevPanel::Network));
+    b.command("Reset Page", "r", OPT_CMD, S::DevReset);
 
     b.menu("History");
     b.command("Back", "[", CMD, S::Back);
@@ -382,6 +406,7 @@ pub fn install(mtm: MainThreadMarker) {
     b.menu("Spaces");
     b.command("Next Space", RIGHT, OPT_CMD, S::NextSpace);
     b.command("Previous Space", LEFT, OPT_CMD, S::PrevSpace);
+    b.command("Show All Spaces…", "0", CTRL, S::SpacePicker);
 
     let extensions = b.menu("Extensions");
     extensions.setDelegate(Some(ProtocolObject::from_ref(&*target)));

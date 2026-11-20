@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use magnetite_core::{Id, SidebarNode, Space, TabItem, UnixSeconds};
 use magnetite_engine::{ContentId, MemoryPressure};
 
-use super::settings::MAX_ARCHIVE_DAYS;
+use super::settings::{MAX_ARCHIVE_DAYS, NEVER_ARCHIVE};
 use super::{AppState, ArchivedTab, Peek, TabRuntime, new_id, now};
 
 pub(super) fn find_in_tree_mut<'a>(
@@ -93,18 +93,52 @@ impl AppState {
         None
     }
 
-    /// The page outside the sidebar in window `id`: the peek, or a mini
-    /// window's page.
+    /// The page outside the sidebar in window `id`: the peek, a mini
+    /// window's page, or the phone of a responsive split.
     pub fn page_outside(&self, id: ContentId) -> Option<&Peek> {
         (self.peek.iter())
             .chain(self.minis.iter())
+            .chain(self.phones.iter().map(|p| &p.page))
             .find(|p| p.content == id)
     }
 
     pub fn page_outside_mut(&mut self, id: ContentId) -> Option<&mut Peek> {
         (self.peek.iter_mut())
             .chain(self.minis.iter_mut())
+            .chain(self.phones.iter_mut().map(|p| &mut p.page))
             .find(|p| p.content == id)
+    }
+
+    /// The phone in window `id` is gone: its tab has none beside it.
+    pub fn drop_phone(&mut self, id: ContentId) {
+        let Some(at) = self.phones.iter().position(|p| p.page.content == id) else {
+            return;
+        };
+        let phone = self.phones.remove(at);
+        if let Some(rt) = self.runtime.get_mut(&phone.tab) {
+            rt.dev.responsive = false;
+        }
+    }
+
+    /// The page in window `id` could not load `url` and shows an error page
+    /// there: that is its address now, without the last page's icon. No
+    /// visit, as nothing was seen.
+    pub fn load_failed(&mut self, id: ContentId, url: &str) {
+        if let Some(p) = self.page_outside_mut(id) {
+            url.clone_into(&mut p.url);
+        }
+        if let Some(tab) = self.content_to_tab.get(&id).cloned()
+            && let Some(t) = self.find_tab_mut(&tab)
+        {
+            url.clone_into(&mut t.url);
+        }
+        if let Some(rt) = self.page_runtime(id) {
+            rt.favicon = None;
+        }
+    }
+
+    pub fn is_phone(&self, id: ContentId) -> bool {
+        self.phones.iter().any(|p| p.page.content == id)
     }
 
     /// What is known about the page in window `id`: the peek's or a mini
@@ -123,7 +157,7 @@ impl AppState {
     /// window and what is known about its page. Returns the tab's id.
     pub fn keep_peek(&mut self) -> Option<Id> {
         let p = self.peek.take()?;
-        let space = self.active_space.clone();
+        let space = self.keep_space(&p.profile, &self.active_space);
         Some(self.keep_page(p, &space))
     }
 
@@ -134,11 +168,41 @@ impl AppState {
         let pos = self.minis.iter().position(|m| m.content == content)?;
         let page = self.minis.remove(pos);
         let space = if self.space(space).is_some() {
-            space.to_string()
+            space
         } else {
-            self.active_space.clone()
+            &self.active_space
         };
+        let space = self.keep_space(&page.profile, space);
         Some(self.keep_page(page, &space))
+    }
+
+    /// A new Today tab for `url`, opened by a page of profile `opener`
+    /// (none: by the user or another app) while the active space is in
+    /// front. The tab runs in the opener's profile and stays on its side of
+    /// the private space's border (`keep_space`): a private page's tab goes
+    /// to the private space, also when another space is in front. None for
+    /// a private page whose space is closed: its pages are closing, and
+    /// nothing of it opens elsewhere.
+    pub fn open_tab_from(&mut self, opener: Option<&str>, url: &str, title: &str) -> Option<Id> {
+        let private = opener.is_some_and(|p| self.private_profiles.contains(p));
+        if private && self.private_space.is_none() {
+            return None;
+        }
+        let space = opener.map_or_else(
+            || self.active_space.clone(),
+            |p| self.keep_space(p, &self.active_space),
+        );
+        let id = self.new_today_tab(&space, url, title);
+        // An override only when it differs from the space's profile. A tab
+        // of the private space otherwise keeps the profile it was made with
+        // (`new_today_tab`).
+        let space_profile = self.space(&space).map(|sp| sp.profile_id.clone());
+        if let Some(p) = opener.filter(|p| Some(*p) != space_profile.as_deref())
+            && let Some(t) = self.find_tab_mut(&id)
+        {
+            t.profile_id = Some(p.to_string());
+        }
+        Some(id)
     }
 
     /// Page `p` becomes a Today tab at the top of space `space`: its window
@@ -174,12 +238,15 @@ impl AppState {
         None
     }
 
-    /// Ordered tabs of the active space as shown: pinned (depth first) then Today.
+    /// Ordered tabs of the active space as shown: pinned (depth first) then
+    /// Today. Without the pinned tabs that open as web panels: the order
+    /// is for going from tab to tab, and those are none to go to.
     pub fn visible_tab_ids(&self) -> Vec<Id> {
         let s = self.active_space();
         s.pinned
             .iter()
             .flat_map(SidebarNode::tabs)
+            .filter(|t| !t.panel)
             .chain(s.today.iter())
             .map(|t| t.id.clone())
             .collect()
@@ -213,9 +280,13 @@ impl AppState {
     /// `recent_tabs`, then (after a restart, say) by `last_active_at`.
     pub fn tabs_by_last_use(&self) -> Vec<Id> {
         let space = self.active_space();
-        let favorites = self.sidebar.favorites.iter().flat_map(|f| f.items.iter());
+        // A web panel is no tab to switch to: it opens over one.
+        let favorites = (self.sidebar.favorites.iter())
+            .flat_map(|f| f.items.iter())
+            .filter(|t| self.sidebar.favorite_shows(t, &space.id));
         let pinned = space.pinned.iter().flat_map(SidebarNode::tabs);
-        let mut tabs: Vec<&TabItem> = favorites.chain(pinned).chain(&space.today).collect();
+        let kept = favorites.chain(pinned).filter(|t| !t.panel);
+        let mut tabs: Vec<&TabItem> = kept.chain(&space.today).collect();
         let active = self.active_tab_id();
         tabs.sort_by_key(|t| {
             let place = self.recent_tabs.iter().position(|r| *r == t.id);
@@ -241,11 +312,17 @@ impl AppState {
         }
         let mut tabs = self.tabs_by_last_use();
         tabs.truncate(SWITCH_TABS);
-        if tabs.len() < 2 {
+        // The round begins on the active tab, the first of the list: unless
+        // that tab is not in the list (a favorite this space does not
+        // show). Then it begins on the tab used before, and one tab is
+        // enough to switch to.
+        let active = self.active_tab_id();
+        let unlisted =
+            active.is_some_and(|a| self.find_tab(a).is_some() && !tabs.iter().any(|t| t == a));
+        if tabs.len() < if unlisted { 1 } else { 2 } {
             return false;
         }
-        // The round begins on the active tab, the first of the list.
-        let from_active = usize::from(self.active_tab_id().is_some());
+        let from_active = usize::from(active.is_some() && !unlisted);
         let at = if forward { from_active } else { tabs.len() - 1 };
         static ROUNDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let round = ROUNDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -254,11 +331,19 @@ impl AppState {
     }
 
     /// End the round of `Ctrl+Tab`: the tab it stands on, if it is still
-    /// there. `None` without a round.
+    /// there and a tab to go to (not made a web panel meanwhile, nor a
+    /// favorite of other spaces only). `None`
+    /// without a round.
     pub fn end_tab_switch(&mut self) -> Option<Id> {
         let round = self.switcher.take()?;
         let chosen = round.tabs.get(round.at)?;
-        self.find_tab(chosen).is_some().then(|| chosen.clone())
+        // Still there, and still one this space shows: a favorite may have
+        // been given to other spaces while the round went on.
+        let shown = self.find_tab(chosen).is_some_and(|(space, tab)| {
+            space.is_some() || self.sidebar.favorite_shows(tab, &self.active_space)
+        });
+        let still = shown && !self.is_web_panel(chosen);
+        still.then(|| chosen.clone())
     }
 
     /// Remove a tab from wherever it is. Returns it and its space (None for favorites).
@@ -281,11 +366,16 @@ impl AppState {
         None
     }
 
+    /// A new tab at the top of Today of space `space_id`. In the private
+    /// space it gets a profile of its own (`private.rs`).
     pub fn new_today_tab(&mut self, space_id: &str, url: &str, title: &str) -> Id {
         let id = new_id();
+        let profile_id =
+            (self.private_space.as_deref() == Some(space_id)).then(|| self.new_private_profile());
         let tab = TabItem {
             created_at: Some(now()),
             last_active_at: Some(now()),
+            profile_id,
             ..TabItem::new(id.clone(), url, title)
         };
         if let Some(s) = self.space_mut(space_id) {
@@ -294,21 +384,27 @@ impl AppState {
         id
     }
 
-    /// Whether tab `id` has media, playing or paused: such a tab is never
-    /// unloaded or archived in the background, which would stop the music.
-    fn has_media(&self, id: &str) -> bool {
-        self.runtime.get(id).is_some_and(|r| r.media.is_some())
+    /// Whether tab `id` is in use out of sight: it has media, playing or
+    /// paused, or is being shared.
+    /// Such a tab is never unloaded or archived in the background, which
+    /// would stop the music or the sharing.
+    fn in_use(&self, id: &str) -> bool {
+        (self.runtime.get(id)).is_some_and(|r| r.media.is_some() || r.shared)
     }
 
     /// The Today tabs to archive now: out of sight for longer than the
     /// auto-archive period (counted from creation if never shown). Not the
     /// tabs in `active` (on screen, or the one a space returns to), not
-    /// those with media, and not those kept active.
+    /// those with media or being shared, and not those kept active. None
+    /// with auto-archive turned off (`NEVER_ARCHIVE`).
     pub fn stale_today_tabs(&self, now: UnixSeconds, active: &HashSet<Id>) -> Vec<Id> {
+        if self.settings.auto_archive_hours == NEVER_ARCHIVE {
+            return Vec::new();
+        }
         let period = i64::from(self.settings.auto_archive_hours) * 3600;
         (self.sidebar.spaces.iter())
             .flat_map(|space| space.today.iter())
-            .filter(|t| !t.keep_active && !active.contains(&t.id) && !self.has_media(&t.id))
+            .filter(|t| !t.keep_active && !active.contains(&t.id) && !self.in_use(&t.id))
             .filter(|t| {
                 now.saturating_sub(t.last_active_at.or(t.created_at).unwrap_or(now)) > period
             })
@@ -355,7 +451,7 @@ impl AppState {
     /// last on screen (`now` if never).
     fn idle_pages(&self, now: UnixSeconds, active: &HashSet<Id>) -> Vec<(Id, UnixSeconds)> {
         (self.runtime.iter())
-            .filter(|(id, r)| r.content.is_some() && !active.contains(*id) && !self.has_media(id))
+            .filter(|(id, r)| r.content.is_some() && !active.contains(*id) && !self.in_use(id))
             .filter_map(|(id, _)| {
                 let tab = (self.sidebar.spaces.iter())
                     .flat_map(|space| space.today.iter())
@@ -370,6 +466,7 @@ impl AppState {
     pub fn pages_in_use(&self) -> HashSet<Id> {
         let mut active: HashSet<Id> = self.active_tab.values().cloned().collect();
         active.extend(self.visible_panes());
+        active.extend(self.web_panel.clone());
         active
     }
 
@@ -388,6 +485,7 @@ impl AppState {
             // sleep: closing it ended "Keep active".
             tab.home_url = None;
             tab.keep_active = false;
+            tab.end_panel();
             self.archive.push(ArchivedTab {
                 tab,
                 space_id: space.unwrap_or_else(|| self.active_space.clone()),
@@ -398,7 +496,8 @@ impl AppState {
     }
 
     /// Take the archive record at `pos` back into Today of its space (the
-    /// active space if that one is gone). Returns the tab's id. A tab that
+    /// active space if that one is gone, the space beside the private one if
+    /// that is the active one). Returns the tab's id. A tab that
     /// is in the sidebar again (a sync brought it back) is not added a second
     /// time, and a profile of its own that no longer exists is dropped: with
     /// it the tab would count as private and be gone at the next start.
@@ -417,19 +516,24 @@ impl AppState {
         if tab.profile_id.as_ref().is_some_and(|p| !known(p)) {
             tab.profile_id = None;
         }
+        // Never the private space: an archived tab was not one of it, and
+        // would run there in a profile that is kept.
         let space = if self.space(&space_id).is_some() {
             space_id
         } else {
-            self.active_space.clone()
+            self.lasting_space(&self.active_space)
         };
         self.space_mut(&space)?.today.insert(0, tab);
         Some(id)
     }
 
     /// Delete archived tabs older than the retention period
-    /// (`Settings::archive_days`). True if any went.
+    /// (`Settings::archive_days`; 0: none, they are kept). True if any went.
     pub fn prune_archive(&mut self, now: UnixSeconds) -> bool {
-        let keep = i64::from(self.settings.archive_days.clamp(1, MAX_ARCHIVE_DAYS)) * 86_400;
+        if self.settings.archive_days == 0 {
+            return false;
+        }
+        let keep = i64::from(self.settings.archive_days.min(MAX_ARCHIVE_DAYS)) * 86_400;
         let before = self.archive.len();
         self.archive
             .retain(|a| now.saturating_sub(a.archived_at) <= keep);
@@ -458,7 +562,9 @@ impl AppState {
     /// like closed ones (`archive_tab`, so a private profile's leave nothing
     /// behind). Returns the page windows to close.
     pub fn delete_space(&mut self, id: &str) -> Vec<ContentId> {
-        if self.sidebar.spaces.len() <= 1 {
+        // The private space does not count: it is gone at the next start.
+        let private = usize::from(self.private_space.is_some());
+        if self.sidebar.spaces.len() - private <= 1 && !self.is_private_space(id) {
             return vec![];
         }
         let Some(space) = self.space(id) else {
@@ -512,6 +618,20 @@ mod tests {
         s.active_tab.insert(space, "fav".into());
         assert_eq!(s.cycle_tab(true).as_deref(), Some("p"));
         assert_eq!(s.cycle_tab(false).as_deref(), Some("c"));
+    }
+
+    #[test]
+    fn a_failed_load_shows_its_address_and_drops_the_last_icon() {
+        let mut s = state();
+        s.content_to_tab.insert(7, "a".into());
+        s.runtime.entry("a".into()).or_default().favicon =
+            Some("https://example.org/favicon.ico".into());
+        s.load_failed(7, "https://down.example/");
+        assert_eq!(
+            s.find_tab("a").map(|(_, t)| t.url.as_str()),
+            Some("https://down.example/")
+        );
+        assert_eq!(s.runtime["a"].favicon, None);
     }
 
     #[test]
@@ -660,12 +780,21 @@ mod tests {
         let active: HashSet<Id> = HashSet::from(["b".to_string()]);
         s.find_tab_mut("c").unwrap().keep_active = true;
         assert_eq!(s.stale_today_tabs(now(), &active), ["a"]);
+        // Turned off, no tab is archived however long it was left alone.
+        s.settings.auto_archive_hours = NEVER_ARCHIVE;
+        assert_eq!(s.stale_today_tabs(i64::MAX, &active), [] as [Id; 0]);
+        s.settings.auto_archive_hours = 12;
         assert_eq!(s.tabs_to_unload(now(), &active), ["a"]);
         // Let go again, it goes the way of the others.
         s.find_tab_mut("c").unwrap().keep_active = false;
         let mut unload = s.tabs_to_unload(now(), &active);
         unload.sort();
         assert_eq!(unload, ["a", "c"]);
+        // A tab that is being shared stays, like one that plays.
+        s.runtime.get_mut("a").unwrap().shared = true;
+        assert_eq!(s.tabs_to_unload(now(), &active), ["c"]);
+        assert_eq!(s.stale_today_tabs(now(), &active), ["c"]);
+        s.runtime.get_mut("a").unwrap().shared = false;
         // Favorites and pinned tabs stay loaded without being asked to.
         s.sidebar.favorites[0].items.push(TabItem {
             last_active_at: Some(long_ago),
@@ -752,6 +881,10 @@ mod tests {
         let kept: Vec<&str> = s.archive.iter().map(|a| a.tab.id.as_str()).collect();
         assert_eq!(kept, ["edge", "new"]);
         assert!(!s.prune_archive(100 * day), "nothing more to delete");
+        // Kept forever: nothing goes, however old.
+        s.settings.archive_days = 0;
+        assert!(!s.prune_archive(100_000 * day));
+        assert_eq!(s.archive.len(), 2);
     }
 
     #[test]

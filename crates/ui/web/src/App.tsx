@@ -6,18 +6,19 @@ import { HistoryView } from "./HistoryView";
 import { LibraryButton } from "./LibraryButton";
 import { SidebarResizer } from "./SidebarResizer";
 import { ContextMenu, SEPARATOR, type MenuItem } from "./ContextMenu";
-import { Back, Close, Dots, FolderIcon, Forward, Plus, Reload, SidebarIcon, SmartFolderIcon, SpacePlus, SplitIcon, TabPlus } from "./Icons";
+import { Back, Close, Dots, FolderIcon, Forward, Plus, MaskIcon, PrivateIcon, Reload, SidebarIcon, SmartFolderIcon, SpacePlus, SplitIcon, TabPlus } from "./Icons";
 import { AddressRow } from "./AddressRow";
 import { CaptureToast } from "./CaptureToast";
+import { record } from "./recorder";
 import { MediaBar, type MediaEntry } from "./MediaBar";
 import { NewMenu } from "./NewMenu";
-import { PinnedExtensions } from "./PinnedExtensions";
-import { FavoriteLists, NodeList, RenameInput, SplitRow, TabRow, type RowContext } from "./Rows";
-import { sidebarBackground } from "./backgrounds";
-import { IS_MAC, accentCss, applyAppearance, lookOf, findTab, findTabInSpace, hostOf, onNotice, onOpenArchive, onOpenBookmarks, onOpenDownloads, onOpenHistory, send, splitIds, subscribe, type LibraryView, type Space, type SplitNode, type UiState } from "./bridge";
-import { IconPicker, SpaceGlyph } from "./Glyphs";
+import { ExtensionBar, PinnedExtensions } from "./PinnedExtensions";
+import { DeviceTabRow, FavoriteLists, NodeList, RenameInput, SplitRow, TabRow, type RowContext } from "./Rows";
+import { windowBackground } from "./backgrounds";
+import { IS_MAC, accentCss, applyAppearance, favoriteShows, keyLabel, lookOf, findTab, findTabInSpace, hostOf, onNotice, onOpenArchive, onOpenBookmarks, onOpenDownloads, onOpenHistory, onRecord, send, splitIds, subscribe, type LibraryView, type Space, type SplitNode, type UiState } from "./bridge";
+import { IconPicker, SpaceIcon } from "./Glyphs";
 import { SpaceSwitcher } from "./SpaceSwitcher";
-import { dragging, endDrag, indexAfterTaking } from "./dnd";
+import { dragging, endDrag, indexAfterTaking, movedIds } from "./dnd";
 import { useSpaceSwipe } from "./useSpaceSwipe";
 import { keysHint, keysLabel } from "./settings/shortcutKeys";
 import { useSidebarShortcuts } from "./useSidebarShortcuts";
@@ -53,6 +54,7 @@ export function App() {
   useEffect(() => onOpenDownloads(() => setPanel("downloads")), []);
   useEffect(() => onOpenBookmarks(() => setPanel("bookmarks")), []);
   useEffect(() => onOpenHistory(() => setPanel("history")), []);
+  useEffect(() => onRecord(() => void record()), []);
   const [notice, setNotice] = useState<string | null>(null);
   useEffect(() => {
     // Three seconds from the last notice: the same text sent again stays its full time.
@@ -80,8 +82,18 @@ export function App() {
 
   if (!state) return <div className="h-full" />;
   const space = state.sidebar.spaces.find((s) => s.id === state.active_space) ?? state.sidebar.spaces[0]!;
-  // The same in every space: one list of favorites per profile that has some.
-  const favoriteLists = state.sidebar.favorites.filter((f) => f.items.length > 0);
+  // The private space: only Today tabs, each in a profile of its own, and nothing of it is kept.
+  const isPrivate = state.private_space === space.id;
+  // Other devices' tabs show in the space they are open in there; one of a
+  // space this device does not have shows in whichever space is in front.
+  const deviceTabs = isPrivate ? [] : state.device_tabs.filter((t) =>
+    t.space === space.id || !state.sidebar.spaces.some((s) => s.id === t.space));
+  // In every space but the private one (a favorite runs in its own profile,
+  // which is kept): one list of favorites per profile that has some for this
+  // space. A favorite is for every space unless it names its spaces.
+  const favoriteLists = isPrivate ? [] : state.sidebar.favorites
+    .map((f) => ({ ...f, items: f.items.filter((t) => favoriteShows(state.sidebar, t, space.id)) }))
+    .filter((f) => f.items.length > 0);
   const spaceIndex = state.sidebar.spaces.indexOf(space);
   if (enter.current.id !== space.id) {
     enter.current = { id: space.id, index: spaceIndex, x: enter.current.id ? Math.sign(spaceIndex - enter.current.index) * 24 : 0 };
@@ -95,17 +107,20 @@ export function App() {
     const owner = ids.find((id) => findTabInSpace(space, id) !== null);
     if (owner) splitAt.set(owner, split);
   }
-  // The split on screen with no row here (favorites, other spaces) shows above Today.
-  const looseSplit = state.split && !splitIds(state.split).some((id) => splitAt.has(id)) ? state.split : null;
+  // The split on screen with no row here (pages of other spaces) shows above
+  // Today. One of favorites only is a tile in their list.
+  const isFavorite = (id: string) => favoriteLists.some((f) => f.items.some((t) => t.id === id));
+  const looseSplit = state.split && !splitIds(state.split).some((id) => splitAt.has(id)) && !splitIds(state.split).every(isFavorite) ? state.split : null;
   const ctx: RowContext = { state, spaceId: space.id, openMenu, renaming, setRenaming, newProfileFor, splitAt, inSplit, pickIcon };
-  const pickSpaceIcon = (x: number, y: number, target: Space = space) =>
-    pickIcon({ x, y }, target.icon, (g) => g && send({ cmd: "rename_space", id: target.id, title: target.title, icon: g }));
+  const pickSpaceIcon = (x: number, y: number) =>
+    pickIcon({ x, y }, space.icon, (g) => g && send({ cmd: "rename_space", id: space.id, icon: g }));
   const activeRt = state.active_tab ? state.runtime[state.active_tab] : undefined;
   // Back, forward and reload act on the page in front: the peek while one is open.
   const frontRt = state.peek ? state.peek.runtime : activeRt;
   const activeItem = state.active_tab ? findTab(state, state.active_tab) : null;
   const topBar = state.settings.appearance.top_bar && !FLOAT;
-  const spaceVars = { ["--space" as string]: accentCss(space.accent), ["--space-soft" as string]: accentCss(space.accent, 0.14), ["--bg" as string]: state.chrome, ...sidebarBackground(state.chrome, space.id, lookOf(state.settings.appearance, space.id), space.accent) };
+  const extensionBar = state.settings.appearance.extension_bar;
+  const spaceVars = { ["--space" as string]: accentCss(space.accent), ["--space-soft" as string]: accentCss(space.accent, 0.14), ["--bg" as string]: state.chrome, ...windowBackground("sidebar", state.chrome, space.id, lookOf(state.settings.appearance, space.id), space.accent) };
   // Media in tabs that are not on screen, playing ones first (at most two rows).
   const onScreen = new Set(state.panes.length > 1 ? state.panes : state.active_tab ? [state.active_tab] : []);
   const media: MediaEntry[] = Object.entries(state.runtime)
@@ -135,19 +150,25 @@ export function App() {
 
   const dropToday = (index: number) => {
     const d = dragging();
-    if (d?.kind === "tab") send({ cmd: "move_tab", id: d.id, space: space.id, section: "today", index: indexAfterTaking(space.today, d.id, index) });
+    if (d?.kind === "tab") send({ cmd: "move_tab", id: d.id, space: space.id, section: "today", index: indexAfterTaking(space.today, movedIds(d), index), split: d.pair });
   };
 
   // Options for `target` (the active space unless right-clicked in the footer).
-  // Renaming, new folders and new profiles act on the active space, so those switch first.
+  // New folders and new profiles act on the active space, so those switch first.
   const spaceMenu = (x: number, y: number, target: Space = space) => {
     const there = (run: () => void) => () => {
       if (target.id !== space.id) send({ cmd: "switch_space", id: target.id });
       run();
     };
+    if (target.id === state.private_space) {
+      return openMenu(x, y, [
+        { label: "Hide private space", onClick: () => send({ cmd: "hide_private_space" }) },
+        { label: "Close private space", danger: true, onClick: () => send({ cmd: "close_private_space" }) },
+      ]);
+    }
     openMenu(x, y, [
-      { label: "Rename space", onClick: there(() => setRenamingSpace(target.id)) },
-      { label: "Change icon", onClick: () => pickSpaceIcon(x, y, target) },
+      // Name, icon, colour and background; switches first, so the changes show.
+      { label: "Space settings…", onClick: there(() => send({ cmd: "space_dialog", id: target.id })) },
       { label: "New folder", onClick: there(() => send({ cmd: "new_folder", title: "" })) },
       SEPARATOR,
       ...state.sidebar.profiles.map((p) => ({
@@ -170,15 +191,15 @@ export function App() {
       {!FLOAT && <SidebarResizer />}
       {/* With the top bar on, it holds the band and the address (TopBar.tsx); the floating sidebar keeps its own. */}
       {!topBar && (<>
-      {/* Traffic-light band: sidebar toggle left, navigation right. Empty space drags the window. */}
-      <div className={`titlebar-drag hdr flex h-[42px] shrink-0 items-center gap-0.5 ${FLOAT ? "pl-2" : "pl-[86px]"} pr-2`}>
+      {/* Traffic-light band (macOS keeps room for the window's buttons): sidebar toggle left, navigation right. Empty space drags the window. */}
+      <div className={`titlebar-drag hdr flex h-[42px] shrink-0 items-center gap-0.5 ${FLOAT || !IS_MAC ? "pl-2" : "pl-[86px]"} pr-2`}>
         {windowButtons}
         <button className="ib no-drag" onClick={() => send({ cmd: "toggle_sidebar" })} title={`${FLOAT ? "Keep the sidebar open" : "Hide sidebar"}${keysHint(state.keys, "toggle_sidebar")}`}><SidebarIcon /></button>
-        <PinnedExtensions state={state} openMenu={openMenu} />
+        {!extensionBar && <PinnedExtensions state={state} openMenu={openMenu} />}
         <span className="flex-1" />
-        <button className="ib no-drag" disabled={!frontRt?.can_go_back} onClick={() => send({ cmd: "go_back" })} title="Back (⌘[)"><Back /></button>
-        <button className="ib no-drag" disabled={!frontRt?.can_go_forward} onClick={() => send({ cmd: "go_forward" })} title="Forward (⌘])"><Forward /></button>
-        <button className="ib no-drag" disabled={!activeItem && !state.peek} onClick={() => send({ cmd: "reload" })} title="Reload (⌘R)"><Reload /></button>
+        <button className="ib nav no-drag" disabled={!frontRt?.can_go_back} onClick={() => send({ cmd: "go_back" })} title={`Back (${keyLabel("⌘[", "Alt+←")})`}><Back /></button>
+        <button className="ib nav no-drag" disabled={!frontRt?.can_go_forward} onClick={() => send({ cmd: "go_forward" })} title={`Forward (${keyLabel("⌘]", "Alt+→")})`}><Forward /></button>
+        <button className="ib no-drag" disabled={!activeItem && !state.peek} onClick={() => send({ cmd: "reload" })} title={`Reload (${keyLabel("⌘R")})`}><Reload /></button>
       </div>
 
       {/* Address field, or the peek pill in the same slot so nothing moves */}
@@ -186,7 +207,7 @@ export function App() {
         {state.peek ? (
           <div className="urlbar no-drag" data-peek>
             <span className="min-w-0 flex-1 truncate"><span className="text-[var(--muted)]">Peek · </span>{state.peek.title || hostOf(state.peek.url)}</span>
-            <button className="h-6 shrink-0 rounded-md bg-white/10 px-2 text-[12px] font-medium hover:bg-white/15" title="Keep as tab (⌘O)" onClick={() => send({ cmd: "peek_to_tab" })}>Keep</button>
+            <button className="h-6 shrink-0 rounded-md bg-white/10 px-2 text-[12px] font-medium hover:bg-white/15" title={`Keep as tab (${keyLabel("⌘O")})`} onClick={() => send({ cmd: "peek_to_tab" })}>Keep</button>
             <button className="ib sm shrink-0" title="Open in split view" aria-label="Open in split view" onClick={() => send({ cmd: "peek_to_split" })}><SplitIcon width={14} height={14} /></button>
             <button className="ib sm shrink-0" title="Close (Esc)" onClick={() => send({ cmd: "close_peek" })}><Close width={14} height={14} /></button>
           </div>
@@ -194,6 +215,7 @@ export function App() {
           <AddressRow state={state} item={activeItem} rt={activeRt} onEdit={() => send({ cmd: "open_palette", mode: activeItem ? "navigate" : "new" })} openMenu={openMenu} />
         )}
       </div>
+      {extensionBar && <ExtensionBar state={state} openMenu={openMenu} />}
       </>)}
 
       {media.length > 0 && <MediaBar entries={media} />}
@@ -202,8 +224,16 @@ export function App() {
 
       {/* Lists */}
       <div key={space.id} className="scroll space-list flex-1 min-h-0 px-2 pb-2" style={{ ["--enter-x" as string]: `${enter.current.x}px`, ...(swipe.offset ? { transform: `translateX(${swipe.offset}px)`, transition: "none" } : {}) }} onContextMenu={(e) => { if (e.target === e.currentTarget) { e.preventDefault(); spaceMenu(e.clientX, e.clientY); } }}>
+        {isPrivate ? (
+        <div className="space-title" onContextMenu={(e) => { e.preventDefault(); spaceMenu(e.clientX, e.clientY); }}>
+          <span className="grid h-5 w-5 shrink-0 place-items-center" style={{ color: "var(--space)" }}><MaskIcon width={15} height={15} /></span>
+          <span className="truncate">{space.title}</span>
+          <button className="ib sm ml-auto" title={`Hide private space${keysHint(state.keys, "hide_private_space")}`} aria-label="Hide private space" onClick={() => send({ cmd: "hide_private_space" })}><PrivateIcon width={14} height={14} /></button>
+          <button className="ib sm" title={`Close private space${keysHint(state.keys, "close_private_space")}`} aria-label="Close private space" onClick={() => send({ cmd: "close_private_space" })}><Close width={14} height={14} /></button>
+        </div>
+        ) : (
         <div className="space-title group" onContextMenu={(e) => { e.preventDefault(); spaceMenu(e.clientX, e.clientY); }} onDoubleClick={() => setRenamingSpace(space.id)}>
-          <button className="grid h-5 w-5 shrink-0 place-items-center rounded-md" style={{ color: "var(--space)" }} title="Change icon" onClick={(e) => pickSpaceIcon(e.clientX, e.clientY)}><SpaceGlyph icon={space.icon} title={space.title} size={15} /></button>
+          <button className="grid h-5 w-5 shrink-0 place-items-center rounded-md" style={{ color: "var(--space)" }} title="Change icon" onClick={(e) => pickSpaceIcon(e.clientX, e.clientY)}><SpaceIcon space={space} size={15} /></button>
           {renamingSpace === space.id ? (
             <RenameInput value={space.title} onCommit={(title) => { send({ cmd: "rename_space", id: space.id, title }); setRenamingSpace(null); }} onCancel={() => setRenamingSpace(null)} />
           ) : (
@@ -211,15 +241,16 @@ export function App() {
           )}
           <button className="ib sm ml-auto opacity-0 group-hover:opacity-100" title="Space options" onClick={(e) => spaceMenu(e.clientX, e.clientY)}><Dots width={14} height={14} /></button>
         </div>
+        )}
 
-        {/* Pinned tabs and folders, then one divider, then Today. No labels: position says it. */}
-        <div onDragOver={(e) => dragging() && e.preventDefault()} onDrop={(e) => { if ((e.target as HTMLElement).closest(".row")) return; e.preventDefault(); const d = dragging(); if (d?.kind === "tab") send({ cmd: "move_tab", id: d.id, space: space.id, section: "pinned", index: space.pinned.length }); else if (d) send({ cmd: "move_folder", id: d.id, index: indexAfterTaking(space.pinned, d.id, space.pinned.length) }); endDrag(); }}>
+        {/* Pinned tabs and folders, then one divider, then Today. No labels: position says it. The private space has only Today. */}
+        {!isPrivate && <div onDragOver={(e) => dragging() && e.preventDefault()} onDrop={(e) => { if ((e.target as HTMLElement).closest(".row")) return; e.preventDefault(); const d = dragging(); if (d?.kind === "tab") send({ cmd: "move_tab", id: d.id, space: space.id, section: "pinned", index: indexAfterTaking(space.pinned, movedIds(d), space.pinned.length), split: d.pair }); else if (d) send({ cmd: "move_folder", id: d.id, index: indexAfterTaking(space.pinned, movedIds(d), space.pinned.length) }); endDrag(); }}>
           <NodeList ctx={ctx} nodes={space.pinned} depth={0} />
-        </div>
+        </div>}
 
         <div className="divider">
           <hr />
-          {space.today.length > 0 && <button title="Archive all Today tabs" onClick={() => send({ cmd: "archive_today" })}>Clear</button>}
+          {space.today.length > 0 && <button title={isPrivate ? "Close all private tabs" : "Archive all Today tabs"} onClick={() => send({ cmd: "archive_today" })}>Clear</button>}
         </div>
 
         <div
@@ -227,14 +258,15 @@ export function App() {
           onDragOver={(e) => dragging()?.kind === "tab" && e.preventDefault()}
           onDrop={(e) => { if ((e.target as HTMLElement).closest(".row")) return; e.preventDefault(); dropToday(space.today.length); endDrag(); }}
         >
-          <button className="row newtab w-full" onClick={() => send({ cmd: "open_palette", mode: "new" })} title={`New tab${keysHint(state.keys, "new_tab")}`}>
+          <button className="row newtab w-full" onClick={() => send({ cmd: "open_palette", mode: "new" })} title={`${isPrivate ? "New private tab" : "New tab"}${keysHint(state.keys, "new_tab")}`}>
             <span className="icon-slot"><Plus width={15} height={15} /></span>
-            <span className="title text-left">New Tab</span>
+            <span className="title text-left">{isPrivate ? "New Private Tab" : "New Tab"}</span>
           </button>
           {looseSplit && <SplitRow ctx={ctx} split={looseSplit} />}
           {space.today.map((t, i) => (
             <TabRow key={t.id} ctx={ctx} tab={t} section="today" index={i} onDropAt={dropToday} />
           ))}
+          {deviceTabs.map((t) => <DeviceTabRow key={t.id} tab={t} />)}
         </div>
       </div>
 
@@ -244,7 +276,7 @@ export function App() {
       {/* Footer: archive and downloads left (one button), spaces centred, new right */}
       <div className="flex h-12 shrink-0 items-center gap-1 px-2">
         <LibraryButton opens={state.settings.library_opens} keys={state.keys} onOpen={setPanel} />
-        <SpaceSwitcher spaces={state.sidebar.spaces} current={space.id} onMenu={spaceMenu} />
+        <SpaceSwitcher spaces={state.sidebar.spaces} current={space.id} privateSpace={state.private_space} onMenu={spaceMenu} />
         <button
           className="ib lg plus-btn"
           aria-label={newMenu ? "Close menu" : "New…"}
@@ -262,13 +294,13 @@ export function App() {
           groups={[
             [
               { id: "space", label: "New Space", Icon: SpacePlus, shortcut: keysLabel(state.keys.new_space), run: () => send({ cmd: "open_palette", mode: "new_space" }) },
-              { id: "folder", label: "New Folder", Icon: FolderIcon, run: () => send({ cmd: "new_folder", title: "" }) },
-              { id: "smart", label: "New Smart Folder", Icon: SmartFolderIcon, run: () => send({ cmd: "smart_folder_dialog" }) },
+              { id: "private", label: "Private Space", Icon: MaskIcon, shortcut: keysLabel(state.keys.private_space), run: () => send({ cmd: "open_private_space" }) },
+              { id: "folder", label: "New Folder", Icon: FolderIcon, disabled: isPrivate, run: () => send({ cmd: "new_folder", title: "" }) },
+              { id: "smart", label: "New Smart Folder", Icon: SmartFolderIcon, disabled: isPrivate, run: () => send({ cmd: "smart_folder_dialog" }) },
             ],
             [
               { id: "split", label: "New Split", Icon: SplitIcon, disabled: !activeItem, run: () => send({ cmd: "open_palette", mode: "split" }) },
-              { id: "tab", label: "New Tab", Icon: TabPlus, shortcut: keysLabel(state.keys.new_tab), run: () => send({ cmd: "open_palette", mode: "new" }) },
-              { id: "private", label: "New Private Window", Icon: TabPlus, shortcut: keysLabel(state.keys.new_private_window), run: () => send({ cmd: "shortcut", shortcut: "new_private_window" }) },
+              { id: "tab", label: isPrivate ? "New Private Tab" : "New Tab", Icon: TabPlus, shortcut: keysLabel(state.keys.new_tab), run: () => send({ cmd: "open_palette", mode: "new" }) },
             ],
           ]}
         />

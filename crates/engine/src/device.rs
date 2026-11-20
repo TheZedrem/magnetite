@@ -259,7 +259,56 @@ impl Engine {
             w.close();
         }
         self.emulate(id, None, Some(&mode.config));
+        // The device's identity went; a mobile view has its own back.
+        if self.lock().mobile.contains(&id) {
+            self.apply_mobile_view(id, true);
+        }
         self.show_dividers();
+    }
+
+    /// Show page `id` as on a phone from now on (`on`), or as itself
+    /// again: sites see a mobile browser's identity. The page loads again
+    /// to be served that way. Kept for a page that has no browser yet.
+    /// Device mode (above) has its own identity while it is on.
+    pub fn set_mobile_view(&self, id: ContentId, on: bool) {
+        let changed = {
+            let mut inner = self.lock();
+            if on {
+                inner.mobile.insert(id)
+            } else {
+                inner.mobile.remove(&id)
+            }
+        };
+        if changed {
+            self.apply_mobile_view(id, on);
+        }
+    }
+
+    /// The pages shown as on a phone (`set_mobile_view`).
+    pub fn mobile_views(&self) -> Vec<ContentId> {
+        self.lock().mobile.iter().copied().collect()
+    }
+
+    /// `set_mobile_view`'s work on a page with a browser. Left to
+    /// `end_device` while the page is in device mode, whose identity
+    /// counts until then.
+    pub(crate) fn apply_mobile_view(&self, id: ContentId, on: bool) {
+        let device = (self.lock().docked.get(&id)).is_some_and(|d| d.device.is_some());
+        if device {
+            return;
+        }
+        // An empty identity is none: the browser's own again.
+        let ua = if on { Ua::Android.string() } else { "" };
+        self.devtools(
+            id,
+            "Emulation.setUserAgentOverride",
+            &json!({ "userAgent": ua }),
+            Box::new(move |done| {
+                if done.is_ok() {
+                    Engine::global().content_reload(id);
+                }
+            }),
+        );
     }
 
     /// The bar's question: page `id`'s device, `null` when device mode is off.
@@ -304,19 +353,7 @@ impl Engine {
             |f: &dyn Fn(Option<&DeviceConfig>) -> Value| before.is_none() || f(config) != f(before);
         let touch = |c: Option<&DeviceConfig>| json!(c.is_some_and(|c| c.mobile));
         if changed(&touch) {
-            let on = touch(config);
-            self.devtools(
-                id,
-                "Emulation.setTouchEmulationEnabled",
-                &json!({ "enabled": on, "maxTouchPoints": 5 }),
-                ignore(),
-            );
-            self.devtools(
-                id,
-                "Emulation.setEmitTouchEventsForMouse",
-                &json!({ "enabled": on, "configuration": "mobile" }),
-                ignore(),
-            );
+            self.touch(id, config.is_some_and(|c| c.mobile));
         }
         // An empty identity is none: the browser's own again.
         let ua = |c: Option<&DeviceConfig>| json!(c.and_then(|c| c.ua).map_or("", Ua::string));
@@ -355,6 +392,59 @@ impl Engine {
                 &json!({}),
                 ignore(),
             );
+        }
+    }
+
+    /// Page `id` takes the mouse for touches (`mobile`), unless the element
+    /// picker of its `DevTools` is on: a page that gets touches shows no
+    /// element under the pointer. Chromium's device mode does the same.
+    fn touch(&self, id: ContentId, mobile: bool) {
+        let inspecting = self.lock().docked.get(&id).is_some_and(|d| d.inspecting);
+        let on = mobile && !inspecting;
+        let ignore = || Box::new(|_| {});
+        self.devtools(
+            id,
+            "Emulation.setTouchEmulationEnabled",
+            &json!({ "enabled": on, "maxTouchPoints": 5 }),
+            ignore(),
+        );
+        self.devtools(
+            id,
+            "Emulation.setEmitTouchEventsForMouse",
+            &json!({ "enabled": on, "configuration": "mobile" }),
+            ignore(),
+        );
+    }
+
+    /// The element picker of page `id`'s `DevTools` went on or off: in
+    /// device mode the touches stop meanwhile.
+    pub(crate) fn device_inspecting(&self, id: ContentId, on: bool) {
+        let mobile = {
+            let mut inner = self.lock();
+            let Some(d) = inner.docked.get_mut(&id) else {
+                return;
+            };
+            if std::mem::replace(&mut d.inspecting, on) == on {
+                return;
+            }
+            d.device.as_ref().map(|m| m.config.mobile)
+        };
+        if mobile == Some(true) {
+            self.touch(id, true);
+        }
+    }
+
+    /// Page `id`'s size was overridden by someone else (a capture set): in
+    /// device mode it is told its device's again.
+    pub fn restore_device(&self, id: ContentId) {
+        let device = self
+            .lock()
+            .docked
+            .get_mut(&id)
+            .and_then(|d| d.device.as_mut())
+            .map(|m| m.told = None);
+        if device.is_some() {
+            self.replace_page(id);
         }
     }
 
@@ -471,7 +561,7 @@ impl Engine {
     /// A resize handle of page `id` was dragged to `(x, y)` (screen DIP):
     /// "Responsive" takes the new size, and the bar shows it. Let go, the
     /// scale held during the drag is free again.
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
     pub(crate) fn device_handle(
         &self,
         id: ContentId,
@@ -584,6 +674,10 @@ wrap_window_delegate! {
             window.add_child_view(Some(&mut v));
             #[cfg(target_os = "macos")]
             crate::mac::pin_window(window.window_handle());
+            // A plain bar: Windows neither rounds it nor draws a line
+            // around it.
+            #[cfg(target_os = "windows")]
+            crate::win::square_window(window.window_handle());
             let engine = Engine::global();
             let shown = {
                 let mut inner = engine.lock();

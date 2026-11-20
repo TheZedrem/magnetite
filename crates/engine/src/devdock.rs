@@ -10,7 +10,7 @@ use cef::*;
 use serde::{Deserialize, Serialize};
 
 use crate::engine::Engine;
-use crate::events::{ContentId, DevToolsAction, DividerAction, EngineEvent};
+use crate::events::{ContentId, DevPanel, DevToolsAction, DividerAction, EngineEvent};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -59,6 +59,8 @@ pub(crate) struct DockedDevTools {
     pub shown: bool,
     /// Device mode (`device.rs`), while on.
     pub device: Option<crate::device::DeviceMode>,
+    /// The element picker of these `DevTools` is on (`devtools_menu.js`).
+    pub inspecting: bool,
     pub browser_id: Option<i32>,
     /// A separate window, not docked beside the page.
     pub separate: bool,
@@ -119,6 +121,22 @@ impl Engine {
         if let Some(host) = self.content_browser_host(id) {
             let mut client = crate::client::MagnetiteClient::devtools();
             host.show_dev_tools(None, Some(&mut client), None, at);
+        }
+    }
+
+    /// Open page `id`'s `DevTools` on `panel` (they open if they are not),
+    /// or start their element picker.
+    pub fn content_show_panel(&self, id: ContentId, panel: DevPanel) {
+        let view = self.lock().docked.get(&id).map(|d| d.view.clone());
+        if let Some(view) = view.filter(|_| self.content_has_devtools(id)) {
+            show_panel(&view, panel);
+            if let Some(b) = view.browser().and_then(|b| b.host()) {
+                b.set_focus(1);
+            }
+        } else {
+            // Shown once their page has loaded (`devtools_loaded`).
+            self.lock().pending_panels.insert(id, panel);
+            self.content_show_devtools(id);
         }
     }
 
@@ -185,6 +203,10 @@ impl Engine {
         if let (Some(view), Some(frame)) = (view, browser.main_frame()) {
             frame.execute_java_script(Some(&CefString::from(MENU_JS)), None, 0);
             tell_dock(&view, dock);
+            let panel = owner.and_then(|id| self.lock().pending_panels.remove(&id));
+            if let Some(panel) = panel {
+                show_panel(&view, panel);
+            }
         }
     }
 
@@ -199,6 +221,16 @@ impl Engine {
         if choice == "device" {
             if let Some(id) = id {
                 self.toggle_device(id);
+            }
+            return true;
+        }
+        if let Some(on) = match choice {
+            "inspect-on" => Some(true),
+            "inspect-off" => Some(false),
+            _ => None,
+        } {
+            if let Some(id) = id {
+                self.device_inspecting(id, on);
             }
             return true;
         }
@@ -278,8 +310,9 @@ impl Engine {
     /// The divider beside page `id`'s docked `DevTools` was dragged to
     /// `pos` (screen DIP along the dock's axis), let go or double-clicked
     /// (back to the default size). Let go, the app keeps the size.
-    // The divider is a native view on macOS only (`mac/chrome.rs`).
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    // The divider is a native window on macOS (`mac/chrome.rs`) and
+    // Windows (`win/dividers.rs`).
+    #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
     pub(crate) fn devtools_divider(&self, id: ContentId, action: DividerAction) {
         let (slot, dock) = {
             let inner = self.lock();
@@ -361,9 +394,14 @@ impl Engine {
         let page = self.device_rect(id, page);
         if let Some(w) = window {
             w.set_bounds(Some(&page));
+            // The rounded cut does not follow the new size.
+            #[cfg(target_os = "windows")]
+            crate::win::clip_page(w.window_handle());
         }
         if let (Some(w), Some((r, _))) = (tools_window, &tools) {
             w.set_bounds(Some(r));
+            #[cfg(target_os = "windows")]
+            crate::win::clip_page(w.window_handle());
         }
         if let Some(d) = self.lock().docked.get_mut(&id) {
             d.gap = tools.map(|(_, gap)| gap);
@@ -413,10 +451,7 @@ impl Engine {
         let (id, separate) = {
             let inner = self.lock();
             let mut target = View::from(source);
-            let page = inner
-                .contents
-                .iter()
-                .find(|(_, c)| View::from(&c.view).is_same(Some(&mut target)) != 0);
+            let page = inner.contents.iter().find(|(_, c)| c.view.is(&mut target));
             // A mini window has no room to dock them: their own window.
             let separate = inner.devtools_dock == DevToolsDock::Window
                 || page.is_some_and(|(_, c)| c.mini.is_some());
@@ -431,6 +466,7 @@ impl Engine {
                 gap: None,
                 shown: false,
                 device: None,
+                inspecting: false,
                 browser_id,
                 separate,
                 view: tools.clone(),
@@ -457,6 +493,27 @@ impl Engine {
 }
 
 /// Tell the `DevTools` menu in `view` which dock choice is current.
+/// Show `panel` in the `DevTools` page in `view`. The frontend takes the
+/// request only once it is up, which is a moment after its page loaded:
+/// asked again until its tabs are there.
+fn show_panel(view: &BrowserView, panel: DevPanel) {
+    let name = panel.frontend_name();
+    let then = if panel == DevPanel::Picker {
+        "DevToolsAPI.enterInspectElementMode();"
+    } else {
+        ""
+    };
+    let js = format!(
+        "(() => {{ let tries = 0; const go = () => {{ \
+           const up = document.querySelector('.tabbed-pane, .main-tabbed-pane, .root-view'); \
+           if (!up || !window.DevToolsAPI) {{ if (++tries < 80) setTimeout(go, 50); return; }} \
+           DevToolsAPI.showPanel('{name}'); {then} }}; go(); }})()"
+    );
+    if let Some(frame) = view.browser().and_then(|b| b.main_frame()) {
+        frame.execute_java_script(Some(&CefString::from(js.as_str())), None, 0);
+    }
+}
+
 fn tell_dock(view: &BrowserView, dock: DevToolsDock) {
     let key = dock.as_str();
     if let Some(frame) = view.browser().and_then(|b| b.main_frame()) {
@@ -518,6 +575,8 @@ wrap_window_delegate! {
                 crate::mac::round_window_corners(window.window_handle(), 10.0, false);
                 crate::mac::pin_window(window.window_handle());
             }
+            #[cfg(target_os = "windows")]
+            crate::win::round_window_corners(window.window_handle(), false);
             if let Some(slot) = slot {
                 engine.place(self.id, &slot);
             }
@@ -568,8 +627,8 @@ wrap_window_delegate! {
         }
         fn is_frameless(&self, _window: Option<&mut Window>) -> ::std::os::raw::c_int { (!self.separate).into() }
         fn with_standard_window_buttons(&self, _window: Option<&mut Window>) -> ::std::os::raw::c_int { self.separate.into() }
-        // Resizable under Wayland, as a page is (content.rs `can_resize`).
-        fn can_resize(&self, _window: Option<&mut Window>) -> ::std::os::raw::c_int { (self.separate || crate::cef_app::wayland()).into() }
+        // Resizable on Linux, as a page is (content.rs `can_resize`).
+        fn can_resize(&self, _window: Option<&mut Window>) -> ::std::os::raw::c_int { (self.separate || cfg!(target_os = "linux")).into() }
         fn can_maximize(&self, _window: Option<&mut Window>) -> ::std::os::raw::c_int { self.separate.into() }
         fn can_minimize(&self, _window: Option<&mut Window>) -> ::std::os::raw::c_int { self.separate.into() }
         fn can_close(&self, _window: Option<&mut Window>) -> ::std::os::raw::c_int { 1 }

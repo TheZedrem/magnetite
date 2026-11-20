@@ -31,6 +31,7 @@ magnetite-sync-proto.workspace = true
 ureq = { version = "3", features = ["json"] }
 semver = "1"
 url = "2"
+sys-locale = "0.3"
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
@@ -40,12 +41,14 @@ base64.workspace = true
 ed25519-dalek.workspace = true
 sha2.workspace = true
 libc = "0.2"
+# Shared links are compressed (already in the build through ureq).
+flate2 = "1"
+# The sync code as a QR code for a phone; the page draws the squares.
+qrcode = { version = "0.15", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 magnetite-sync = { git = "https://github.com/magnetite-browser/magnetite-sync", tag = "v0.1.0" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-# Compressed answers in the sync tests (already in the build through ureq).
-flate2 = "1"
 
 [lints]
 workspace = true

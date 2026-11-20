@@ -7,13 +7,16 @@ use magnetite_core::split::{Bounds, SplitNode};
 
 use crate::client::{Kind, MagnetiteClient};
 use crate::engine::Engine;
+#[cfg(target_os = "macos")]
+use crate::events::DividerAction;
 use crate::events::{ContentId, EngineEvent, Shortcut};
 
 pub(crate) struct ContentState {
     /// The window the page lives in: its frame is the page window's parent.
     pub home: crate::WindowId,
     pub window: Option<Window>,
-    pub view: BrowserView,
+    pub view: PageView,
+    /// The Chromium browser of the page; a system page has none.
     pub browser: Option<Browser>,
     /// Profile id of the page's context (`""` for the default context).
     pub profile: String,
@@ -30,6 +33,33 @@ pub(crate) struct ContentState {
     pub mini: Option<crate::mini::MiniChrome>,
     /// The page began in a mini window and is a tab's now (`mini_to_tab`).
     pub adopted: bool,
+    /// Which making of the page this is. A page that changes its engine
+    /// (`change_engine`) is made again under its id: the window of the
+    /// earlier making knows by this that the page is no longer its own.
+    pub serial: u64,
+}
+
+/// What fills a page's window.
+#[derive(Clone)]
+pub(crate) enum PageView {
+    Chromium(BrowserView),
+    /// A view of the system's engine (`system.rs`), which knows it by the
+    /// page's id.
+    System(ContentId),
+}
+
+impl PageView {
+    /// Whether this is the Chromium view `view`.
+    pub(crate) fn is(&self, view: &mut View) -> bool {
+        matches!(self, Self::Chromium(own) if View::from(own).is_same(Some(view)) != 0)
+    }
+
+    pub(crate) fn request_focus(&self) {
+        match self {
+            Self::Chromium(view) => view.request_focus(),
+            Self::System(id) => crate::system::backend::focus(*id),
+        }
+    }
 }
 
 /// A page asked for while its profile's context was still being made
@@ -42,6 +72,19 @@ pub(crate) struct QueuedContent {
     pub mini: bool,
     /// The window that asked for the page: it lives there.
     pub home: crate::WindowId,
+}
+
+/// The `popup_id` Magnetite's CEF (`extension-tab.patch`) asks with in
+/// `on_before_popup` for a tab an extension opens with `chrome.tabs.create`.
+/// No popup of a page has it.
+pub(crate) const EXTENSION_TAB_POPUP: i32 = -1;
+
+/// A tab an extension asked for, between CEF's question (`on_before_popup`)
+/// and the view of its page, which CEF makes within the same call
+/// (`on_popup_browser_view_created`).
+pub(crate) struct PendingTab {
+    pub url: String,
+    pub background: bool,
 }
 
 /// Space between split pages (and around docked `DevTools`).
@@ -90,6 +133,25 @@ impl Engine {
             id
         };
         crate::trace(&format!("create_content #{id}"));
+        self.make_page(id, url, profile, mini);
+        id
+    }
+
+    /// Make page `id` for `url` in the engine `url` belongs in
+    /// (`system.rs`). A Chromium page whose profile's context is still
+    /// being made waits for it (`context_ready`). A mini window is always
+    /// Chromium's: its row is laid out with a Chromium view.
+    pub(crate) fn make_page(
+        &self,
+        id: ContentId,
+        url: &str,
+        profile: Option<&crate::ContextProfile>,
+        mini: bool,
+    ) {
+        if !mini && self.wants_system(url) {
+            self.build_system_content(id, url, profile);
+            return;
+        }
         let context = self.request_context(profile);
         let waiting = profile.filter(|_| !self.context_is_ready(profile));
         if let Some(profile) = waiting {
@@ -105,7 +167,6 @@ impl Engine {
         } else {
             self.build_content(id, url, profile, context, mini);
         }
-        id
     }
 
     /// Chromium finished making profile `profile`'s context: the pages that
@@ -140,11 +201,12 @@ impl Engine {
 
     /// Put page `id`, whose window was made late, where it was asked to be
     /// while it had none: the peek, in the split on screen, or shown alone.
-    fn show_late(&self, id: ContentId) {
-        let (peek, split, focus, shown) = {
+    pub(crate) fn show_late(&self, id: ContentId) {
+        let (peek, panel, split, focus, shown) = {
             let inner = self.lock();
             (
                 inner.win.peek,
+                inner.win.web_panel,
                 inner.win.split.clone(),
                 inner.win.focused_pane,
                 inner.win.shown,
@@ -152,6 +214,9 @@ impl Engine {
         };
         if peek == Some(id) {
             self.show_peek(id);
+        } else if panel == Some(id) {
+            let width = self.lock().win.web_panel_width;
+            self.show_web_panel(id, width);
         } else if let Some(tree) = split.filter(|t| t.contains(&id)) {
             self.show_split(&tree, focus);
         } else if shown == Some(id) {
@@ -198,12 +263,13 @@ impl Engine {
         };
         // Before the lock below: the row reads the engine's state itself.
         let mini_chrome = if mini { self.mini_chrome(id) } else { None };
+        let serial = self.next_serial();
         self.lock().contents.insert(
             id,
             ContentState {
                 home: self.current_window(),
                 window: None,
-                view: view.clone(),
+                view: PageView::Chromium(view.clone()),
                 browser: None,
                 profile: profile.map(|p| p.id.clone()).unwrap_or_default(),
                 ephemeral: profile.is_some_and(|p| p.ephemeral),
@@ -212,13 +278,84 @@ impl Engine {
                 tab_target: None,
                 mini: mini_chrome,
                 adopted: false,
+                serial,
             },
         );
 
         let bounds = mini.then(|| self.mini_rect());
-        let mut wd = ContentWindowDelegate::new(id, view, bounds);
+        let mut wd = ContentWindowDelegate::new(id, PageView::Chromium(view), bounds, serial);
         window_create_top_level(Some(&mut wd));
         crate::trace(&format!("create_content #{id} window created"));
+    }
+
+    /// CEF asks whether the tab an extension opens for `url`, from the page
+    /// in `opener`, may come to us as a view. True for a page of ours and
+    /// an address to show; the view follows at once (`adopt_extension_tab`).
+    pub(crate) fn expect_extension_tab(
+        &self,
+        opener: Option<&Browser>,
+        url: String,
+        background: bool,
+    ) -> bool {
+        if crate::stray::is_blank(&url) || self.content_id_for(opener).is_none() {
+            return false;
+        }
+        self.lock().pending_tab = Some(PendingTab { url, background });
+        true
+    }
+
+    /// CEF made `view` for the tab an extension opened from the page in
+    /// `source`: it becomes a page of ours in a window of its own (hidden),
+    /// in `source`'s profile, as `build_content` makes one. The extension
+    /// holds this very tab, so nothing is loaded a second time and the id
+    /// it got stays good. CEF needs the view in a window before this
+    /// returns. False if no such tab is expected, or `source` is no page
+    /// of ours any more: CEF then gives the view a window of its own.
+    pub(crate) fn adopt_extension_tab(&self, source: &BrowserView, view: &BrowserView) -> bool {
+        let (tab, opener, id) = {
+            let mut inner = self.lock();
+            let Some(tab) = inner.pending_tab.take() else {
+                return false;
+            };
+            let mut target = View::from(source);
+            let opener = (inner.contents.values())
+                .find(|c| c.view.is(&mut target))
+                .map(|c| (c.profile.clone(), c.ephemeral));
+            let id = inner.next_id;
+            inner.next_id += 1;
+            (tab, opener, id)
+        };
+        let Some((profile, ephemeral)) = opener else {
+            return false;
+        };
+        crate::trace(&format!("extension tab: content #{id}"));
+        let serial = self.next_serial();
+        self.lock().contents.insert(
+            id,
+            ContentState {
+                home: self.current_window(),
+                window: None,
+                view: PageView::Chromium(view.clone()),
+                browser: None,
+                profile: profile.clone(),
+                ephemeral,
+                devtools: None,
+                slot: None,
+                tab_target: None,
+                mini: None,
+                adopted: false,
+                serial,
+            },
+        );
+        let mut wd = ContentWindowDelegate::new(id, PageView::Chromium(view.clone()), None, serial);
+        window_create_top_level(Some(&mut wd));
+        self.emit(EngineEvent::ExtensionTabOpened {
+            id,
+            url: tab.url,
+            background: tab.background,
+            context: profile,
+        });
+        true
     }
 
     /// The frame of the window page `id` lives in: the parent of the page's
@@ -328,6 +465,7 @@ impl Engine {
     pub fn show_content(&self, id: ContentId) {
         self.bring_home(id);
         self.end_peek_if(|p| p == id);
+        self.end_web_panel_if(|p| p == id);
         {
             let mut inner = self.lock();
             inner.win.split = None;
@@ -349,6 +487,7 @@ impl Engine {
         #[cfg(target_os = "macos")]
         crate::mac::hide_status_pill();
         view.request_focus();
+        self.raise_web_panel();
         self.raise_peek();
     }
 
@@ -358,6 +497,7 @@ impl Engine {
             self.bring_home(id);
         }
         self.end_peek_if(|p| tree.contains(&p));
+        self.end_web_panel_if(|p| tree.contains(&p));
         {
             let mut inner = self.lock();
             inner.win.split = Some(tree.clone());
@@ -381,6 +521,7 @@ impl Engine {
         if let Some((_, view)) = focus.and_then(|f| self.content_handles(f)) {
             view.request_focus();
         }
+        self.raise_web_panel();
         self.raise_peek();
     }
 
@@ -460,7 +601,15 @@ impl Engine {
             &self.content_rect(),
             &window.bounds(),
         );
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(target_os = "windows")]
+        crate::win::show_peek_backdrop(
+            frame.window_handle(),
+            window.window_handle(),
+            // Windows places its windows in pixels.
+            &display_convert_screen_rect_to_pixels(Some(&self.content_rect())),
+            &display_convert_screen_rect_to_pixels(Some(&window.bounds())),
+        );
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         let _ = (frame, window);
     }
 
@@ -478,13 +627,194 @@ impl Engine {
         #[cfg(target_os = "macos")]
         if ended {
             crate::mac::hide_peek_backdrop();
+            // A web panel's close button, gone under the peek, is back.
+            self.show_dividers();
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(target_os = "windows")]
+        if ended {
+            crate::win::hide_peek_backdrop();
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         let _ = ended;
     }
 
     pub fn peek_content(&self) -> Option<ContentId> {
         self.lock().win.peek
+    }
+
+    /// The page shown as the current window's web panel.
+    pub fn web_panel_content(&self) -> Option<ContentId> {
+        self.lock().win.web_panel
+    }
+
+    /// Whether the keyboard is in the current window's web panel.
+    pub fn web_panel_focused(&self) -> bool {
+        // Its own statement: `content_handles` locks again.
+        let panel = self.lock().win.web_panel;
+        panel
+            .and_then(|id| self.content_handles(id))
+            .is_some_and(|(window, _)| window.is_active() != 0)
+    }
+
+    /// Show `id` as the window's web panel: over the pages, at the
+    /// sidebar's edge of the page area, `width` points wide (none: the
+    /// usual width), with the keyboard. The panel shown until now is
+    /// hidden and stays loaded. It stays through tab and space changes,
+    /// until `hide_content`/`close_content`.
+    pub fn show_web_panel(&self, id: ContentId, width: Option<u32>) {
+        self.bring_home(id);
+        let before = {
+            let mut inner = self.lock();
+            let before = inner.win.web_panel.replace(id);
+            inner.win.web_panel_width = width;
+            before.filter(|b| *b != id)
+        };
+        // The panel shown until now goes once this one is over it (at the
+        // end): the page area does not show through between the two, unless
+        // this one has no window yet.
+        let hide_before = || {
+            let Some(before) = before else { return };
+            // As a page again it has no shadow.
+            #[cfg(target_os = "macos")]
+            if let Some((window, _)) = self.content_handles(before) {
+                crate::mac::round_window_corners(window.window_handle(), 10.0, false);
+            }
+            self.hide_here(before);
+        };
+        let Some((window, view)) = self.content_handles(id) else {
+            hide_before();
+            return;
+        };
+        if WEB_PANEL_DOCKED {
+            // The pages make room beside it.
+            self.dock_web_panel();
+        } else {
+            self.place(id, &web_panel_rect(&self.page_area(), width));
+        }
+        // A shadow sets it off from the page it lies on.
+        #[cfg(target_os = "macos")]
+        crate::mac::round_window_corners(window.window_handle(), 10.0, true);
+        window.show();
+        self.keep_attached(id, &window);
+        window.bring_to_top();
+        // Its docked DevTools, and with them the dividers
+        // (`show_dividers`): the grip at its edge among them.
+        self.show_docked(id, true);
+        hide_before();
+        view.request_focus();
+        self.raise_peek();
+    }
+
+    /// Pages were raised (`show_content`, `show_split`): an open web panel
+    /// goes back above them, and its grip with it. The keyboard stays
+    /// where it is.
+    fn raise_web_panel(&self) {
+        // Its own statement: `content_handles` locks again.
+        let panel = self.lock().win.web_panel;
+        let Some(id) = panel else { return };
+        if let Some((window, _)) = self.content_handles(id) {
+            window.bring_to_top();
+            // Its docked DevTools, and with them the dividers
+            // (`show_dividers`): the grip at its edge among them.
+            self.show_docked(id, true);
+        }
+    }
+
+    /// The dividers were put above everything (`show_dividers`): the web
+    /// panel goes above them again, so that only its own grip, which lies
+    /// beside it, is in reach. Not under a peek, which is above them all.
+    pub(crate) fn web_panel_above_dividers(&self) {
+        let panel = {
+            let inner = self.lock();
+            inner.win.web_panel.filter(|_| inner.win.peek.is_none())
+        };
+        let Some(id) = panel else { return };
+        // Only the window: `show_docked` shows the dividers, and so comes
+        // back here.
+        if let Some((window, _)) = self.content_handles(id) {
+            window.bring_to_top();
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    /// Where the open web panel lies over the pages, once it has a window
+    /// (a page waiting for its profile has none yet).
+    pub(crate) fn web_panel_bounds(&self) -> Option<Rect> {
+        let width = {
+            let inner = self.lock();
+            let panel = inner.win.web_panel?;
+            inner.contents.get(&panel)?.window.as_ref()?;
+            inner.win.web_panel_width
+        };
+        Some(web_panel_rect(&self.page_area(), width))
+    }
+
+    #[cfg(target_os = "macos")]
+    /// The grip at the web panel's edge was dragged to screen position
+    /// `Move` (the panel follows), let go or double-clicked (the usual
+    /// width again).
+    pub(crate) fn web_panel_divider(&self, action: DividerAction) {
+        let area = self.page_area();
+        match action {
+            // The pointer stays in the middle of the grip.
+            DividerAction::Move(pos) => {
+                let wanted = pos - area.x - WEB_PANEL_GRIP / 2;
+                self.resize_web_panel(u32::try_from(wanted.max(0)).ok(), false);
+            }
+            DividerAction::Equalize => self.resize_web_panel(None, true),
+            DividerAction::Release => {
+                let width = self.lock().win.web_panel_width;
+                self.resize_web_panel(width, true);
+            }
+        }
+    }
+
+    /// Make the open web panel `width` points wide, as far as its bounds
+    /// allow (none: the usual width). `done` ends a drag: the width is
+    /// reported, to be kept.
+    pub fn resize_web_panel(&self, width: Option<u32>, done: bool) {
+        let Some(id) = self.lock().win.web_panel else {
+            return;
+        };
+        let area = self.page_area();
+        // What it comes to within the bounds, so a drag past them does not
+        // leave a width to drag back from.
+        let width = width.and_then(|w| u32::try_from(web_panel_rect(&area, Some(w)).width).ok());
+        self.lock().win.web_panel_width = width;
+        if WEB_PANEL_DOCKED {
+            self.dock_web_panel();
+        } else {
+            self.place(id, &web_panel_rect(&area, width));
+            self.show_dividers();
+        }
+        if done {
+            self.emit(EngineEvent::WebPanelResized { id, width });
+        }
+    }
+
+    /// The web panel's page stops being one (closed, hidden, or shown as a
+    /// tab) when `ends` says so for it: it is a plain page window again.
+    fn end_web_panel_if(&self, ends: impl FnOnce(ContentId) -> bool) {
+        let ended = {
+            let mut inner = self.lock();
+            let ended = inner.win.web_panel.filter(|p| ends(*p));
+            if ended.is_some() {
+                inner.win.web_panel = None;
+            }
+            ended
+        };
+        #[cfg(target_os = "macos")]
+        if let Some((window, _)) = ended.and_then(|id| self.content_handles(id)) {
+            crate::mac::round_window_corners(window.window_handle(), 10.0, false);
+        }
+        if ended.is_some() {
+            // Its grip goes with it.
+            self.show_dividers();
+            if WEB_PANEL_DOCKED {
+                // The pages take its room again.
+                self.dock_web_panel();
+            }
+        }
     }
 
     /// Hide page `id` in the window it lives in.
@@ -494,6 +824,7 @@ impl Engine {
 
     fn hide_here(&self, id: ContentId) {
         self.end_peek_if(|p| p == id);
+        self.end_web_panel_if(|p| p == id);
         // A split that loses a page is no longer on screen.
         let was_split = {
             let mut inner = self.lock();
@@ -544,13 +875,23 @@ impl Engine {
     fn forget_content(&self, id: ContentId) -> bool {
         // A page can close itself (`window.close()`) while it is the peek.
         self.at_home(id, || self.end_peek_if(|p| p == id));
-        let state = {
+        // The window it was the web panel of.
+        let mut panel_of = None;
+        let (home, state, shares) = {
             let mut inner = self.lock();
+            let shares = inner.shares.forget(id);
             inner.permission_requests.remove(&id);
             inner.locks.remove(&id);
             inner.muted.remove(&id);
+            inner.mobile.remove(&id);
             let home = inner.home_of(id);
             if let Some(w) = inner.window_mut(home) {
+                if w.web_panel == Some(id) {
+                    w.web_panel = None;
+                    panel_of = Some(home);
+                }
+                // Its window took the close button over it along.
+                w.panel_close.take_if(|(host, _)| *host == id);
                 if w.focused_pane == Some(id) {
                     w.focused_pane = None;
                 }
@@ -558,14 +899,38 @@ impl Engine {
                     w.shown = None;
                 }
             }
-            inner.contents.remove(&id)
+            (home, inner.contents.remove(&id), shares)
         };
+        if let Some(home) = panel_of {
+            // A panel that closed itself: its grip and button go with it,
+            // and beside a docked one the pages take its room again.
+            self.in_window(home, || {
+                self.show_dividers();
+                if WEB_PANEL_DOCKED {
+                    self.dock_web_panel();
+                }
+            });
+        }
+        if matches!(&state, Some(c) if matches!(c.view, PageView::System(_))) {
+            crate::system::backend::close(id);
+        }
+        // Its shadow goes with it, in the window it lived in.
+        self.in_window(home, || self.update_page_shadows());
+        // The tabs this page shared are no longer shared.
+        self.emit_shares(shares);
         crate::devtools::page_closed(id);
         state.is_some()
     }
 
     pub fn content_load_url(&self, id: ContentId, url: &str) {
-        if let Some(frame) = self.content_browser(id).and_then(|b| b.main_frame()) {
+        // An address for the other engine: the page changes engine. A page
+        // without a window yet is made for the address it has by then.
+        let system = self.is_system_page(id);
+        if self.page_window(id).is_some() && !self.is_mini(id) && system != self.wants_system(url) {
+            self.change_engine(id, url);
+        } else if system {
+            crate::system::backend::load(id, url);
+        } else if let Some(frame) = self.content_browser(id).and_then(|b| b.main_frame()) {
             frame.load_url(Some(&CefString::from(url)));
         } else if let Some(page) = self.lock().queued.iter_mut().find(|q| q.id == id) {
             // No window yet: it starts with this address.
@@ -574,17 +939,23 @@ impl Engine {
     }
 
     pub fn content_go_back(&self, id: ContentId) {
-        if let Some(b) = self.content_browser(id) {
+        if self.is_system_page(id) {
+            crate::system::backend::go_back(id);
+        } else if let Some(b) = self.content_browser(id) {
             b.go_back();
         }
     }
     pub fn content_go_forward(&self, id: ContentId) {
-        if let Some(b) = self.content_browser(id) {
+        if self.is_system_page(id) {
+            crate::system::backend::go_forward(id);
+        } else if let Some(b) = self.content_browser(id) {
             b.go_forward();
         }
     }
     pub fn content_reload(&self, id: ContentId) {
-        if let Some(b) = self.content_browser(id) {
+        if self.is_system_page(id) {
+            crate::system::backend::reload(id);
+        } else if let Some(b) = self.content_browser(id) {
             b.reload();
         }
     }
@@ -613,7 +984,9 @@ impl Engine {
         }
     }
     pub fn content_stop(&self, id: ContentId) {
-        if let Some(b) = self.content_browser(id) {
+        if self.is_system_page(id) {
+            crate::system::backend::stop(id);
+        } else if let Some(b) = self.content_browser(id) {
             b.stop_load();
         }
     }
@@ -663,7 +1036,13 @@ impl Engine {
         for (window, ring) in pages {
             crate::mac::set_focus_ring(window.window_handle(), ring.then_some(accent));
         }
-        #[cfg(not(target_os = "macos"))]
+        // One outline at most, a window of its own above the focused page.
+        #[cfg(target_os = "windows")]
+        {
+            let focused = pages.iter().find(|(_, ring)| *ring);
+            crate::win::set_focus_ring(focused.map(|(window, _)| window.window_handle()), accent);
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         let _ = (pages, accent);
     }
 
@@ -701,7 +1080,12 @@ impl Engine {
         }
     }
 
-    fn content_handles(&self, id: ContentId) -> Option<(Window, BrowserView)> {
+    /// The window page `id` is in, once it has one.
+    pub(crate) fn page_window(&self, id: ContentId) -> Option<Window> {
+        self.lock().contents.get(&id)?.window.clone()
+    }
+
+    fn content_handles(&self, id: ContentId) -> Option<(Window, PageView)> {
         let inner = self.lock();
         let c = inner.contents.get(&id)?;
         Some((c.window.clone()?, c.view.clone()))
@@ -756,6 +1140,10 @@ impl Engine {
                             f.top_bar_browser = Some(browser);
                             return;
                         }
+                        Some(f) if matches!(&f.dev_bar_view, Some(v) if is(v)) => {
+                            f.dev_bar_browser = Some(browser);
+                            return;
+                        }
                         Some(_) => {}
                         None => unbuilt = Some(w),
                     }
@@ -778,7 +1166,7 @@ impl Engine {
                     let mut inner = self.lock();
                     let mut target = View::from(&view);
                     for (id, c) in &mut inner.contents {
-                        if View::from(&c.view).is_same(Some(&mut target)) != 0 {
+                        if c.view.is(&mut target) {
                             c.browser = Some(browser.clone());
                             matched = Some(*id);
                             break;
@@ -790,6 +1178,10 @@ impl Engine {
                     {
                         host.set_audio_muted(1);
                     }
+                }
+                // Asked to be shown as on a phone before it had a browser.
+                if let Some(id) = matched.filter(|id| self.lock().mobile.contains(id)) {
+                    self.apply_mobile_view(id, true);
                 }
                 match matched {
                     Some(id) => self.emit(EngineEvent::ContentCreated { id }),
@@ -850,7 +1242,14 @@ wrap_browser_view_delegate! {
             _client: Option<&mut Client>,
             is_devtools: ::std::os::raw::c_int,
         ) -> Option<BrowserViewDelegate> {
-            (is_devtools != 0).then(crate::devdock::DevToolsViewDelegate::new)
+            if is_devtools != 0 {
+                return Some(crate::devdock::DevToolsViewDelegate::new());
+            }
+            // An extension's tab becomes a page like this one; a page's
+            // popup window keeps CEF's default view.
+            let engine = Engine::global();
+            let tab = engine.lock().pending_tab.is_some();
+            tab.then(|| ContentViewDelegate::new(engine.chrome_toolbar()))
         }
         fn on_popup_browser_view_created(
             &self,
@@ -859,10 +1258,12 @@ wrap_browser_view_delegate! {
             is_devtools: ::std::os::raw::c_int,
         ) -> ::std::os::raw::c_int {
             // DevTools dock beside the page unless the user wants Chromium's
-            // own window. A page's popup window (the only other popup that
-            // gets here, see on_before_popup) gets CEF's default window.
+            // own window. An extension's tab becomes a page of ours. A
+            // page's popup window (the only other popup that gets here, see
+            // on_before_popup) gets CEF's default window.
             match (is_devtools != 0, browser_view, popup_browser_view) {
                 (true, Some(source), Some(tools)) => i32::from(Engine::global().dock_devtools(source, tools)),
+                (false, Some(source), Some(tab)) => i32::from(Engine::global().adopt_extension_tab(source, tab)),
                 _ => 0,
             }
         }
@@ -870,11 +1271,13 @@ wrap_browser_view_delegate! {
 }
 
 wrap_window_delegate! {
-    struct ContentWindowDelegate {
+    pub(crate) struct ContentWindowDelegate {
         id: ContentId,
-        view: BrowserView,
+        view: PageView,
         // Where a mini window opens; `None` for a tab's page window.
         mini: Option<Rect>,
+        // The making of the page this window belongs to (`ContentState`).
+        serial: u64,
     }
     impl ViewDelegate {}
     impl PanelDelegate {}
@@ -886,11 +1289,18 @@ wrap_window_delegate! {
             let layout = window
                 .set_to_box_layout(Some(&BoxLayoutSettings { horizontal: 0, cross_axis_alignment: AxisAlignment::STRETCH, ..Default::default() }))
                 .expect("content layout");
-            let mut v = View::from(&self.view);
-            window.add_child_view(Some(&mut v));
-            layout.set_flex_for_view(Some(&mut v), 1);
-            crate::trace(&format!("content window #{} view added", self.id));
             let engine = Engine::global();
+            match &self.view {
+                PageView::Chromium(view) => {
+                    let mut v = View::from(view);
+                    window.add_child_view(Some(&mut v));
+                    layout.set_flex_for_view(Some(&mut v), 1);
+                }
+                // No view of CEF's: the system's own is laid over the
+                // window below, once the window has its corners.
+                PageView::System(_) => {}
+            }
+            crate::trace(&format!("content window #{} view added", self.id));
             let row = {
                 let mut inner = engine.lock();
                 let c = inner.contents.get_mut(&self.id);
@@ -906,9 +1316,12 @@ wrap_window_delegate! {
                 if let Some(row) = row {
                     window.add_child_view_at(Some(&mut View::from(&row)), 0);
                 }
+                crate::mini::colour_window(window);
                 window.set_bounds(Some(bounds));
                 #[cfg(target_os = "macos")]
                 crate::mac::round_window_corners(window.window_handle(), 10.0, true);
+                #[cfg(target_os = "windows")]
+                crate::win::round_window_corners(window.window_handle(), true);
                 window.show();
                 window.activate();
                 self.view.request_focus();
@@ -918,14 +1331,24 @@ wrap_window_delegate! {
             window.set_bounds(Some(&engine.content_rect()));
             #[cfg(target_os = "macos")]
             crate::mac::round_window_corners(window.window_handle(), 10.0, false);
+            #[cfg(target_os = "windows")]
+            crate::win::round_window_corners(window.window_handle(), false);
             #[cfg(target_os = "macos")]
             crate::mac::pin_window(window.window_handle());
+            if let PageView::System(id) = &self.view {
+                crate::system::backend::attach(*id, window.window_handle());
+            }
             window.show();
             window.hide();
         }
         fn on_window_destroyed(&self, _window: Option<&mut Window>) {
             let engine = Engine::global();
-            if engine.forget_content(self.id) {
+            // Only the page this window was made for. One that changed its
+            // engine lives on in another window, or waits for its profile's
+            // context without any state: what the engine keeps for it
+            // (lock, mute, its place on screen) stays.
+            let own = (engine.lock().contents.get(&self.id)).is_some_and(|c| c.serial == self.serial);
+            if own && engine.forget_content(self.id) {
                 engine.emit(EngineEvent::ContentClosed { id: self.id });
             }
         }
@@ -943,27 +1366,40 @@ wrap_window_delegate! {
             // `window-reparent.patch`): a page moves with its answer.
             Engine::global().home_frame(self.id)
         }
+        // A theme change resets the colours of a mini window's address field.
+        fn on_theme_colors_changed(&self, window: Option<&mut Window>, _chrome_theme: ::std::os::raw::c_int) {
+            if let (Some(_), Some(window)) = (&self.mini, window) {
+                crate::mini::colour_window(window);
+            }
+        }
         fn initial_bounds(&self, _window: Option<&mut Window>) -> Rect {
             self.mini.clone().unwrap_or_else(|| Engine::global().content_rect())
         }
         // On Linux CEF gives a window that cannot resize its first size as
-        // its minimum and maximum, which Chromium's Wayland backend enforces
-        // on every later set_bounds: a page would keep its first size. A
-        // subsurface has no resize handles anyway.
-        fn can_resize(&self, _window: Option<&mut Window>) -> ::std::os::raw::c_int { (self.mini.is_some() || crate::cef_app::wayland()).into() }
+        // its minimum and maximum. Chromium's Wayland backend enforces them
+        // on every later set_bounds, and under X11 the window manager does
+        // (they are the window's size hints): a page would keep its first
+        // size, in a split and as a web panel too. A frameless child window
+        // has no resize handles anyway.
+        fn can_resize(&self, _window: Option<&mut Window>) -> ::std::os::raw::c_int { (self.mini.is_some() || cfg!(target_os = "linux")).into() }
         fn can_minimize(&self, _window: Option<&mut Window>) -> ::std::os::raw::c_int { self.mini.is_some().into() }
         fn is_frameless(&self, _window: Option<&mut Window>) -> ::std::os::raw::c_int { 1 }
         fn with_standard_window_buttons(&self, _window: Option<&mut Window>) -> ::std::os::raw::c_int { 0 }
         fn can_close(&self, _window: Option<&mut Window>) -> ::std::os::raw::c_int { 1 }
         fn on_key_event(&self, _window: Option<&mut Window>, event: Option<&KeyEvent>) -> ::std::os::raw::c_int {
-            let Some(shortcut) = event.and_then(|e| crate::keys::shortcut_for_key(e).or_else(|| crate::keys::yieldable_shortcut(e))) else { return 0 };
+            let Some(shortcut) = event.and_then(crate::keys::any_shortcut) else { return 0 };
             Engine::global().emit(EngineEvent::Shortcut { from: Some(self.id), shortcut });
             1
         }
         // Not key, yet clickable at once: the first press is a real click
         // (macOS would otherwise spend it on activating the window).
         fn accepts_first_mouse(&self, _window: Option<&mut Window>) -> State { State::ENABLED }
-        fn window_runtime_style(&self) -> RuntimeStyle { RuntimeStyle::CHROME }
+        fn window_runtime_style(&self) -> RuntimeStyle {
+            match self.view {
+                PageView::Chromium(_) => RuntimeStyle::CHROME,
+                PageView::System(_) => RuntimeStyle::ALLOY,
+            }
+        }
         // Mini windows are windows of their own on the desktop.
         fn linux_window_properties(&self, _window: Option<&mut Window>, properties: Option<&mut LinuxWindowProperties>) -> ::std::os::raw::c_int {
             crate::frame::set_linux_window_properties(properties)
@@ -971,10 +1407,66 @@ wrap_window_delegate! {
     }
 }
 
+/// The usual width of a web panel: about a phone's, which most sites lay
+/// out for.
+const WEB_PANEL_WIDTH: i32 = 420;
+/// The narrowest a web panel is dragged to.
+const WEB_PANEL_MIN: i32 = 280;
+/// The least of the page behind a web panel that stays in sight.
+const WEB_PANEL_REST: i32 = 80;
+/// Width of the grip beside a web panel's edge.
+#[cfg(target_os = "macos")]
+const WEB_PANEL_GRIP: i32 = 8;
+/// Where the grip to resize web panel `panel` lies: a strip beside its far
+/// edge, over the page.
+#[cfg(target_os = "macos")]
+pub(crate) fn web_panel_grip(panel: &Rect) -> Rect {
+    Rect {
+        x: panel.x + panel.width,
+        width: WEB_PANEL_GRIP,
+        ..panel.clone()
+    }
+}
+
+/// Whether a web panel sits beside the pages, which make room for it,
+/// instead of lying over them. Outside macOS page windows are windows of
+/// their own to the window manager, which orders them by its own rules (a
+/// page that is shown or clicked comes to the top): a panel over a page
+/// would end up behind it.
+pub(crate) const WEB_PANEL_DOCKED: bool = !cfg!(target_os = "macos");
+
+/// A web panel's place: the full height of the content area, at the edge
+/// the sidebar is on, `width` points wide (none: the usual width) as far
+/// as the area has the room.
+pub(crate) fn web_panel_rect(area: &Rect, width: Option<u32>) -> Rect {
+    let width = width.map_or(WEB_PANEL_WIDTH, |w| i32::try_from(w).unwrap_or(i32::MAX));
+    Rect {
+        width: (width.max(WEB_PANEL_MIN))
+            .min(area.width - WEB_PANEL_REST)
+            .max(1),
+        ..area.clone()
+    }
+}
+
+/// What a docked web panel, `width` points wide (none: the usual width),
+/// leaves of `area` for the pages: the rest beyond the panel and a gap,
+/// where the grip to resize it is (`Empty.tsx`).
+pub(crate) fn beside_web_panel(area: &Rect, width: Option<u32>) -> Rect {
+    let taken = web_panel_rect(area, width).width + SPLIT_GAP;
+    Rect {
+        x: area.x + taken,
+        width: (area.width - taken).max(1),
+        ..area.clone()
+    }
+}
+
 /// 86% of the content area, centred.
 pub(crate) fn peek_rect(area: &Rect) -> Rect {
     // Room on both sides for the peek's button column (mac::show_peek_backdrop).
-    let w = (area.width * 86 / 100).min(area.width - 2 * 52);
+    // In a narrow area (beside a wide docked web panel) it keeps half of it.
+    let w = (area.width * 86 / 100)
+        .min(area.width - 2 * 52)
+        .max(area.width / 2);
     let h = area.height * 90 / 100;
     Rect {
         x: area.x + (area.width - w) / 2,
@@ -1068,6 +1560,22 @@ fn attach_toolbar(view: &BrowserView, shown: bool) {
         ..Default::default()
     }));
     holder.add_child_view(Some(&mut toolbar));
+    // The row would show as a line along the page's top edge (white on
+    // Windows): the window's box starts one point higher, so the row sits
+    // just above the window and the page fills it from its first row.
+    if let Some(layout) = window.set_to_box_layout(Some(&BoxLayoutSettings {
+        horizontal: 0,
+        cross_axis_alignment: AxisAlignment::STRETCH,
+        inside_border_insets: Insets {
+            top: -1,
+            left: 0,
+            bottom: 0,
+            right: 0,
+        },
+        ..Default::default()
+    })) {
+        layout.set_flex_for_view(Some(&mut View::from(view)), 1);
+    }
     window.layout();
 }
 
@@ -1083,4 +1591,60 @@ wrap_panel_delegate! {
         }
     }
     impl PanelDelegate {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_peek_fits_a_narrow_area() {
+        let width = |width| {
+            let area = Rect {
+                x: 0,
+                y: 0,
+                width,
+                height: 800,
+            };
+            peek_rect(&area).width
+        };
+        assert_eq!(width(1000), 860);
+        assert_eq!(width(400), 296);
+        assert_eq!(width(72), 36);
+    }
+
+    #[test]
+    fn a_web_panel_keeps_to_its_bounds() {
+        let area = |width| Rect {
+            x: 200,
+            y: 10,
+            width,
+            height: 800,
+        };
+        let width = |area_width, asked| web_panel_rect(&area(area_width), asked).width;
+        assert_eq!(width(1000, None), WEB_PANEL_WIDTH);
+        assert_eq!(width(1000, Some(600)), 600);
+        // Not narrower than a page can be used at, …
+        assert_eq!(width(1000, Some(10)), WEB_PANEL_MIN);
+        // … and some of the page behind stays in sight.
+        assert_eq!(width(1000, Some(5000)), 1000 - WEB_PANEL_REST);
+        assert_eq!(width(300, None), 300 - WEB_PANEL_REST);
+        assert_eq!(web_panel_rect(&area(1000), None).x, 200);
+    }
+
+    #[test]
+    fn pages_get_the_rest_beside_a_docked_web_panel() {
+        let area = Rect {
+            x: 200,
+            y: 10,
+            width: 1000,
+            height: 800,
+        };
+        let rest = beside_web_panel(&area, Some(500));
+        assert_eq!(
+            (rest.x, rest.width),
+            (200 + 500 + SPLIT_GAP, 500 - SPLIT_GAP)
+        );
+        assert_eq!((rest.y, rest.height), (10, 800));
+    }
 }

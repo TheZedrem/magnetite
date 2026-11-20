@@ -8,7 +8,7 @@ import { Favicon } from "./Favicon";
 import { BracesIcon, CaptureIcon, CodeIcon, Minus, Plus, ShareIcon, Speaker, SpeakerOff } from "./Icons";
 import { Switch } from "./settings/fields";
 import { keysHint, keysLabel } from "./settings/shortcutKeys";
-import { findTabInSpace, hostOf, onSiteDataCleared, send, ZOOM_STEPS, type ClearReport, type PermissionKind, type PermissionRow, type PermissionValue, type TabItem, type TabRuntime, type UiState } from "./bridge";
+import { findTabInSpace, hostOf, IS_MAC, onSiteDataCleared, send, ZOOM_STEPS, type ClearReport, type PermissionKind, type PermissionRow, type PermissionValue, type Reply, type TabItem, type TabRuntime, type UiState } from "./bridge";
 
 const PERMISSION_LABEL: Record<PermissionKind, string> = {
   camera: "Camera",
@@ -35,6 +35,64 @@ function BlockAds({ url }: { url: string }) {
       <span className="flex-1">Block ads</span>
       <Switch label="Block ads on this site" checked={ads.blocking} onChange={set} />
     </label>
+  );
+}
+
+/** Who gets the keys of Magnetite's shortcuts first on this site: a web app with shortcuts of its own can have them all (Settings → Shortcuts). */
+function SiteShortcuts({ url, saved }: { url: string; saved: string[] }) {
+  const [keys, setKeys] = useState<Reply<"site_shortcuts"> | null>(null);
+  // Asked again when the saved sites change (Settings, sync) while the panel is open.
+  const savedSites = saved.join(" ");
+  useEffect(() => {
+    void send({ cmd: "site_shortcuts", url }).then(setKeys);
+  }, [url, savedSites]);
+  if (!keys?.site) return null;
+  const set = (page_first: boolean) => {
+    setKeys({ ...keys, page_first });
+    send({ cmd: "set_site_shortcuts", url, page_first });
+  };
+  return (
+    <label className="panel-row" title={`For all of ${keys.site}: the site may use the keys of Magnetite's shortcuts itself, and a shortcut runs only if the site leaves its keys alone. The digits that choose a tab or a space stay Magnetite's.`}>
+      <span className="flex-1">Site's shortcuts first</span>
+      <Switch label="This site gets the keys of shortcuts first" checked={keys.page_first} onChange={set} />
+    </label>
+  );
+}
+
+/** What the app says of the site's engine (`site_engine`). */
+type SiteEngine = Reply<"site_engine">;
+
+/**
+ * Which engine shows this site: Chromium, or the system's own (WebKit on
+ * macOS, WebView2 on Windows), which plays the protected video Chromium is
+ * refused. Not there
+ * where the system has no engine to use. A service that always opens in the
+ * system's engine (Settings → Protected video) has no switch of its own.
+ */
+function SystemEngine({ url }: { url: string }) {
+  const [engine, setEngine] = useState<SiteEngine | null>(null);
+  // Why the app did not take the choice (the list of sites is full).
+  const [refused, setRefused] = useState<string | null>(null);
+  useEffect(() => {
+    void send({ cmd: "site_engine", url }).then(setEngine);
+  }, [url]);
+  if (!engine?.site) return null;
+  const set = (system: boolean) => {
+    setRefused(null);
+    setEngine({ ...engine, system });
+    send({ cmd: "set_site_engine", url, system }).catch((e: unknown) => {
+      setEngine(engine);
+      setRefused(e instanceof Error ? e.message : String(e));
+    });
+  };
+  return (
+    <>
+      <label className="panel-row" title={`For all of ${engine.site}: its pages open in ${engine.name}, ${engine.about}, which plays protected video. No extensions or ad blocking there, and the site asks you to sign in again. The page loads again.`}>
+        <span className="flex-1">Open in {engine.name}</span>
+        {engine.known ? <span className="text-[12px] text-[var(--muted)]">Always, for its video</span> : <Switch label={`Open this site in ${engine.name}`} checked={engine.system} onChange={set} />}
+      </label>
+      {refused && <div className="panel-note" role="alert">{refused}</div>}
+    </>
   );
 }
 
@@ -152,6 +210,30 @@ function connection(item: TabItem, rt: TabRuntime | undefined): { text: string; 
   return { text: "Unavailable" };
 }
 
+/**
+ * "Developer mode": the developer bar, the caution border and the console error count for
+ * this site, as for a page this computer serves (`developer.md`). Adds the
+ * site's host to Settings → Developer → "Also local", or takes it out. A
+ * page this computer serves (`own`) has them anyway.
+ */
+function DevSwitch({ state, url, own }: { state: UiState; url: string; own: boolean }) {
+  const dev = state.settings.developer;
+  // As the app compares it: lower case, without a dot at the end.
+  const host = /^https?:/.test(url) && URL.canParse(url) ? new URL(url).hostname.toLowerCase().replace(/\.$/, "") : "";
+  if (!dev.enabled || !host) return null;
+  const named = dev.hosts.includes(host);
+  // On whatever the switch says: this computer's page, or a name under a
+  // pattern (`*.test`), which taking the host out would not turn off.
+  const always = own ? "Always, on this computer" : dev.hosts.some((h) => h.startsWith("*.") && host.endsWith(h.slice(1))) ? "On for its domain" : null;
+  const set = (checked: boolean) => send({ cmd: "set_settings", settings: { developer: { ...dev, hosts: checked ? [...dev.hosts, host] : dev.hosts.filter((h) => h !== host) } } });
+  return (
+    <label className="panel-row" title="The developer bar, a caution border on the tab and the console error count for this site">
+      <span className="flex-1">Developer mode</span>
+      {always ? <span className="text-[12px] text-[var(--muted)]">{always}</span> : <Switch label="Developer mode" checked={named} onChange={set} />}
+    </label>
+  );
+}
+
 /** `inWindow`: the panel fills a window of its own below the top bar
  * (`TopBarPopup.tsx`), which has the keyboard already. */
 export function SitePanel({ state, item, rt, onClose, inWindow = false }: { state: UiState; item: TabItem; rt: TabRuntime | undefined; onClose: () => void; inWindow?: boolean }) {
@@ -159,8 +241,18 @@ export function SitePanel({ state, item, rt, onClose, inWindow = false }: { stat
   useDismiss(onClose, { takeFocus: !inWindow });
   useEffect(() => box.current?.focus(), []);
   const internal = item.url.startsWith("magnetite://");
+  // The system's engine shows the page: what hooks into Chromium (capture,
+  // developer tools, own CSS, permissions, ad blocking, mute) is not there.
+  const system = rt?.site?.system_engine ?? false;
+  // Its name, for a page it shows.
+  const [engine, setEngine] = useState<SiteEngine | null>(null);
+  useEffect(() => {
+    if (system) void send({ cmd: "site_engine", url: item.url }).then(setEngine);
+  }, [system, item.url]);
   const conn = connection(item, rt);
   const zoom = rt?.site?.zoom ?? 100;
+  // The zoom the site has without one of its own (Settings → Appearance).
+  const baseZoom = rt?.site?.base_zoom || 100;
   const step = (dir: 1 | -1) => {
     const next = dir > 0 ? ZOOM_STEPS.find((z) => z > zoom) : [...ZOOM_STEPS].reverse().find((z) => z < zoom);
     if (next) send({ cmd: "set_zoom", percent: next });
@@ -183,30 +275,33 @@ export function SitePanel({ state, item, rt, onClose, inWindow = false }: { stat
           <div className="min-w-0">
             <div className="truncate font-semibold">{host}</div>
             <div className="truncate text-[12px]" style={{ color: conn.tone === "bad" ? "var(--danger)" : conn.tone === "warn" ? "var(--warn)" : "var(--muted)" }}>
-              {conn.text}{profile && !profile.is_default ? ` · Profile: ${profile.name}` : ""}
+              {conn.text}{system && engine ? ` · ${engine.name}` : ""}{profile && !profile.is_default ? ` · Profile: ${profile.name}` : ""}
             </div>
           </div>
         </div>
 
         <div className="panel-tools">
-          {!internal && (
+          {!internal && !system && (
             <button title={`Capture${keysHint(state.keys, "capture")}`} onClick={() => { send({ cmd: "capture_start" }); onClose(); }}>
               <CaptureIcon width={16} height={16} />
               <span>Capture</span>
               <kbd>{keysLabel(state.keys.capture)}</kbd>
             </button>
           )}
-          <button title="Share" onClick={(e) => { send({ cmd: "share", id: item.id, x: e.clientX, y: e.clientY }); onClose(); }}>
-            <ShareIcon width={16} height={16} />
-            <span>Share</span>
-          </button>
-          {!internal && (
+          {/* The system's share menu: only macOS has one here. */}
+          {IS_MAC && (
+            <button title="Share" onClick={(e) => { send({ cmd: "share", id: item.id, x: e.clientX, y: e.clientY }); onClose(); }}>
+              <ShareIcon width={16} height={16} />
+              <span>Share</span>
+            </button>
+          )}
+          {!internal && !system && (
             <button title={`Your own CSS and JavaScript for ${host}`} onClick={() => { send({ cmd: "new_tab", url: `magnetite://ui/settings#code=${encodeURIComponent(host)}` }); onClose(); }}>
               <BracesIcon width={16} height={16} />
               <span>Custom CSS & JS</span>
             </button>
           )}
-          {!internal && (
+          {!internal && !system && (
             <button title={`Developer tools${keysHint(state.keys, "toggle_dev_tools")}`} onClick={() => { send({ cmd: "toggle_devtools" }); onClose(); }}>
               <CodeIcon width={16} height={16} />
               <span>Developer tools</span>
@@ -217,7 +312,12 @@ export function SitePanel({ state, item, rt, onClose, inWindow = false }: { stat
 
         {/* The rows are one tab's on one site: asked again when another tab comes in front
             while the panel is open (Ctrl+Tab, ⌘W) or the tab goes to another site. */}
-        {!internal && <Permissions key={`${item.id} ${host}`} pageHost={host} />}
+        {!internal && !system && <Permissions key={`${item.id} ${host}`} pageHost={host} />}
+        {system && (
+          <div className="panel-group">
+            <div className="panel-note">{engine ? `${engine.name}, ${engine.about},` : "The system's own web engine"} shows this page. Extensions, ad blocking, Global Privacy Control and developer tools do not work here, and the site signs in apart from your other pages.</div>
+          </div>
+        )}
 
         {!internal && (
           <div className="panel-group">
@@ -225,15 +325,20 @@ export function SitePanel({ state, item, rt, onClose, inWindow = false }: { stat
             <div className="panel-row">
               <span className="flex-1">Zoom</span>
               <button className="ib sm" aria-label="Zoom out" disabled={zoom <= ZOOM_STEPS[0]!} onClick={() => step(-1)}><Minus width={14} height={14} /></button>
-              <button className="zoom-value" aria-label="Reset zoom to 100%" title="Reset to 100%" onClick={() => send({ cmd: "set_zoom", percent: 100 })}>{zoom}%</button>
+              <button className="zoom-value" aria-label={`Reset zoom to ${baseZoom}%`} title={`Reset to ${baseZoom}%`} onClick={() => send({ cmd: "set_zoom", percent: 0 })}>{zoom}%</button>
               <button className="ib sm" aria-label="Zoom in" disabled={zoom >= ZOOM_STEPS[ZOOM_STEPS.length - 1]!} onClick={() => step(1)}><Plus width={14} height={14} /></button>
             </div>
             {/* Asked again when the tab goes to another site; the app takes the host from the address (without port). */}
-            <BlockAds key={`${item.id} ${host}`} url={item.url} />
-            <button className="panel-row w-full" disabled={!rt?.loaded} onClick={() => send({ cmd: "set_muted", id: item.id, muted: !rt?.muted })}>
-              <span className="flex-1 text-left">{rt?.muted ? "Unmute tab" : "Mute tab"}</span>
-              {rt?.muted ? <SpeakerOff width={15} height={15} /> : <Speaker width={15} height={15} />}
-            </button>
+            {!system && <BlockAds key={`${item.id} ${host}`} url={item.url} />}
+            {!system && (
+              <button className="panel-row w-full" disabled={!rt?.loaded} onClick={() => send({ cmd: "set_muted", id: item.id, muted: !rt?.muted })}>
+                <span className="flex-1 text-left">{rt?.muted ? "Unmute tab" : "Mute tab"}</span>
+                {rt?.muted ? <SpeakerOff width={15} height={15} /> : <Speaker width={15} height={15} />}
+              </button>
+            )}
+            {!system && <SiteShortcuts key={`${item.id} ${host} keys`} url={item.url} saved={state.settings.shortcut_sites} />}
+            <SystemEngine key={`${item.id} ${host} engine`} url={item.url} />
+            {!system && <DevSwitch state={state} url={item.url} own={rt?.dev.clears ?? false} />}
             {/* Per tab: a confirmation or a report is not the next tab's. */}
             <ClearData key={item.id} profileName={profile && !profile.is_default ? profile.name : null} noSite={rt?.site?.secure === null} />
           </div>

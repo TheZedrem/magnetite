@@ -39,6 +39,12 @@ pub struct ExtensionInfo {
     pub options_url: Option<String>,
     /// Pinned in Chromium's own UI ("Pin to toolbar" on its extensions page).
     pub chromium_pinned: bool,
+    /// "Allow in Incognito" is on for it on Chromium's extensions page.
+    #[serde(skip)]
+    pub incognito: bool,
+    /// It came from the Chrome Web Store, so it has a page there to
+    /// install it from again (in another profile).
+    pub from_store: bool,
 }
 
 /// Chromium's preference with the ids pinned in its own UI.
@@ -59,7 +65,7 @@ wrap_preference_observer! {
 pub(crate) fn watch_pins(ctx: &RequestContext) {
     let name = CefString::from(PINS);
     match ctx.add_preference_observer(Some(&name), Some(&mut PinWatch::new())) {
-        Some(watch) => Engine::global().lock().pin_watches.push(watch),
+        Some(watch) => Engine::global().lock().pref_watches.push(watch),
         None => crate::trace("cannot watch Chromium's extension pins"),
     }
 }
@@ -72,6 +78,24 @@ fn live_pins(ctx: &RequestContext) -> Option<Vec<String>> {
             .map(|i| CefString::from(&list.string(i)).to_string())
             .collect(),
     )
+}
+
+/// Whether extension `id` is installed and switched on in `ctx` as it is
+/// now: Chromium writes its settings to disk some seconds after a change,
+/// so the file still lists what was just removed or turned off. `None`
+/// when the context does not tell.
+fn live_on(ctx: &RequestContext, id: &str) -> Option<bool> {
+    let settings = (ctx.preference(Some(&CefString::from("extensions.settings")))?).dictionary()?;
+    let key = CefString::from(id);
+    if settings.has_key(Some(&key)) == 0 {
+        return Some(false);
+    }
+    let entry = settings.dictionary(Some(&key))?;
+    let reasons = entry.list(Some(&CefString::from("disable_reasons")));
+    let state = CefString::from("state");
+    let off = reasons.is_some_and(|r| r.size() > 0)
+        || (entry.has_key(Some(&state)) != 0 && entry.int(Some(&state)) == 0);
+    Some(!off)
 }
 
 /// Locations Chromium uses for its own built-in extensions (PDF viewer, …).
@@ -160,6 +184,8 @@ fn extension(profile_dir: &Path, id: &str, entry: &Value) -> Option<ExtensionInf
         options_url: options
             .map(|p| format!("chrome-extension://{id}/{}", p.trim_start_matches('/'))),
         chromium_pinned: false,
+        incognito: entry.get("incognito").and_then(Value::as_bool) == Some(true),
+        from_store: entry.get("from_webstore").and_then(Value::as_bool) == Some(true),
     })
 }
 
@@ -250,10 +276,20 @@ pub(crate) struct ExtensionCache {
 }
 
 impl Engine {
-    /// Installed extensions of `profile`'s context (none for in-memory ones).
+    /// Installed extensions of `profile`'s context. An in-memory context
+    /// has none of its own: Chromium makes it an off-the-record child of
+    /// the default profile, and runs in it those of the default profile's
+    /// extensions that have "Allow in Incognito" on. They are listed
+    /// without their options page, which only opens in the profile an
+    /// extension is installed in.
     pub fn extensions(&self, profile: Option<&ContextProfile>) -> Vec<ExtensionInfo> {
         if profile.is_some_and(|p| p.ephemeral) {
-            return Vec::new();
+            let mut list = self.extensions(None);
+            list.retain(|e| e.incognito);
+            for e in &mut list {
+                e.options_url = None;
+            }
+            return list;
         }
         let dir = match profile.filter(|p| !p.id.is_empty()) {
             Some(p) => self.config.profile_dir(&p.id),
@@ -280,6 +316,10 @@ impl Engine {
             "" => request_context_get_global_context(),
             id => self.lock().contexts.get(id).cloned(),
         };
+        // What was removed or turned off since the file was written.
+        if let Some(ctx) = context.as_ref() {
+            list.retain(|e| live_on(ctx, &e.id) != Some(false));
+        }
         if let Some(pins) = context.as_ref().and_then(live_pins) {
             for e in &mut list {
                 e.chromium_pinned = pins.contains(&e.id);

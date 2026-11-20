@@ -37,9 +37,10 @@ of a split's) and the tab each other space returns to are never archived.
 
 | Setting | Options | Default |
 |---|---|---|
-| Settings → Tabs & archive → "Archive Today tabs after" | 12 hours, 24 hours, 7 days, 30 days | 12 hours |
+| Settings → Tabs & archive → "Archive Today tabs after" | 12 hours, 24 hours, 7 days, 30 days, Never | 12 hours |
 
-Auto-archive cannot be turned off. It skips the active tab of each space,
+With "Never" no tab is archived by itself; Today tabs stay until they are
+closed. Their pages are still unloaded (`sidebar.md`). Auto-archive skips the active tab of each space,
 tabs with media, playing or paused, and tabs kept active (`sidebar.md`).
 The period is one of the settings that sync (`sync.md`).
 
@@ -67,11 +68,44 @@ button offers all four and, below a line, Settings.
 The downloads list every file a page downloads, except the package of an
 extension being installed from the Chrome Web Store: that is part of the
 install, as in Chrome, and Chromium deletes it once the extension is in.
+
+A download also shows as a card in the notification panel at the top right
+of the page: while it runs, and for six seconds after it ended or failed. At
+most three show, the newest first. The pointer on the panel holds the cards
+that are there, and they stay two more seconds after it has left. A card
+that is gone does not come back: when the panel opens for something else (a
+new version, a permission a page asks for), the pointer on it brings no
+earlier download with it. The download list keeps them all.
+
 A click on a finished download opens the file; a right click offers "Copy
 file", "Copy file path" (both on macOS) and showing it in the file manager,
 which the icon at the end of the row does too. "All downloads…" stays above
 the list and opens the same entries as a page (`magnetite://ui/downloads`)
 with a search by file name.
+
+### Where downloads are saved
+
+| Setting | Values | Default |
+|---|---|---|
+| Settings → General → "Save downloads to" | the Downloads folder of the system, or a folder chosen in the system's dialog | the system's |
+| Settings → General → "Ask where to save each file" | off, on | off |
+
+- "Choose…" opens the system's dialog for a folder. Only a folder chosen
+  there is used: the page cannot name one, it can only take the choice
+  away ("Reset", back to the system's folder).
+- With "Ask where to save each file" every download opens a dialog for the
+  file's name and folder.
+- Both hold for every profile and take effect at once. "Save as" for a
+  page keeps starting in the folder it was last used with: that is another
+  preference of Chromium's, which Magnetite leaves alone.
+- A chosen folder that is not there is said so in Settings.
+- Neither is synced: a folder is this computer's.
+
+Chromium saves the files; the settings are its preferences
+(`download.default_directory`, `download.prompt_for_download`).
+
+A folder chosen in the dialog that is gone, or no folder, by the time the
+app looks is refused, and Settings says that it did not work.
 
 ## Data
 
@@ -85,10 +119,11 @@ cache (`sidebar.md`). The file is readable by its owner only.
 
 A record leaves the archive when its tab is restored or removed by hand, or
 once it is older than the retention period: the minute tick deletes those.
+With "Forever" there is no period, and records only leave by hand.
 
 | Setting | Options | Default |
 |---|---|---|
-| Settings → Tabs & archive → "Keep archived tabs for" | 30, 60 or 90 days, or a number of days from 1 to 3650 | 90 days |
+| Settings → Tabs & archive → "Keep archived tabs for" | 30, 60 or 90 days, a number of days from 1 to 3650, or Forever | 90 days |
 
 A typed number is saved on Enter or when the field is left. A shorter period
 deletes older records within a minute, and they cannot be brought back. The

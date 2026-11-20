@@ -14,9 +14,12 @@ From top to bottom:
 2. **Address row**: site controls, the host of the current page and a
    copy-link button. A click on the host opens the command bar with the
    address (`command-bar.md`). An open peek shows its controls here instead.
+   With Settings → Appearance → "Extension bar" on, a row of pinned
+   extensions follows, and the title band has none (`extensions.md`).
 3. **Media rows**: up to two, for media in tabs not on screen (`media.md`).
-4. **Favorites**: grids of icons, the same in every space: one list per
-   profile that has favorites (below). Hidden while there are none.
+4. **Favorites**: grids of icons, the same in every space but for the
+   favorites that are for one space only: one list per profile that has
+   favorites to show (below). Hidden while there are none.
 5. **Space title**, then the **pinned** tabs and folders of that space
    (`spaces.md`). Only the current space is rendered.
 6. A divider with **Clear**, which archives all Today tabs of the space.
@@ -25,7 +28,8 @@ From top to bottom:
    archive (`bookmarks.md`, `history.md`, `archive.md`; its menu also opens
    Settings), one icon
    per space, and
-   "+" (New Space, New Folder, New Smart Folder, New Split, New Tab).
+   "+" (New Space, Private Space, New Folder, New Smart Folder, New Split,
+   New Tab).
 
 If the sidebar's page crashes, Magnetite loads it again and it shows the
 current state; the same holds for the command bar and the notification
@@ -48,12 +52,13 @@ the row turns the icon into a back arrow that takes the page back.
 ## Tab rows
 
 - A row shows the icon, the title, a speaker button while the tab plays or
-  is muted, and a close button on hover. A bold title marks a tab that
+  is muted, a red screen mark while the tab is being shared (below), and a
+  close button on hover. A bold title marks a tab that
   opened in the background and was not viewed yet.
 - A click shows the tab and loads its page if needed. Tabs without a loaded
   page are dimmed. A page is unloaded once it has been off screen for more
   than 4 hours (Settings → Tabs & archive: 10 minutes, 30 minutes,
-  2, 4 or 12 hours, or never), unless it has media, is the tab its space
+  2, 4 or 12 hours, or never), unless it has media, is being shared, is the tab its space
   returns to, is a favorite or pinned, or is kept active. When the system runs short
   of memory, such pages are unloaded without waiting, also with "never":
   at the system's warning the half that was off screen the longest, at its
@@ -70,19 +75,66 @@ the row turns the icon into a back arrow that takes the page back.
   never unloaded for being off screen, and it is not auto-archived. A check mark shows it in the menu and a small flash on the
   row; the same entry lets the tab sleep again. Closing the tab ends it.
 - Double-click renames a tab; "Use page title" in the context menu undoes
-  it. Middle-click closes a tab.
+  it. A favorite is renamed from its context menu, in a row under the
+  tiles of its list. Middle-click closes a tab.
 - The context menu has the actions that fit the tab, among them Reload,
   Share…, Copy link, Pin tab, Unpin tab, Add to favorites, Remove from
-  favorites, Open in split view, Rename, Move to another space, and Archive
-  (Today) or Close.
+  favorites, Open in split view, Duplicate tab, Rename, Move to another
+  space, and Archive (Today) or Close. "Duplicate tab" opens the tab's
+  address as a new Today tab; a favorite has "Duplicate favorite" instead.
+
+## Shared tabs
+
+While a page shares a tab's picture (screen sharing in a meeting, "Tab" in
+the share dialog), that tab is marked wherever it shows:
+
+- Its row carries a red screen mark, also on hover; so does its cell in a
+  split row, where the close button takes the mark's place on hover. A
+  shared favorite has a red dot on its tile.
+- The address row's chip has the red dot while the shared tab is the
+  current one; the tooltip says "This tab is being shared".
+- The mark follows "Share this tab instead" and goes when the sharing ends:
+  "Stop sharing", the meeting page ending it, or the meeting tab closing or
+  loading another page.
+- A shared tab is not unloaded or archived in the background.
+
+Sharing a window or the whole screen marks no tab.
+
+How it works: CEF does not say which tab a capture shows, so the pages
+tell. Every web page gets a capture handle, a random text set with
+`setCaptureHandleConfig`. A page that calls `getDisplayMedia` has its
+tracks watched (copies made with `clone` too), reads the handle of the tab
+they show and reports it; this covers frames inside the page, also ones
+without an address of their own (`srcdoc`). The hook reads a track through
+the browser's own functions, so a page cannot make a live capture look
+ended by redefining them. A tab is shared while such a report names its
+handle. The handle is new with every page load, and only a page that
+captures the tab can read it; it names nothing about the user or the tab.
+
+Not marked, for that reason:
+
+- pages without a secure context (plain `http`, except this computer's
+  own addresses) and Magnetite's own pages;
+- a page that sets a capture handle of its own, which replaces ours;
+- captures started by an extension.
+
+Code: `crates/engine/src/tabshare.rs`, `tabshare_hook.js`;
+`crates/app/src/state/tabs.rs` (`in_use`); `crates/ui/web/src/Rows.tsx`.
 
 ## Moving tabs
 
-- Drag a tab to reorder it, or to a favorites list (added at the end),
-  Pinned, a folder or Today. Dropped on the middle of another tab's row or
-  on the page area, it opens in split view (`split-view.md`).
+- Drag a tab to reorder it, or to a favorites list, Pinned, a folder or
+  Today. Dropped on the middle of another tab's row or on the page area, it
+  opens in split view (`split-view.md`).
+- Over a favorites list the tiles stay where they are. On a tile, the
+  dragged tab or favorite joins it in a split (`split-view.md`). Between two
+  tiles, which is their facing edges (10 points each) and the gap, a line
+  marks where it would go. Dropped on the list's title, it is added at the
+  end. A split's tile, and a tab on a tile that takes no further page, go
+  before or after the tile by the half under the pointer.
 - `Cmd+D` pins the active Today tab at the top of Pinned, or moves the active
-  pinned tab to the top of Today. It does nothing for a favorite.
+  pinned tab to the top of Today. It does nothing for a favorite. With a
+  split in front, the split is pinned or unpinned (`split-view.md`).
 - A tab that comes to Today from Pinned or the favorites counts as used at
   that moment, so auto-archive does not take it for the time before.
 - Closing the tab in front shows the next one of the space (a favorite:
@@ -112,6 +164,20 @@ the row turns the icon into a back arrow that takes the page back.
   profile's list, and "New profile for this favorite…" makes a profile and
   a list for it. "Duplicate favorite" plus another profile gives two
   accounts of one site, each in its list.
+- The favorites of one split show as one tile with an icon per page
+  (`split-view.md`).
+- A favorite shows in every space, or only in the spaces it names. The
+  context menu has "Show in every space" and "Show only in <the current
+  space>"; Settings → Spaces → Favorites has the choice for every favorite
+  and any space, or several of them. So a space can have favorites of its own next to those
+  all spaces share. A new favorite shows in every space. A favorite for
+  one space only is left out of that space's Ctrl+Tab order and web panel
+  key elsewhere, and a tile dropped among the favorites lands between the
+  ones the space shows. Spaces that are gone (deleted, or only on another
+  device) do not count: a favorite left with none shows in every space. A
+  favorite that leaves the favorites forgets its spaces.
+- "Open as panel" makes a favorite or a pinned tab a web panel: a click then opens it
+  over the page in front instead of in its place (`web-panels.md`).
 
 ## Folders
 
@@ -132,11 +198,16 @@ the row turns the icon into a back arrow that takes the page back.
   tabs stay where it was. A smart folder is deleted with the items it
   listed.
 - A folder can fill itself from a service (`smart-folders.md`).
+- "Copy link to share" in the context menu makes a link that carries the
+  folder (`sharing.md`).
 
 ## Hiding and resizing
 
 `Cmd+S` or the sidebar button hides the sidebar: the pages take the whole
-window and the keyboard. `Cmd+S` shows it again. While it is hidden on macOS,
+window and the keyboard. `Cmd+S` shows it again. (On Windows the
+window's buttons are in a row above the pages at the top right, with or
+without the sidebar, unless the top bar is on, which has them.) While it is
+hidden on macOS or Windows,
 moving the pointer to the window's left edge slides the sidebar out over the
 pages, along the window's whole height, without taking the keyboard from the
 page. It leaves when the pointer does, or on Esc; its sidebar button or
@@ -162,13 +233,14 @@ switches at once, without a restart.
 - From left to right: the sidebar button, back, forward and reload, the
   address, the pinned extensions, and outside macOS minimize, maximize and
   close. On macOS the window's own buttons sit at its left end. The address
-  keeps at least 240 points: pinned extensions that do not fit beside it are
-  left out, as in the sidebar (`extensions.md`).
+  keeps at least 240 points: pinned extensions that do not fit beside it
+  wait behind the button after the icons (`extensions.md`).
 - The address shows the whole address without `https://` and `www.`; a
   click opens the command bar with it, as in the sidebar. An open peek shows
   its controls in its place.
-- The site controls, the copy menu (right-click on the copy button) and an
-  extension's menu open in small windows just below the bar.
+- The site controls, the copy menu (right-click on the copy button), an
+  extension's menu and the list of extensions without an icon open in small
+  windows just below the bar.
 - The sidebar keeps the rest: favorites, tabs, the footer. Hidden (`Cmd+S`),
   it still slides out over the pages, below the bar.
 - Empty space in the bar drags the window; a double-click maximizes it.

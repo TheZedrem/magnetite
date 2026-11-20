@@ -17,9 +17,9 @@ active tab, or the split pane that has the keyboard.
 With no tab open the row only says "Search or enter address". While a peek is
 open, the peek's own row takes its place.
 
-The chip shows the first state that applies: camera or microphone in use (red
-dot), certificate problem or unencrypted connection (warning shield), zoom
-other than 100 % (dot), tab muted (crossed speaker). The first two also
+The chip shows the first state that applies: camera or microphone in use, or
+the tab being shared (red dot), certificate problem or unencrypted connection (warning shield), zoom
+other than the default page zoom (dot), tab muted (crossed speaker). The first two also
 outline the row. The chip's tooltip lists every state.
 
 - "Copy link" (click, `Cmd+Shift+C`) copies the URL without tracking
@@ -30,7 +30,7 @@ outline the row. The chip's tooltip lists every state.
   (`fbclid`, `gclid`, `msclkid`, … and every name starting with `utm_`,
   `pk_` or `mtm_`). It ships with the app and is never fetched. Order,
   encoding, repeated parameters and the fragment stay as they were.
-  Settings → General → "Remove trackers from copied links" (on by default)
+  Settings → Links → "Remove trackers from copied links" (on by default)
   switches the removal off.
 - A status line under the row confirms for 3 seconds, longer while the
   pointer rests on it: "Copied", "Copied · 2 trackers removed" with a "Copy
@@ -49,14 +49,27 @@ focus returns to the chip.
   untrusted), "Local file", "Magnetite page", "Loading…" until the first
   load has finished, or "Unavailable" for other pages without a network
   origin. A page in a profile other than the default adds "Profile: name".
-- **Tools:** Capture, Share (the macOS share menu for the page's URL),
-  Custom CSS & JS (opens Settings at this site, see below) and Developer
+- **Tools:** Capture, Share (the macOS share menu for the page's URL; macOS
+  only), Custom CSS & JS (opens Settings at this site, see below) and Developer
   tools. Magnetite's own pages offer Share only, and nothing below.
 - **Zoom:** − and + move through Chromium's zoom steps, 25 % to 500 %; a
-  click on the value resets it to 100 %.
+  click on the value gives the site the zoom every site starts with again.
+  That is 100 %, or what Settings → Appearance → "Page zoom" says: one of
+  the same steps, for every profile, not synced. A change there counts
+  from the next start of Magnetite, since Chromium reads it when it
+  starts. The sidebar and Magnetite's own pages stay at 100 %: they have
+  a text size of their own. The address row names a site's zoom only
+  while it differs from that. "Reset zoom" in the command bar and the shortcut do the same as
+  the click.
 - **Block ads:** shown while the ad blocker is on (`ad-blocking.md`). Off
   lets the whole site load everything and loads the page again.
 - **Mute tab:** mutes this tab's audio until unmuted or the tab is unloaded.
+- **Site's shortcuts first:** the whole site gets the keys of Magnetite's
+  shortcuts before Magnetite does (`shortcuts.md`, "A site that gets them
+  all"). Counts at once, without loading the page again.
+- **Developer mode:** the developer bar, a caution border on its tab and the console error
+  count for this site (`developer.md`). Always on for pages this computer
+  serves.
 
 **Permissions.** Rows exist for camera, microphone, location, notifications,
 pop-ups and redirects, and clipboard. A row shows when the setting for the
@@ -193,13 +206,17 @@ port is opened, and DevTools need not be open.
 
 The result appears at the bottom of the sidebar and stays until it is
 dismissed or the next capture replaces it: size, thumbnail, and Copy, Save…,
-Share… and Retake. Copy puts a PNG on the clipboard, Save… opens the macOS
-save dialog (suggested name `Magnetite capture YYYY-MM-DD at HH.MM.SS.png`)
-and Share… the macOS share menu. While the result has focus, Return copies
+Share… and Retake. Copy puts a PNG on the clipboard, Save… opens the
+system's save dialog (suggested name `Magnetite capture YYYY-MM-DD at HH.MM.SS.png`)
+and Share… the macOS share menu (macOS only). While the result has focus, Return copies
 and Esc dismisses. The command bar has "Copy last capture". Nothing is copied
 or written without one of these actions.
 
 ## Shortcuts
+
+The last column is what holds until the user chooses otherwise in
+Settings → Shortcuts (`shortcuts.md`, "Who gets a key first") or gives a
+site every shortcut's keys first in its site panel.
 
 | Shortcut (macOS default) | Action | If the page uses the key too |
 |---|---|---|
@@ -208,10 +225,62 @@ or written without one of these actions.
 | `Cmd+Shift+O` | Site panel | the page keeps it |
 | `Cmd+Shift+2` | Capture | the page keeps it |
 | `Cmd+Option+I` | Open or close DevTools | Chromium's own command |
+| `Cmd+Option+J`, `Cmd+Option+C`, `Cmd+Option+E`, `Cmd+Option+R` | Console, element picker, Network, reset (`developer.md`) | the page keeps it |
 | `Cmd+P` | Print the page (Chromium's print preview); also File → Print… and the command "Print page" | the page keeps it |
 | `Cmd+F` | Find in the page: Chromium's find bar at the page's top right, with the number of matches; also Edit → Find… and the command "Find in page…". `Esc` closes it | the page keeps it |
 | `Cmd+G`, `Cmd+Shift+G` | Next or previous match of the last search; also Enter and Shift+Enter in the find bar | the page keeps it |
 | `Cmd++`, `Cmd+-`, `Cmd+0` | Zoom in, out, 100 % | Chromium's own command |
+
+## Every site's permissions
+
+Settings → Permissions lists every site that has a choice of its own for
+the camera, the microphone, the location, notifications, pop-ups and
+redirects, or the clipboard: the choices made in a site panel or in a
+question a page asked.
+
+- One card per site, a row per permission, with "Allow" and "Block" and
+  the one that holds marked. "Reset" takes the choice back: the site asks
+  again (pop-ups: blocked, as for every site), and the row is gone.
+- A change counts at once, wherever the site is open, and the site panel
+  shows it.
+- Each profile has its own choices. With more than one, a list on
+  top chooses which (`settings.md`), starting with that of the space in front; a private
+  profile is not offered, it keeps nothing.
+- A site that was never asked and never set is not listed: the section
+  says so while there is none.
+- The list is read again when the page comes back to the front. If it
+  cannot be read, or a change is refused, the section says so and offers
+  to try again; a profile deleted meanwhile is an error, not the main
+  profile in its place.
+- Only the Settings page may read or change the list.
+- A choice made for every site below a name (a pattern with a wildcard) is
+  not one site's and is not listed.
+
+The choices are Chromium's site settings of the profile; the list reads
+them from its preferences (`profile.content_settings.exceptions.…`).
+
+## Deleting the data of all websites
+
+Settings → Data & privacy → "Cookies, site data and cache" has "Delete…".
+It opens Chromium's own dialog "Delete browsing data" over the page, as the
+lists of saved passwords open (`passwords-and-autofill.md`).
+
+- The dialog deletes what websites stored on this computer: cookies and
+  other site data, and the cache, of the last 15 minutes up to all time.
+  Deleting cookies signs the user out of websites.
+- It works on one profile. With more than one, a list next to
+  "Delete…" chooses which, starting with that of the space in front; a
+  private profile is not offered: its data is in memory only and goes
+  when Magnetite quits.
+- A profile deleted meanwhile is an error the row names, not another
+  profile in its place.
+- The "Browsing history" and "Download history" the dialog names are
+  Chromium's own records, not Magnetite's history (`history.md`) or its
+  list of downloads, which have "Clear" of their own.
+- One site's data is deleted in its site panel (above).
+
+Chromium deletes: Magnetite has no way of its own to name every site that
+has stored something.
 
 ## What is stored
 
@@ -222,6 +291,7 @@ or written without one of these actions.
 | Origins seen | memory | Magnetite quits |
 | Last capture (PNG) | memory | replaced, dismissed, or Magnetite quits |
 | Tracker removal, DevTools dock and size | `state.json` | changed |
+| Sites that get the shortcuts' keys first (`settings.shortcut_sites`) | `state.json`, and the synced settings | changed |
 | Own CSS and JavaScript per site (`settings.site_code`) | `state.json` | changed |
 
 ## Not built yet
@@ -230,7 +300,7 @@ or written without one of these actions.
 - Custom CSS and JavaScript: syncing them, code for one path of a site
   only, JavaScript before the page's own scripts run, and an editor with
   highlighting.
-- Developer mode per site: status, load times and console counters in a strip.
+- Load times and request status in the developer bar (`developer.md`).
 - Device mode without DevTools, and devices of one's own in the list.
 - Dividers beside docked DevTools, and the device mode's resize handles,
   on other platforms than macOS.

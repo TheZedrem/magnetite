@@ -29,7 +29,7 @@
 >
 > | Patch | Upstream | CEF it needs |
 > | --- | --- | --- |
-> | Private windows (⇧⌘P / Ctrl+Shift+P, keys changeable in Settings → Shortcuts): a separate Magnetite on a new data folder in memory, deleted when it quits. Its sidebar has only its own tabs. | [#102](https://github.com/magnetite-browser/magnetite/pull/102) | Any CEF. |
+> | Linux: extension popups open after every start and take the keyboard under Wayland. | [#267](https://github.com/magnetite-browser/magnetite/pull/267) | Any CEF. |
 >
 > None of them needs a CEF of my own: my [magnetite-cef fork](https://github.com/TheZedrem/magnetite-cef) has no patches upstream lacks.
 >
@@ -87,6 +87,7 @@ Magnetite started as a new home for the workflow of the Arc browser and has grow
 - **Chromium's own tools.** Find in page, the PDF viewer, and DevTools docked beside or below the page.
 - **Passwords and autofill.** Saved passwords, addresses and cards, filled in for you and kept on your computer.
 - **Media controls** in the sidebar for whatever plays in another tab, and picture-in-picture with its own controls.
+- **Protected video.** Netflix, Disney+ and a few other streaming services ask for a browser verified by Google, which Magnetite is not yet. They, and sites you add, open in the system's own engine in a normal tab: WebKit on macOS 14 or newer, WebView2 on Windows.
 - **Capture.** A screenshot of an element, a region, the visible part or the whole page.
 - **Smart folders.** Your review requests and issues from GitHub, GitLab, Jira or YouTrack as tabs that keep themselves current.
 
@@ -97,11 +98,11 @@ Magnetite started as a new home for the workflow of the Arc browser and has grow
 
 ## Status
 
-Magnetite is developed and used daily on macOS (Apple silicon). Linux builds start and pass the tests; in a Wayland session Magnetite runs as a Wayland client when built with Magnetite's CEF build, and through XWayland with the official CEF, as the Linux releases still are ([ADR-0012](docs/adr/0012-wayland.md)). Windows has not been built yet.
+Magnetite is developed and used daily on macOS (Apple silicon). Linux and Windows builds start and pass the tests. On Linux, in a Wayland session Magnetite runs as a Wayland client when built with Magnetite's CEF build, and through XWayland with the official CEF, as the Linux aarch64 releases still are ([ADR-0012](docs/adr/0012-wayland.md)).
 
 There are no releases yet, so for now you [build it yourself](#build-it-yourself). Expect breaking changes, including to the data format on disk.
 
-Not there yet: moving a page between windows on macOS and Windows (to do: written for both, tested on neither), and H.264 or AAC playback on Linux and Intel Macs (the standard build of the engine comes without these codecs, so some video and music sites do not play; on Macs with Apple silicon, Magnetite uses [its own build](https://github.com/magnetite-browser/magnetite-cef) with them). Every spec in [`docs/spec/`](docs/spec/README.md) ends with what its feature still lacks.
+Not there yet: moving a page between windows on macOS and Windows (to do: written for both, tested on neither), and H.264 or AAC playback on Linux aarch64 and Intel Macs (the standard build of the engine comes without these codecs, so some video and music sites do not play; on Macs with Apple silicon, Linux x86_64 and Windows x86_64, Magnetite uses [its own build](https://github.com/magnetite-browser/magnetite-cef) with them). Protected video from services that ask for a verified browser plays on macOS and Windows only, for the services on a short list and sites you add, in a tab without extensions ([protected-video.md](docs/spec/protected-video.md)). Every spec in [`docs/spec/`](docs/spec/README.md) ends with what its feature still lacks.
 
 ## Install
 
@@ -109,6 +110,7 @@ Releases will appear on the GitHub releases page, one package per system:
 
 - **macOS 13 or newer** (Apple silicon, Intel): a disk image or a zip with `Magnetite.app`, also through Homebrew.
 - **Linux** (x86_64, aarch64): an rpm (Fedora, RHEL) and a deb (Debian, Ubuntu), which update with your system's updates, and a tarball for other systems; its `README.md` explains the sandbox setup.
+- **Windows 10 or newer** (x86_64): an installer, or a zip to unpack. Not signed yet, so Windows warns before the installer starts.
 
 Magnetite updates itself from these releases. The update list is signed, and `SHA256SUMS` lists the packages' checksums.
 

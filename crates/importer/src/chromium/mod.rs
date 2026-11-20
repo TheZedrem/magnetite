@@ -214,9 +214,11 @@ fn space(
         }
     }
     Ok(Space {
+        shortcut: None,
         id: ids.next()?,
         title,
         icon: None,
+        icon_image: None,
         accent: None,
         profile_id,
         pinned,

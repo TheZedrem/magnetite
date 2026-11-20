@@ -1,7 +1,7 @@
 //! Loading the state at start and saving it: `state.json` in the data
 //! directory, and what a first start begins with.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError};
@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use super::folders::smart_key;
 use super::import::fresh_import;
-use super::settings::Settings;
+use super::settings::{AdblockSettings, Settings};
 use super::{AppState, ArcImport, ArchivedTab, TabRuntime, new_id, now};
 
 #[derive(Serialize, Deserialize)]
@@ -84,12 +84,14 @@ pub(super) fn default_sidebar() -> SidebarSnapshot {
         id: new_id(),
         title: "Personal".into(),
         icon: Some("🏠".into()),
+        icon_image: None,
         accent: Some(magnetite_core::Color {
             red: 0.45,
             green: 0.55,
             blue: 1.0,
         }),
         profile_id: "default".into(),
+        shortcut: None,
         pinned: vec![],
         // No tab: a new installation contacts no site before the user
         // opens one.
@@ -169,7 +171,16 @@ impl AppState {
                         Vec::new(),
                         HashMap::new(),
                         Vec::new(),
-                        Settings::default(),
+                        // A new installation blocks ads; a state file that
+                        // could not be read turns nothing on by itself.
+                        Settings {
+                            adblock: if first_start {
+                                AdblockSettings::recommended()
+                            } else {
+                                AdblockSettings::default()
+                            },
+                            ..Settings::default()
+                        },
                         Vec::new(),
                     )
                 }
@@ -194,7 +205,9 @@ impl AppState {
             history: super::History::load(data_dir),
             splits,
             peek: None,
+            web_panel: None,
             minis: Vec::new(),
+            phones: Vec::new(),
             settings,
             sidebar_visible: true,
             window: 1,
@@ -204,11 +217,15 @@ impl AppState {
             smart_status: HashMap::new(),
             downloads: crate::downloads::Downloads::restore(downloads),
             deleted_profiles,
+            private_space: None,
+            private_hidden: false,
+            private_profiles: BTreeSet::new(),
             unsynced_spaces,
             first_start,
             recent_tabs: Vec::new(),
             switcher: None,
             synced_sidebar: None,
+            device_tabs: Vec::new(),
             saver: Saver::new(path.clone()),
             path,
         };
@@ -250,25 +267,6 @@ impl AppState {
             }
         }
         state
-    }
-
-    /// This instance is a private window (`private.rs`), on a new data
-    /// folder: its one space is called Private, and nothing reaches out or
-    /// keeps a record by itself.
-    pub fn make_private(&mut self) {
-        if let Some(space) = self.sidebar.spaces.first_mut() {
-            space.title = "Private".into();
-            space.icon = Some("🕶️".into());
-            space.accent = Some(magnetite_core::Color {
-                red: 0.55,
-                green: 0.45,
-                blue: 0.85,
-            });
-        }
-        // The system-wide key belongs to the Magnetite in use.
-        self.settings.quick_search = false;
-        self.settings.check_updates = false;
-        self.settings.history_days = 0;
     }
 
     /// The saved state, if there is a usable one. A file that is there but
@@ -317,15 +315,20 @@ impl AppState {
     }
 
     /// What `state.json` holds for the state as it is now.
-    fn saved_form(&self) -> Persisted {
+    pub(super) fn saved_form(&self) -> Persisted {
+        let sidebar = self.lasting_sidebar();
+        // Only of the tabs that are saved: a private tab's icon would tell
+        // which site it had open.
+        let saved: HashSet<&Id> = sidebar.all_tabs().map(|t| &t.id).collect();
         let favicons = self
             .runtime
             .iter()
+            .filter(|(id, _)| saved.contains(id))
             .filter_map(|(id, r)| r.favicon.clone().map(|f| (id.clone(), f)))
             .collect();
         Persisted {
-            sidebar: self.lasting_sidebar(),
-            active_space: self.active_space.clone(),
+            sidebar,
+            active_space: self.lasting_space(&self.active_space),
             active_tab: self.active_tab.clone(),
             archive: self.archive.clone(),
             favicons,
@@ -574,6 +577,8 @@ mod tests {
         // Nothing saved yet: the first start, with a plain sidebar.
         let fresh = AppState::load_or_default(&dir, ArcImport::Ask);
         assert!(fresh.first_start);
+        // It blocks ads from the start, with the recommended lists.
+        assert_eq!(fresh.settings.adblock, AdblockSettings::recommended());
         let titles: Vec<&str> = fresh
             .sidebar
             .spaces
@@ -584,24 +589,6 @@ mod tests {
         assert_eq!(fresh.sidebar.all_tabs().count(), 0, "and it opens no site");
         fresh.persist();
         assert!(!AppState::load_or_default(&dir, ArcImport::Ask).first_start);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn a_private_window_has_one_private_space_and_reaches_out_or_keeps_nothing() {
-        let dir = crate::files::test_dir("private");
-        let mut s = AppState::load_or_default(&dir, ArcImport::Never);
-        s.make_private();
-        let titles: Vec<&str> = s
-            .sidebar
-            .spaces
-            .iter()
-            .map(|sp| sp.title.as_str())
-            .collect();
-        assert_eq!(titles, ["Private"]);
-        assert!(!s.settings.quick_search, "the key is the normal instance's");
-        assert!(!s.settings.check_updates);
-        assert_eq!(s.settings.history_days, 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -10,7 +10,29 @@ use crate::cef_app::{BrowserApp, HelperApp};
 use crate::config::EngineConfig;
 use crate::engine::{Engine, EngineDelegate};
 
-/// Run the browser process. Blocks until the last window closes.
+/// Windows: the sandbox information CEF's `bootstrap.exe` made for this
+/// process; null everywhere else.
+static SANDBOX_INFO: std::sync::atomic::AtomicPtr<u8> =
+    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+/// Windows: hand over the sandbox information of CEF's bootstrap, before
+/// [`run`] or [`run_helper`]. Without it Chromium's sandboxed processes
+/// (the GPU process first) do not start.
+#[cfg(target_os = "windows")]
+pub fn set_sandbox_info(info: *mut std::ffi::c_void) {
+    SANDBOX_INFO.store(info.cast(), std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Whether CEF's bootstrap started this process (Windows packages).
+pub fn started_by_bootstrap() -> bool {
+    !sandbox_info().is_null()
+}
+
+fn sandbox_info() -> *mut u8 {
+    SANDBOX_INFO.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Run the browser process. Blocks until Magnetite quits.
 /// Returns the process exit code.
 pub fn run(config: EngineConfig, delegate: Arc<dyn EngineDelegate>) -> i32 {
     #[cfg(target_os = "macos")]
@@ -29,10 +51,13 @@ pub fn run(config: EngineConfig, delegate: Arc<dyn EngineDelegate>) -> i32 {
     let main_args = args.as_main_args();
 
     // The main executable is only ever the browser process on macOS.
-    let code = execute_process(Some(main_args), None::<&mut App>, std::ptr::null_mut());
+    let code = execute_process(Some(main_args), None::<&mut App>, sandbox_info());
     if code >= 0 {
         return code;
     }
+    // The browser process: the installer waits for it to close.
+    #[cfg(target_os = "windows")]
+    crate::win::mark_running();
 
     if let Err(e) = std::fs::create_dir_all(&config.data_dir) {
         crate::trace(&format!("cannot create {}: {e}", config.data_dir.display()));
@@ -48,6 +73,7 @@ pub fn run(config: EngineConfig, delegate: Arc<dyn EngineDelegate>) -> i32 {
         .as_ref()
         .map(|p| CefString::from(p.to_string_lossy().as_ref()))
         .unwrap_or_default();
+    let accept_languages = CefString::from(config.accept_languages.as_str());
     Engine::init(config, delegate);
 
     let mut app = BrowserApp::new();
@@ -57,6 +83,7 @@ pub fn run(config: EngineConfig, delegate: Arc<dyn EngineDelegate>) -> i32 {
         root_cache_path: CefString::from(root_cache.to_string_lossy().as_ref()),
         cache_path: CefString::from(default_cache.to_string_lossy().as_ref()),
         log_severity: LogSeverity::WARNING,
+        accept_language_list: accept_languages,
         // Development builds only: Chrome DevTools Protocol on localhost, so
         // tests can drive pages without synthetic input. Any local program
         // could drive it, so release builds ignore the variable.
@@ -74,7 +101,7 @@ pub fn run(config: EngineConfig, delegate: Arc<dyn EngineDelegate>) -> i32 {
         Some(main_args),
         Some(&settings),
         Some(&mut app),
-        std::ptr::null_mut(),
+        sandbox_info(),
     ) != 1
     {
         return get_exit_code();
@@ -109,9 +136,5 @@ pub fn run_helper() -> i32 {
     let _ = api_hash(sys::CEF_API_VERSION_LAST, 0);
 
     let mut app = HelperApp::create();
-    execute_process(
-        Some(args.as_main_args()),
-        Some(&mut app),
-        std::ptr::null_mut(),
-    )
+    execute_process(Some(args.as_main_args()), Some(&mut app), sandbox_info())
 }

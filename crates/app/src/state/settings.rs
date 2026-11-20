@@ -5,10 +5,17 @@
 use std::collections::{BTreeMap, HashMap};
 
 use magnetite_core::{Id, UnixSeconds};
+use magnetite_engine::in_domain;
 use serde::{Deserialize, Serialize};
 
-/// The longest the archive may keep a tab: ten years.
+/// The longest retention period in days, for the archive and the history:
+/// ten years.
 pub const MAX_ARCHIVE_DAYS: u32 = 3650;
+
+/// `Settings::auto_archive_hours` for "Never". Not 0: the setting syncs, and
+/// versions from before this value raise 0 to one hour, while they read
+/// this one as a period that never ends.
+pub const NEVER_ARCHIVE: u32 = u32::MAX;
 
 /// The current set of defaults. Raised when a default changes that
 /// installations still on the old one should follow
@@ -22,11 +29,14 @@ const FIRST_UNLOAD_MINUTES: u32 = 30;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
-    /// Today tabs unused this long are archived. Minimum 1 h.
+    /// Today tabs unused this long are archived. Minimum 1 h;
+    /// `NEVER_ARCHIVE` turns it off.
     pub auto_archive_hours: u32,
-    /// Archived tabs are deleted after this many days (1 to `MAX_ARCHIVE_DAYS`).
+    /// Archived tabs are deleted after this many days (up to
+    /// `MAX_ARCHIVE_DAYS`); 0 keeps them until they are removed by hand.
     pub archive_days: u32,
-    /// Visits stay in the history this many days; 0 keeps none (`history.rs`).
+    /// Visits stay in the history this many days (up to `MAX_ARCHIVE_DAYS`);
+    /// 0 keeps none (`history.rs`).
     pub history_days: u32,
     /// Hidden tabs lose their window after this; 0 disables unloading.
     pub unload_minutes: u32,
@@ -51,6 +61,13 @@ pub struct Settings {
     /// The shortcuts the user gave other keys, or none (Settings →
     /// Shortcuts); the rest have their default keys. Synced.
     pub shortcuts: magnetite_engine::Overrides,
+    /// The shortcuts whose keys go first to someone else than by default:
+    /// to the page, or to Magnetite (Settings → Shortcuts). Synced.
+    pub shortcut_priority: magnetite_engine::Priorities,
+    /// Sites (registrable domains) whose pages get the keys of every
+    /// shortcut first, whatever the shortcut's own choice (the site panel,
+    /// Settings → Shortcuts). Synced.
+    pub shortcut_sites: Vec<String>,
     /// The system-wide quick search key (⌥⌘N) is registered. This
     /// device's own choice, never synced.
     pub quick_search: bool,
@@ -65,6 +82,9 @@ pub struct Settings {
     pub several_windows: bool,
     /// Remove tracking parameters (utm_*, fbclid, …) when copying links.
     pub strip_trackers: bool,
+    /// A web panel closes by itself when a page behind it is used
+    /// (`web-panels.md`); off: it stays until it is closed.
+    pub panel_autoclose: bool,
     /// Where DevTools open: right of or below the page, or a separate window.
     pub devtools_dock: magnetite_engine::DevToolsDock,
     /// The size docked DevTools were dragged to, per side. This device's
@@ -72,9 +92,15 @@ pub struct Settings {
     pub devtools_size: magnetite_engine::DevToolsSize,
     #[serde(default)]
     pub sync: SyncSettings,
-    /// Extensions (ids) shown in the sidebar; all of them are in the menu
-    /// bar's Extensions menu.
+    /// Extensions (ids) shown in the sidebar in the default profile; all of
+    /// them are in the menu bar's Extensions menu. Also what another
+    /// profile shows until it has a list of its own (`profile_pins`).
     pub pinned_extensions: Vec<String>,
+    /// The same for the other profiles, by profile id: an extension is
+    /// installed profile by profile, and so is its place in the sidebar
+    /// (`AppState::pins`).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub profile_pins: HashMap<String, Vec<String>>,
     /// Chromium's own pins as last seen, per profile id (`""`: default), so
     /// only changes made there carry over (`follow_chromium_pins`).
     pub chromium_pins_seen: HashMap<String, Vec<String>>,
@@ -88,6 +114,18 @@ pub struct Settings {
     /// Chromium's password manager and autofill: which parts are on. Not
     /// synced: what a device saves is that device's.
     pub autofill: magnetite_engine::AutofillPrefs,
+    /// Tell websites not to sell or share the user's data (Global Privacy
+    /// Control). Not synced, as the other settings of this kind.
+    pub global_privacy_control: bool,
+    /// Where downloads go, and whether to ask each time. Not synced: a
+    /// folder is this computer's.
+    pub downloads: magnetite_engine::DownloadPrefs,
+    /// The zoom, in percent, a site has until it is zoomed on its own: one
+    /// of Chromium's steps. Not synced: screens differ.
+    pub page_zoom: u32,
+    /// Spell check, and the languages websites are asked for. Not synced:
+    /// a device has its own keyboard and reader.
+    pub languages: magnetite_engine::LanguagePrefs,
     /// Smart folders allowed to fetch on this device (`smart_key`): those made
     /// or edited here, or turned on here. A folder another device synced
     /// waits, so the words alone cannot make this device's accounts run a
@@ -96,10 +134,115 @@ pub struct Settings {
     pub smart_allowed: Option<Vec<String>>,
     /// The ad blocker. Not synced: each device downloads its own lists.
     pub adblock: AdblockSettings,
+    /// Developer features: the row for local pages, the hosts that count
+    /// as local. Not synced.
+    pub developer: crate::dev::DeveloperSettings,
+    /// Which sites the system's own web engine shows instead of Chromium.
+    /// Not synced: only some systems have such an engine.
+    pub system_engine: SystemEngine,
 }
 
-/// The ad blocker (Settings → Ad blocking, `adblock.rs`). Off, with no list,
-/// until the user turns it on and picks the lists.
+/// The services known to play protected video only in a browser build that
+/// Google's Widevine programme has verified, which Magnetite's Chromium is
+/// not: they refuse it and play in the system's engine. By host, each with
+/// its subdomains. Ships with each release; never fetched from anywhere.
+pub const PROTECTED_VIDEO_SITES: &[&str] = &[
+    "netflix.com",
+    "disneyplus.com",
+    "max.com",
+    "hbomax.com",
+    "primevideo.com",
+    "hulu.com",
+];
+
+/// The most sites of their own a user names for the system's engine.
+const MAX_SYSTEM_ENGINE_SITES: usize = 100;
+
+/// Which sites open in the system's own web engine (Settings → Protected
+/// video; `magnetite_engine`'s `system.rs`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct SystemEngine {
+    /// The services of `PROTECTED_VIDEO_SITES` do.
+    pub known: bool,
+    /// Sites the user named, by host in lower case without `www.`.
+    pub sites: Vec<String>,
+}
+
+impl Default for SystemEngine {
+    fn default() -> Self {
+        Self {
+            known: true,
+            sites: Vec::new(),
+        }
+    }
+}
+
+impl SystemEngine {
+    /// Hosts only, each once, and none that the known services cover
+    /// while those are on.
+    fn sanitised(mut self) -> Self {
+        let mut sites: Vec<String> = Vec::new();
+        for site in std::mem::take(&mut self.sites) {
+            if let Some(host) = site_host(&site)
+                && !sites.contains(&host)
+                && !(self.known && PROTECTED_VIDEO_SITES.contains(&host.as_str()))
+                && sites.len() < MAX_SYSTEM_ENGINE_SITES
+            {
+                sites.push(host);
+            }
+        }
+        self.sites = sites;
+        self
+    }
+
+    /// Whether `host` is one of the known services, while those are on.
+    pub fn knows(&self, host: &str) -> bool {
+        self.known && (PROTECTED_VIDEO_SITES.iter()).any(|site| in_domain(host, site))
+    }
+
+    /// Whether `host` is under one of the user's own sites.
+    pub fn names(&self, host: &str) -> bool {
+        self.sites.iter().any(|site| in_domain(host, site))
+    }
+
+    /// Name `site` for the system's engine (the site panel's switch), or
+    /// take every own site that covers `host` out again. An error if the
+    /// list is full: the next check of the settings would drop the site
+    /// again without a word.
+    pub fn set_site(&mut self, host: &str, site: String, system: bool) -> Result<(), String> {
+        let covers = |own: &String| in_domain(host, own);
+        // Counted before anything changes: a site that is refused leaves
+        // the list as it was.
+        let others = self.sites.iter().filter(|own| !covers(own)).count();
+        if system && others >= MAX_SYSTEM_ENGINE_SITES {
+            return Err(format!(
+                "The list holds {MAX_SYSTEM_ENGINE_SITES} sites already. Remove one in Settings → Protected video first."
+            ));
+        }
+        self.sites.retain(|own| !covers(own));
+        if system {
+            self.sites.push(site);
+        }
+        Ok(())
+    }
+
+    /// Every site that opens in the system's engine.
+    pub fn hosts(&self) -> Vec<String> {
+        let known = if self.known {
+            PROTECTED_VIDEO_SITES
+        } else {
+            &[]
+        };
+        (known.iter().map(ToString::to_string))
+            .chain(self.sites.iter().cloned())
+            .collect()
+    }
+}
+
+/// The ad blocker (Settings → Ad blocking, `adblock.rs`). A new installation
+/// starts with `recommended`; settings saved without any stay off, with no
+/// list.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct AdblockSettings {
@@ -111,6 +254,15 @@ pub struct AdblockSettings {
 }
 
 impl AdblockSettings {
+    /// What a new installation starts with: on, with the recommended lists.
+    pub fn recommended() -> Self {
+        Self {
+            enabled: true,
+            lists: crate::adblock::system_recommended(),
+            allowed_sites: Vec::new(),
+        }
+    }
+
     /// Known lists only, and sites as lower-case names, each once.
     fn sanitised(mut self) -> Self {
         let mut lists: Vec<String> = Vec::new();
@@ -120,15 +272,50 @@ impl AdblockSettings {
             }
         }
         self.lists = lists;
-        let mut sites: Vec<String> = (self.allowed_sites.iter())
-            .map(|s| s.trim().trim_end_matches('.').to_lowercase())
-            .filter(|s| !s.is_empty())
-            .collect();
-        sites.sort();
-        sites.dedup();
-        self.allowed_sites = sites;
+        self.allowed_sites = site_names(&self.allowed_sites);
         self
     }
+}
+
+/// The site (registrable domain) a user means by `typed`: a name, or a
+/// whole address, of which the host counts. `None` for what names no host.
+pub fn typed_site(typed: &str) -> Option<String> {
+    let typed = typed.trim();
+    // An IP address of version 6 has colons of its own, which an address
+    // without brackets would lose.
+    if let Ok(ip) = typed.parse::<std::net::IpAddr>() {
+        return Some(ip.to_string());
+    }
+    let address = if typed.contains("://") {
+        typed.to_string()
+    } else {
+        format!("https://{typed}")
+    };
+    // Parsed as an address: an international name becomes punycode, as a
+    // page's host is.
+    let url = url::Url::parse(&address).ok()?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+    match url.host()? {
+        url::Host::Domain(name) => {
+            let name = name.trim_start_matches("www.");
+            (!name.is_empty()).then(|| magnetite_engine::registrable_domain(name))
+        }
+        url::Host::Ipv4(ip) => Some(ip.to_string()),
+        url::Host::Ipv6(ip) => Some(ip.to_string()),
+    }
+}
+
+/// `sites` as lower-case names, sorted, each once.
+fn site_names(sites: &[String]) -> Vec<String> {
+    let mut sites: Vec<String> = (sites.iter())
+        .map(|s| s.trim().trim_end_matches('.').to_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+    sites.sort();
+    sites.dedup();
+    sites
 }
 
 /// How the sidebar and Magnetite's own pages look (Settings → Appearance).
@@ -144,6 +331,9 @@ pub struct Appearance {
     /// Navigation, the address and the window buttons in a bar across the
     /// top of the window, not at the top of the sidebar.
     pub top_bar: bool,
+    /// A row of extension icons below the sidebar's address, in place of
+    /// the icons in its title band.
+    pub extension_bar: bool,
     /// How each space looks beyond its colour, by space id. A space without
     /// an entry has the default look. Kept on this device.
     pub looks: BTreeMap<String, SpaceLook>,
@@ -183,6 +373,7 @@ impl Default for Appearance {
             density: Density::Comfortable,
             sidebar_width: 264,
             top_bar: false,
+            extension_bar: false,
             looks: BTreeMap::new(),
         }
     }
@@ -457,6 +648,11 @@ pub struct SyncSettings {
     /// This device started its chain. Only that device writes into a chain
     /// that holds nothing yet; one that joined waits for the first data.
     pub started_here: bool,
+    /// This install among the chain's devices; made up when it first syncs.
+    pub device_id: String,
+    /// Tabs of other devices taken over here that their devices may still
+    /// list (`devices` module).
+    pub taken: Vec<String>,
 }
 
 impl Settings {
@@ -471,10 +667,13 @@ impl Settings {
     pub fn sanitised(mut self) -> Self {
         let defaults = Self::default();
         self.auto_archive_hours = self.auto_archive_hours.max(1);
-        self.archive_days = self.archive_days.clamp(1, MAX_ARCHIVE_DAYS);
+        self.archive_days = self.archive_days.min(MAX_ARCHIVE_DAYS);
         self.history_days = self.history_days.min(MAX_ARCHIVE_DAYS);
         self.appearance = self.appearance.clamped();
         self.adblock = self.adblock.sanitised();
+        self.shortcut_sites = site_names(&self.shortcut_sites);
+        self.developer = self.developer.sanitised();
+        self.system_engine = self.system_engine.sanitised();
         if !usable_search(&self.search_template) {
             self.search_template = defaults.search_template;
         }
@@ -515,6 +714,14 @@ impl Settings {
         }
         self.site_code = code;
         self.shortcuts = self.shortcuts.sanitised();
+        // A folder is a whole path; anything else means Chromium's own.
+        if !std::path::Path::new(&self.downloads.folder).is_absolute() {
+            self.downloads.folder.clear();
+        }
+        if !magnetite_engine::ZOOM_STEPS.contains(&self.page_zoom) {
+            self.page_zoom = defaults.page_zoom;
+        }
+        self.languages = self.languages.sanitised();
         self
     }
 }
@@ -544,7 +751,13 @@ impl Settings {
     /// its copy of the rest may be old. What pages never change stays as it
     /// is here whatever the patch says: everything about sync, the pinned
     /// extensions, the smart folders allowed on this device, and the
-    /// shortcuts' keys, which have commands of their own (`set_shortcut`).
+    /// shortcuts' keys and who gets them first, which have commands of
+    /// their own (`set_shortcut`, `set_shortcut_first`).
+    /// The download folder too, which only the system's dialog names
+    /// (`choose_download_folder`); a patch can only take it away. And the
+    /// stamps of the spaces' own images, which `set_appearance_image`
+    /// sets: a patch carries those its page last saw, of a
+    /// picture that may be stored or removed since.
     pub fn patched(
         &self,
         patch: serde_json::Map<String, serde_json::Value>,
@@ -562,13 +775,28 @@ impl Settings {
         let mut merged = serde_json::to_value(self).map_err(|e| e.to_string())?;
         lay_over(&mut merged, serde_json::Value::Object(patch));
         let wanted: Self = serde_json::from_value(merged).map_err(|e| e.to_string())?;
+        let mut wanted = wanted.sanitised();
+        if !wanted.downloads.folder.is_empty() {
+            wanted.downloads.folder.clone_from(&self.downloads.folder);
+        }
+        for (id, look) in &mut wanted.appearance.looks {
+            let kept = self.appearance.look(id);
+            look.sidebar_image = kept.sidebar_image;
+            look.empty_image = kept.empty_image;
+            if look.sidebar_image.is_none() && look.sidebar_effect == SidebarEffect::Image {
+                look.sidebar_effect = SidebarEffect::None;
+            }
+        }
         Ok(Self {
             sync: self.sync.clone(),
             pinned_extensions: self.pinned_extensions.clone(),
+            profile_pins: self.profile_pins.clone(),
             chromium_pins_seen: self.chromium_pins_seen.clone(),
             smart_allowed: self.smart_allowed.clone(),
             shortcuts: self.shortcuts.clone(),
-            ..wanted.sanitised()
+            shortcut_priority: self.shortcut_priority.clone(),
+            shortcut_sites: self.shortcut_sites.clone(),
+            ..wanted
         })
     }
 }
@@ -587,23 +815,33 @@ impl Default for Settings {
             link_rules: Vec::new(),
             site_code: Vec::new(),
             shortcuts: magnetite_engine::Overrides::default(),
+            shortcut_priority: magnetite_engine::Priorities::default(),
+            shortcut_sites: Vec::new(),
             quick_search: true,
             chrome_toolbar: false,
             appearance: Appearance::default(),
             auto_pip: true,
             several_windows: false,
             strip_trackers: true,
+            panel_autoclose: false,
             devtools_dock: magnetite_engine::DevToolsDock::Right,
             devtools_size: magnetite_engine::DevToolsSize::default(),
             sync: SyncSettings::default(),
             pinned_extensions: Vec::new(),
+            profile_pins: HashMap::new(),
             chromium_pins_seen: HashMap::new(),
             check_updates: true,
             library_opens: LibraryView::Archive,
             tab_order: TabOrder::Recent,
             autofill: magnetite_engine::AutofillPrefs::default(),
+            global_privacy_control: false,
+            downloads: magnetite_engine::DownloadPrefs::default(),
+            page_zoom: 100,
+            languages: magnetite_engine::LanguagePrefs::default(),
             smart_allowed: None,
             adblock: AdblockSettings::default(),
+            developer: crate::dev::DeveloperSettings::default(),
+            system_engine: SystemEngine::default(),
         }
     }
 }
@@ -617,6 +855,40 @@ mod tests {
             site: site.into(),
             space: space.into(),
         }
+    }
+
+    #[test]
+    fn a_typed_site_is_kept_by_its_name() {
+        let site = |typed: &str| typed_site(typed);
+        assert_eq!(
+            site("https://www.Figma.com/design/1").as_deref(),
+            Some("figma.com")
+        );
+        assert_eq!(site(" app.example.org ").as_deref(), Some("example.org"));
+        assert_eq!(site("localhost:3000").as_deref(), Some("localhost"));
+        assert_eq!(site("bücher.de").as_deref(), Some("xn--bcher-kva.de"));
+        assert_eq!(site("magnetite://ui/settings"), None);
+        assert_eq!(site("not a site"), None);
+        assert_eq!(site(" "), None);
+        // An IP address stays whole, typed again too.
+        for typed in ["[2001:db8::1]", "2001:db8::1", "http://[2001:db8::1]:8080/"] {
+            assert_eq!(site(typed).as_deref(), Some("2001:db8::1"), "{typed}");
+        }
+        assert_eq!(site("127.0.0.1:8080").as_deref(), Some("127.0.0.1"));
+    }
+
+    #[test]
+    fn a_settings_patch_leaves_the_shortcut_sites() {
+        let before = Settings {
+            shortcut_sites: vec!["example.org".into()],
+            ..Settings::default()
+        };
+        let patch = serde_json::json!({ "shortcut_sites": ["example.com"] });
+        let serde_json::Value::Object(patch) = patch else {
+            unreachable!()
+        };
+        let after = before.patched(patch).expect("a patch");
+        assert_eq!(after.shortcut_sites, ["example.org"]);
     }
 
     #[test]
@@ -708,6 +980,52 @@ mod tests {
     }
 
     #[test]
+    fn a_patch_can_take_the_download_folder_away_but_not_name_one() {
+        let mut start = Settings::default();
+        assert_eq!(start.downloads, magnetite_engine::DownloadPrefs::default());
+        // A whole path, as each system writes one.
+        let chosen = if cfg!(windows) {
+            r"C:\chosen"
+        } else {
+            "/tmp/chosen"
+        };
+        start.downloads.folder = chosen.into();
+        let patch = |value: serde_json::Value| {
+            let serde_json::Value::Object(patch) = value else {
+                panic!("an object");
+            };
+            start.patched(patch).unwrap().downloads
+        };
+        let asked = patch(serde_json::json!({ "downloads": { "ask": true } }));
+        assert_eq!((asked.folder.as_str(), asked.ask), (chosen, true));
+        let other = if cfg!(windows) { r"C:\other" } else { "/etc" };
+        let named = patch(serde_json::json!({ "downloads": { "folder": other } }));
+        assert_eq!(named.folder, chosen, "only the dialog names a folder");
+        let reset = patch(serde_json::json!({ "downloads": { "folder": "" } }));
+        assert_eq!(reset.folder, "");
+        // A path that is not whole is none.
+        let mut odd = Settings::default();
+        odd.downloads.folder = "Downloads".into();
+        assert_eq!(odd.sanitised().downloads.folder, "");
+    }
+
+    #[test]
+    fn the_page_zoom_is_one_of_chromiums_steps() {
+        let zoom = |pct: u32| {
+            let s = Settings {
+                page_zoom: pct,
+                ..Settings::default()
+            };
+            s.sanitised().page_zoom
+        };
+        assert_eq!(Settings::default().page_zoom, 100);
+        assert_eq!(zoom(125), 125);
+        assert_eq!(zoom(0), 100);
+        assert_eq!(zoom(123), 100);
+        assert_eq!(zoom(5000), 100);
+    }
+
+    #[test]
     fn autofill_switches_start_safe_and_change_one_at_a_time() {
         let start = Settings::default();
         assert!(start.autofill.passwords && !start.autofill.breach_check);
@@ -759,9 +1077,9 @@ mod tests {
         assert_eq!(next.sync.server_url, "https://sync.example.org");
         // Values are checked as always.
         let next = saved
-            .patched(patch(serde_json::json!({ "archive_days": 0 })))
+            .patched(patch(serde_json::json!({ "archive_days": 4000 })))
             .unwrap();
-        assert_eq!(next.archive_days, 1);
+        assert_eq!(next.archive_days, MAX_ARCHIVE_DAYS);
     }
 
     #[test]
@@ -800,6 +1118,11 @@ mod tests {
         }
         .sanitised();
         assert_eq!(bad.auto_archive_hours, 1);
+        let never = Settings {
+            auto_archive_hours: NEVER_ARCHIVE,
+            ..Settings::default()
+        };
+        assert_eq!(never.sanitised().auto_archive_hours, NEVER_ARCHIVE);
         assert_eq!(bad.search_template, Settings::default().search_template);
         assert_eq!(bad.external_links, "mini");
         for known in ["tab", "peek", "mini"] {
@@ -842,6 +1165,81 @@ mod tests {
         };
         let saved = serde_json::to_string(&on).unwrap();
         assert_eq!(serde_json::from_str::<Appearance>(&saved).unwrap(), on);
+    }
+
+    #[test]
+    fn the_known_services_open_in_the_system_engine_until_turned_off() {
+        let engine = Settings::default().system_engine;
+        assert_eq!(engine.hosts(), PROTECTED_VIDEO_SITES);
+        let own = SystemEngine {
+            known: false,
+            sites: vec!["tv.example.org".into()],
+        };
+        assert_eq!(own.hosts(), ["tv.example.org"]);
+    }
+
+    #[test]
+    fn a_known_service_can_be_named_alone_while_the_known_ones_are_off() {
+        let mut engine = SystemEngine {
+            known: false,
+            sites: Vec::new(),
+        };
+        engine
+            .set_site("www.netflix.com", "netflix.com".into(), true)
+            .unwrap();
+        // As after any later change of the settings.
+        let kept = engine.sanitised();
+        assert_eq!(kept.sites, ["netflix.com"]);
+        assert!(kept.names("www.netflix.com") && !kept.knows("www.netflix.com"));
+        // With the known services on again they cover it.
+        let known = SystemEngine {
+            known: true,
+            ..kept
+        }
+        .sanitised();
+        assert!(known.sites.is_empty() && known.knows("www.netflix.com"));
+    }
+
+    #[test]
+    fn the_site_panel_cannot_name_more_sites_than_are_kept() {
+        let mut engine = SystemEngine {
+            known: true,
+            sites: (0..MAX_SYSTEM_ENGINE_SITES)
+                .map(|n| format!("tv{n}.example.org"))
+                .collect(),
+        };
+        let full = engine.sites.clone();
+        assert!(
+            engine
+                .set_site("more.example.org", "more.example.org".into(), true)
+                .is_err()
+        );
+        assert_eq!(engine.sites, full);
+        // Taking one out, and naming one that is there already, still work.
+        engine
+            .set_site("tv0.example.org", "tv0.example.org".into(), true)
+            .unwrap();
+        engine
+            .set_site("tv1.example.org", "tv1.example.org".into(), false)
+            .unwrap();
+        assert_eq!(engine.sites.len(), MAX_SYSTEM_ENGINE_SITES - 1);
+    }
+
+    #[test]
+    fn own_sites_for_the_system_engine_are_hosts_each_once() {
+        let typed = SystemEngine {
+            known: true,
+            sites: vec![
+                "https://www.TV.example.org/watch?v=1".into(),
+                "tv.example.org".into(),
+                "not a host".into(),
+                // One of the known services: the switch above covers it.
+                "netflix.com".into(),
+                "music.example.com".into(),
+            ],
+        };
+        let kept = typed.sanitised();
+        assert_eq!(kept.sites, ["tv.example.org", "music.example.com"]);
     }
 
     #[test]
@@ -897,5 +1295,28 @@ mod tests {
                 .iter()
                 .all(|s| s.clone().sanitised().as_ref() == Some(s))
         );
+    }
+
+    #[test]
+    fn a_patch_keeps_the_stamps_of_own_images() {
+        let mut start = Settings::default();
+        start.appearance.looks.insert(
+            "work".into(),
+            SpaceLook {
+                empty_image: Some(7),
+                ..SpaceLook::default()
+            },
+        );
+        // A page that last saw a sidebar image and no empty-window image saves the strength.
+        let serde_json::Value::Object(stale) = serde_json::json!({ "appearance": { "looks": { "work": {
+            "tint": 20, "sidebar_effect": "image", "sidebar_image": 3, "empty_image": null,
+        } } } }) else {
+            unreachable!()
+        };
+        let look = start.patched(stale).unwrap().appearance.look("work");
+        assert_eq!(look.tint, 20);
+        assert_eq!(look.empty_image, Some(7));
+        assert_eq!(look.sidebar_image, None);
+        assert_eq!(look.sidebar_effect, SidebarEffect::None);
     }
 }

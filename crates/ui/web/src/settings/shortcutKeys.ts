@@ -22,11 +22,15 @@ export const SHORTCUT_GROUPS = [
     actions: {
       new_window: "New window",
       close_window: "Close the window",
-      new_private_window: "New private window",
       new_space: "New space",
+      private_space: "Private space",
+      close_private_space: "Close the private space",
+      hide_private_space: "Hide the private space",
       next_space: "Next space",
       prev_space: "Previous space",
+      space_picker: "Show all spaces, to go to one",
       toggle_sidebar: "Show or hide the sidebar",
+      web_panel: "Open or close the web panel",
     },
   },
   {
@@ -47,7 +51,16 @@ export const SHORTCUT_GROUPS = [
       history: "History",
       downloads: "Downloads",
       settings: "Settings",
+    },
+  },
+  {
+    label: "Developer",
+    actions: {
       toggle_dev_tools: "Developer tools",
+      dev_console: "Console",
+      dev_picker: "Pick an element",
+      dev_network: "Network",
+      dev_reset: "Reset the page (reload past the cache)",
     },
   },
 ] as const;
@@ -55,6 +68,9 @@ export const SHORTCUT_GROUPS = [
 type Group = (typeof SHORTCUT_GROUPS)[number];
 /** A shortcut whose keys can be changed, as the app names it. */
 export type ShortcutAction = { [G in Group as G["label"]]: keyof G["actions"] }[Group["label"]];
+
+/** Who gets a shortcut's keys first when a page is in focus: Magnetite (the page never sees them), or the page (the shortcut runs if the page leaves them alone). */
+export type ShortcutFirst = "magnetite" | "page";
 
 /** The keys each shortcut has now, as the app saves them (`primary+shift+T`); one without keys is missing. */
 export type ShortcutKeys = Partial<Record<ShortcutAction, string>>;

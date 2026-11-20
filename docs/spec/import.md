@@ -14,8 +14,11 @@ along.
   button for every browser found on this computer. A click imports; the
   line below says how many spaces and tabs were added, or why nothing was.
   The command bar's "Import from another browser…" opens this section.
-- On the welcome page of the first start the browsers are chosen first and
-  imported when the page is left (`first-start.md`).
+- On the welcome page a chosen browser is read to show what it would add,
+  space by space; there the spaces can be given other names and icons,
+  and single ones left out. A browser with at least one space left in is read
+  again and imported with "Start browsing"; none is on a device that joined
+  a sync chain (`first-start.md`).
 - An import **adds**. The new spaces follow the existing ones and Magnetite
   switches to the first of them; nothing already in the sidebar changes.
   Importing twice gives the spaces twice. A space whose name is taken gets a
@@ -24,10 +27,14 @@ along.
   already a favorite there is skipped. Imported Today tabs count as used at
   the time of the import, so auto-archive does not remove them at once.
 - **Settings → Data & privacy → Import a bookmarks file** takes the HTML
-  file a browser writes with "Export Bookmarks". This is the way for
+  file a browser writes with "Export Bookmarks", and the JSON and CSV
+  files Magnetite exports (`bookmarks.md`; told apart by how the file
+  starts). A JSON or CSV file of several spaces comes in as a folder per
+  space, as the HTML file of several spaces does. This is the way for
   Safari (File → Export → Bookmarks…), whose data macOS keeps from other
-  apps. The file's bookmarks and folders go to the top of the current
-  space's bookmarks, the Reading List as a folder. An address the space has
+  apps. The file's bookmarks and folders go to the top of the bookmarks
+  of the space chosen next to the button (the current space at first),
+  the Reading List as a folder. An address the space has
   already is skipped, so the same file adds nothing a second time; folders
   left empty and addresses that are no web pages are left out. A file of
   more than 16 MiB, one without bookmarks or one nested more than 32
@@ -124,7 +131,7 @@ instead of standard output; `--summary` prints the tab counts per space.
 ## Privacy
 
 Everything happens on this computer. Magnetite reads another browser's files
-only when you click its button, and keeps what ends up in the sidebar:
+only when you click its button or choose it on the welcome page, and keeps what ends up in the sidebar:
 addresses and titles of tabs, when they were created and last used, and
 names, icons and colours of spaces and folders. It is stored in `state.json` in Magnetite's data folder.
 

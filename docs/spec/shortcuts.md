@@ -5,15 +5,15 @@ keys, or none.
 
 ## Settings → Shortcuts
 
-The page lists every shortcut whose keys can be changed, in four groups,
-each with the keys it has now.
+The page lists every shortcut whose keys can be changed, in groups, each
+with the keys it has now, and then the spaces ("Keys for a space" below).
 
 | Control | What it does |
 |---|---|
 | "Change" | waits for the next key press and gives the shortcut those keys; Esc, or leaving the page, cancels |
 | "Remove" | the shortcut gets no keys; its command stays in the menu bar and the command bar |
-| "Reset" | the shortcut gets its default keys back |
-| "Reset all" | every shortcut gets its default keys back |
+| "Reset" | at the end of the row: the shortcut gets its default keys back, and goes first to whom it does by default |
+| "Reset all" | every shortcut gets its default keys back, and goes first to whom it does by default |
 
 - While the page waits for keys, no shortcut runs and the menu bar's items
   have no keys, so the keys pressed reach the page. This ends with the key
@@ -30,20 +30,75 @@ each with the keys it has now.
 - New keys count at once, in every window, and show in the menu bar, in
   tooltips, in the "+" menu and in the footer's menu.
 
+## Keys for a space
+
+The card "Spaces" lists every space but the private one. "Change" gives a
+space keys that go to it from anywhere, "Remove" takes them away; a space
+has none until it is given some.
+
+- The same rules as for a shortcut apply: Cmd, Ctrl or Option or a function
+  key, no keys with a fixed meaning, and keys something else has are asked
+  about ("Use here": the other shortcut or space has none from then on).
+- The keys are taken before the page sees them, like the other shortcuts
+  for spaces.
+- A shortcut that is given a space's keys, or reset to them, takes them:
+  the space has none from then on. "Reset all" also takes the keys of every
+  space.
+- The keys are saved with the space, so they sync with the sidebar and go
+  when the space is deleted. Keys that arrive from another device and are
+  fixed here, or that a shortcut or an earlier space has here, do nothing
+  on this device.
+
 ## Keys that cannot be changed
 
 Reload, back, forward and zoom (the engine's own), `Cmd+1` to `Cmd+9` (a tab
 by its place) and `Ctrl+1` to `Ctrl+9` (a space by its place), the quick
-search from anywhere (`mini-window.md`), `F12` and the other two ways to
-open DevTools, and the keys inside a peek (`peek.md`).
+search from anywhere (`mini-window.md`), `F12`, and the keys inside a peek
+(`peek.md`).
 
 ## Who gets a key first
 
-The shortcuts for tabs, windows and spaces are taken before the page sees
-the key, whatever keys they have. The others ("Show or hide the sidebar",
-"Pin or unpin the tab", the group "The page" and the group "Magnetite") go
-to the page first, which may use the key itself (`site-controls.md`). This
-belongs to the shortcut, not to its keys.
+A web app can have a use of its own for a shortcut's keys. Each shortcut
+in Settings → Shortcuts has a choice for that:
+
+| Choice | A key pressed in a page |
+|---|---|
+| "Magnetite first" | runs the shortcut; the page never sees the key |
+| "Page first" | goes to the page, which may use it; the shortcut runs if the page leaves the key alone |
+
+- Until the user chooses, the shortcuts for tabs, windows and spaces are
+  "Magnetite first", and the others ("Show or hide the sidebar", "Open or
+  close the web panel", "Pin or unpin the tab", the groups "The page",
+  "Magnetite" and "Developer") are "Page first" (`site-controls.md`).
+- The choice belongs to the shortcut, not to its keys: it stays when the
+  shortcut gets other keys. A choice that differs from the default is
+  shown in the accent colour.
+- A choice counts at once, in every window. "Reset" takes the choice of its
+  shortcut back along with its keys, "Reset all" every choice.
+- The keys that cannot be changed and the keys of a space have no choice:
+  Magnetite gets them first.
+
+### A site that gets them all
+
+A web app with many shortcuts of its own, such as an editor, can have the
+keys of every shortcut first: the site panel's switch "Site's shortcuts
+first" (`site-controls.md`).
+
+- On such a site every shortcut counts as "Page first", whatever its own
+  choice says: the site may use the keys, and the shortcut runs if the site
+  leaves them alone. A site that uses the keys of "Close tab" keeps them
+  too; the command stays in the menu bar and the command bar.
+- The keys without a choice stay Magnetite's there as well.
+- A page the system's own engine shows (`site-controls.md`) has no such
+  switch: there Magnetite gets its keys first as on any site.
+- Only the site panel and Settings can change which sites these are.
+- A site is the registrable domain, as for the site panel's other
+  switches: `www.example.org` and `app.example.org` are `example.org`. It
+  is the site of the page a tab shows, also for keys pressed in a frame of
+  another site inside it.
+- Settings → Shortcuts lists these sites, each with "Remove", and has a
+  field that adds one by its name; of a whole address typed there, the
+  site is kept. "Reset all" empties the list.
 
 With the sidebar (docked or floating) or the top bar in focus, a shortcut
 runs as in a page.
@@ -54,8 +109,10 @@ have no Cmd, Ctrl or Option (a function key), each press switches at once.
 
 ## Sync and other systems
 
-- Changed shortcuts are part of the synced settings (`sync.md`), so they
-  are set up once. Only what differs from the defaults is saved and sent.
+- Changed shortcuts, who gets their keys first and the sites that get
+  them all first are part of the synced settings (`sync.md`), so they are
+  set up once. Only what differs from the
+  defaults is saved and sent.
 - Keys are saved with the system's main modifier, not the literal key: Cmd
   on macOS is Ctrl elsewhere. The Control key of a Mac is Ctrl elsewhere
   too; of two shortcuts that end up on the same keys that way, the one
@@ -73,11 +130,16 @@ have no Cmd, Ctrl or Option (a function key), each press switches at once.
 | What | Where |
 |---|---|
 | The shortcuts with other keys or none: `{"new_tab": "primary+J", "print": null}` | `settings.shortcuts` in `state.json`, and the synced settings |
+| The shortcuts whose keys go first to someone else than by default: `{"find": "magnetite", "close_tab": "page"}` | `settings.shortcut_priority` in `state.json`, and the synced settings |
+| The sites that get every shortcut's keys first: `["example.org"]` | `settings.shortcut_sites` in `state.json`, and the synced settings |
+| A space's keys: `"shortcut": "ctrl+alt+M"` | the space in the sidebar (`state.json`, and the synced sidebar) |
 
 ## Not built yet
 
 - Other keys for the commands under "Keys that cannot be changed".
 - Several keys for one shortcut.
+- A choice per shortcut on one site (a site gets all of them first, or
+  none).
 
 Code: `crates/engine/src/keymap.rs` (defaults, checks), `keys.rs` (matching
 key presses), `menubar.rs` (`apply_keys`),

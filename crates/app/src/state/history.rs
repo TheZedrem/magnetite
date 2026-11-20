@@ -1,6 +1,6 @@
 //! History: the pages visited on this device, kept in `history.json` next
 //! to `state.json`. Never synced, nothing from private profiles, only web
-//! pages, and only as long as Settings → Tabs & archive says.
+//! pages, and only as long as Settings → Data & privacy says.
 
 use std::path::{Path, PathBuf};
 
@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use super::{AppState, new_id};
 
 /// The most visits kept; the oldest go first.
-pub const MAX_VISITS: usize = 10_000;
+pub const MAX_VISITS: usize = 25_000;
 
 /// A second visit of the same page within this time updates the first one
 /// instead of adding another (reloads, a page that changes its address).

@@ -5,9 +5,11 @@
 // Empty space drags the window; a double-click there maximizes it.
 import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { AddressRow } from "./AddressRow";
+import { record } from "./recorder";
 import { Back, Close, Forward, Maximize, Minus, Reload, SidebarIcon, SplitIcon } from "./Icons";
 import { PinnedExtensions, SLOT } from "./PinnedExtensions";
-import { IS_MAC, accentCss, applyAppearance, findTab, hostOf, send, subscribe, type UiState } from "./bridge";
+import { windowBackground } from "./backgrounds";
+import { IS_MAC, accentCss, applyAppearance, findTab, hostOf, keyLabel, lookOf, onRecord, send, subscribe, type UiState } from "./bridge";
 import { keysHint } from "./settings/shortcutKeys";
 import { useSidebarShortcuts } from "./useSidebarShortcuts";
 
@@ -25,6 +27,7 @@ export function TopBar() {
     send({ cmd: "get_state" }).then((s) => window.__magnetite?.setState(s));
   }, []);
   useSidebarShortcuts(false, () => {});
+  useEffect(() => onRecord(() => void record()), []);
   // The window's width in points: how many pinned extensions fit depends on it.
   const [width, setWidth] = useState(window.innerWidth);
   useEffect(() => {
@@ -46,22 +49,22 @@ export function TopBar() {
   const activeItem = state.active_tab ? findTab(state, state.active_tab) : null;
   // Focus rings take the active space's colour, as in the sidebar.
   const space = state.sidebar.spaces.find((s) => s.id === state.active_space);
-  // Extensions that would squeeze the address stay in the menu bar's
-  // Extensions menu. Lengths on the page grow with the text size: the one
+  // Extensions that would squeeze the address wait behind the button at the
+  // end of the icons. Lengths on the page grow with the text size: the one
   // this render's state asks for, which `applyAppearance` sets after it.
   const zoom = state.settings.appearance.text_scale / 100;
   const room = Math.max(0, Math.floor((width / zoom - RESERVED - ADDRESS_MIN) / SLOT));
   return (
     <div
       className="topbar titlebar-drag"
-      style={{ ["--space" as string]: accentCss(space?.accent), ["--bg" as string]: state.chrome, background: state.chrome }}
+      style={{ ["--space" as string]: accentCss(space?.accent), ["--bg" as string]: state.chrome, ...windowBackground("topbar", state.chrome, state.active_space, lookOf(state.settings.appearance, state.active_space), space?.accent) }}
       onDoubleClick={(e) => e.target === e.currentTarget && send({ cmd: "window_maximize" })}
     >
       <div className={`flex shrink-0 items-center gap-0.5 ${IS_MAC ? "pl-[86px]" : "pl-2"}`}>
         <button className="ib no-drag" onClick={() => send({ cmd: "toggle_sidebar" })} title={`${state.sidebar_visible ? "Hide sidebar" : "Show sidebar"}${keysHint(state.keys, "toggle_sidebar")}`}><SidebarIcon /></button>
-        <button className="ib no-drag" disabled={!frontRt?.can_go_back} onClick={() => send({ cmd: "go_back" })} title="Back (⌘[)"><Back /></button>
-        <button className="ib no-drag" disabled={!frontRt?.can_go_forward} onClick={() => send({ cmd: "go_forward" })} title="Forward (⌘])"><Forward /></button>
-        <button className="ib no-drag" disabled={!activeItem && !state.peek} onClick={() => send({ cmd: "reload" })} title="Reload (⌘R)"><Reload /></button>
+        <button className="ib no-drag" disabled={!frontRt?.can_go_back} onClick={() => send({ cmd: "go_back" })} title={`Back (${keyLabel("⌘[", "Alt+←")})`}><Back /></button>
+        <button className="ib no-drag" disabled={!frontRt?.can_go_forward} onClick={() => send({ cmd: "go_forward" })} title={`Forward (${keyLabel("⌘]", "Alt+→")})`}><Forward /></button>
+        <button className="ib no-drag" disabled={!activeItem && !state.peek} onClick={() => send({ cmd: "reload" })} title={`Reload (${keyLabel("⌘R")})`}><Reload /></button>
       </div>
 
       {/* The address, or the peek's controls in the same place so nothing moves. */}
@@ -69,7 +72,7 @@ export function TopBar() {
         {state.peek ? (
           <div className="urlbar no-drag" data-peek>
             <span className="min-w-0 flex-1 truncate"><span className="text-[var(--muted)]">Peek · </span>{state.peek.title || hostOf(state.peek.url)}</span>
-            <button className="h-6 shrink-0 rounded-md bg-white/10 px-2 text-[12px] font-medium hover:bg-white/15" title="Keep as tab (⌘O)" onClick={() => send({ cmd: "peek_to_tab" })}>Keep</button>
+            <button className="h-6 shrink-0 rounded-md bg-white/10 px-2 text-[12px] font-medium hover:bg-white/15" title={`Keep as tab (${keyLabel("⌘O")})`} onClick={() => send({ cmd: "peek_to_tab" })}>Keep</button>
             <button className="ib sm shrink-0" title="Open in split view" aria-label="Open in split view" onClick={() => send({ cmd: "peek_to_split" })}><SplitIcon width={14} height={14} /></button>
             <button className="ib sm shrink-0" title="Close (Esc)" onClick={() => send({ cmd: "close_peek" })}><Close width={14} height={14} /></button>
           </div>
@@ -79,7 +82,7 @@ export function TopBar() {
       </div>
 
       <div className="flex shrink-0 items-center gap-0.5 pr-2">
-        <PinnedExtensions state={state} openMenu={openMenu} popups room={room} />
+        <PinnedExtensions state={state} openMenu={openMenu} room={room} />
         {!IS_MAC && (
           <div className="ml-2 flex items-center gap-0.5">
             <button className="ib no-drag" onClick={() => send({ cmd: "window_minimize" })} title="Minimize" aria-label="Minimize"><Minus /></button>

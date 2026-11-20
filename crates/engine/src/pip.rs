@@ -20,14 +20,17 @@ use std::time::{Duration, Instant};
 use block2::RcBlock;
 use objc2::rc::{Retained, Weak};
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject, Sel};
-use objc2::{ClassType, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send, sel};
+use objc2::{
+    ClassType, MainThreadMarker, MainThreadOnly, Message, class, define_class, msg_send, sel,
+};
 use objc2_app_kit::{
     NSAnimatablePropertyContainer, NSAnimationContext, NSApplication, NSBackingStoreType, NSBox,
-    NSButton, NSColor, NSCursor, NSCursorFrameResizeDirections, NSCursorFrameResizePosition,
-    NSEvent, NSFloatingWindowLevel, NSFont, NSFontWeightMedium, NSFontWeightSemibold, NSImage,
-    NSImageSymbolConfiguration, NSPanel, NSTrackingArea, NSTrackingAreaOptions, NSView, NSWindow,
-    NSWindowCollectionBehavior, NSWindowDidResizeNotification, NSWindowOrderingMode,
-    NSWindowStyleMask, NSWindowWillCloseNotification,
+    NSButton, NSCellImagePosition, NSColor, NSCursor, NSCursorFrameResizeDirections,
+    NSCursorFrameResizePosition, NSEvent, NSFloatingWindowLevel, NSFont, NSFontWeightMedium,
+    NSFontWeightSemibold, NSImage, NSImageSymbolConfiguration, NSPanel, NSTrackingArea,
+    NSTrackingAreaOptions, NSView, NSWindow, NSWindowCollectionBehavior,
+    NSWindowDidResizeNotification, NSWindowOrderingMode, NSWindowStyleMask,
+    NSWindowWillCloseNotification,
 };
 use objc2_foundation::{NSNotification, NSNotificationCenter, NSPoint, NSRect, NSSize, NSString};
 
@@ -45,6 +48,8 @@ const PILL_RADIUS: f64 = 8.0;
 const PLAY: f64 = 52.0;
 const SEEK: f64 = 40.0;
 const CENTER_GAP: f64 = 18.0;
+/// The least room between play/pause and a seek button.
+const MIN_GAP: f64 = 4.0;
 /// Band along each edge, and square at each corner, that resizes the window.
 const EDGE: f64 = 6.0;
 const CORNER: f64 = 16.0;
@@ -138,7 +143,8 @@ impl From<Area> for NSRect {
 /// Where the buttons go on a `w` × `h` video. `labelled` are the widths of
 /// the top buttons with their labels; when the three do not fit side by
 /// side they show only their icons (`compact`). Live video has nothing to
-/// seek in, so it gets no seek buttons.
+/// seek in, so it gets no seek buttons; nor does a video too narrow to hold
+/// them.
 fn layout(w: f64, h: f64, labelled: [f64; 3], live: bool) -> (bool, Vec<(Button, Area)>) {
     let compact = labelled.iter().sum::<f64>() + 2.0 * MARGIN + 3.0 * PILL_GAP > w;
     let width = |i: usize| if compact { PILL_HEIGHT } else { labelled[i] };
@@ -162,8 +168,12 @@ fn layout(w: f64, h: f64, labelled: [f64; 3], live: bool) -> (bool, Vec<(Button,
         (Button::Close, pill(close_x, width(2))),
         (Button::PlayPause, round(w / 2.0, PLAY)),
     ];
-    if !live {
-        let offset = PLAY / 2.0 + CENTER_GAP + SEEK / 2.0;
+    if !live && w >= PLAY + 2.0 * (SEEK + MIN_GAP) {
+        // A narrow (upright) video moves them closer, so they stay on it.
+        let gap = CENTER_GAP
+            .min((w - PLAY - 2.0 * SEEK - 2.0 * MARGIN) / 2.0)
+            .max(MIN_GAP);
+        let offset = PLAY / 2.0 + gap + SEEK / 2.0;
         places.push((Button::Back, round(w / 2.0 - offset, SEEK)));
         places.push((Button::Forward, round(w / 2.0 + offset, SEEK)));
     }
@@ -536,6 +546,7 @@ fn attach(mtm: MainThreadMarker) {
             live,
             observers,
         });
+        show_cursor_in_background(true);
         lay_out(p);
         // Shown briefly when the video pops out, so they can be found.
         set_shown(p, true);
@@ -577,6 +588,7 @@ fn detach() {
         };
         let Some(p) = cell.as_mut() else { return };
         let Some(s) = p.session.take() else { return };
+        show_cursor_in_background(false);
         let center = NSNotificationCenter::defaultCenter();
         for o in &s.observers {
             // SAFETY: tokens returned by addObserverForName on this center.
@@ -633,12 +645,13 @@ fn lay_out(p: &Panel) {
             None => frame.setHidden(true),
         }
         if button.on_top() {
-            let title = if compact {
-                String::new()
+            // Icon only: an empty title would still keep the icon to the
+            // left of the pill's middle.
+            inner.setImagePosition(if compact {
+                NSCellImagePosition::ImageOnly
             } else {
-                labelled_title(*button)
-            };
-            inner.setTitle(&NSString::from_str(&title));
+                NSCellImagePosition::ImageLeading
+            });
         } else if *button == Button::PlayPause
             && let Some(image) = symbol(*button, s.playing)
         {
@@ -691,6 +704,8 @@ fn pointer_left() {
     if GESTURE.get().is_some() {
         return;
     }
+    // Ours would stay on over another app's window.
+    NSCursor::arrowCursor().set();
     PANEL.with(|cell| {
         if let Ok(mut cell) = cell.try_borrow_mut()
             && let Some(p) = cell.as_mut()
@@ -790,15 +805,20 @@ fn dragged() {
 }
 
 fn released((x, y): (f64, f64)) {
-    let Some(Gesture::Press(button)) = GESTURE.take() else {
-        return;
-    };
+    let gesture = GESTURE.take();
     let over = PANEL.with(|cell| {
         let cell = cell.try_borrow().ok()?;
-        button_at(cell.as_ref()?, x, y)
+        let p = cell.as_ref()?;
+        let size = p.window.frame().size;
+        let inside = x >= 0.0 && x < size.width && y >= 0.0 && y < size.height;
+        Some(inside.then(|| button_at(p, x, y)))
     });
-    if over == Some(button) {
-        press(button);
+    match (gesture, over) {
+        // Let go outside the video: the pointer left during the drag, when
+        // that did not count (`pointer_left`).
+        (_, Some(None)) => pointer_left(),
+        (Some(Gesture::Press(button)), Some(Some(over))) if over == Some(button) => press(button),
+        _ => {}
     }
 }
 
@@ -863,7 +883,8 @@ fn set_shown(p: &mut Panel, shown: bool) {
 }
 
 /// Pointing hand on buttons, the resize cursor on edges (macOS 15 has public
-/// ones; older systems keep the arrow), else the arrow.
+/// ones; older systems keep the arrow), else the arrow. They also show while
+/// another app is in front (`show_cursor_in_background`).
 fn cursor(hover: Option<Button>, edges: Option<Edges>) -> Retained<NSCursor> {
     if hover.is_some() {
         return NSCursor::pointingHandCursor();
@@ -894,9 +915,37 @@ fn cursor(hover: Option<Button>, edges: Option<Edges>) -> Retained<NSCursor> {
     )
 }
 
-/// A top button's title: its label a thin space away from the icon.
-fn labelled_title(button: Button) -> String {
-    format!("\u{2009}{}", button.label(false))
+/// Let our cursor show while another app is in front, or no longer. macOS
+/// shows only the frontmost app's cursor, and the video floats over other
+/// apps: there its edges resized it under a plain arrow. No public API
+/// changes that (a window the system resizes itself shows no resize cursor
+/// there either), only this property of our connection to the window
+/// server. Found by name: a system without it keeps the arrow. On while the
+/// panel is on a video (`attach`, `detach`).
+fn show_cursor_in_background(on: bool) {
+    type MainConnection = unsafe extern "C" fn() -> i32;
+    type SetProperty = unsafe extern "C" fn(i32, i32, *const NSString, *const AnyObject) -> i32;
+    // SAFETY: both are C functions of the system's graphics library with
+    // these signatures, called only when present; the property takes a
+    // string key and a boolean number, both alive for the call.
+    unsafe {
+        let main = libc::dlsym(libc::RTLD_DEFAULT, c"CGSMainConnectionID".as_ptr());
+        let set = libc::dlsym(libc::RTLD_DEFAULT, c"CGSSetConnectionProperty".as_ptr());
+        if main.is_null() || set.is_null() {
+            return;
+        }
+        let main = std::mem::transmute::<*mut libc::c_void, MainConnection>(main);
+        let set = std::mem::transmute::<*mut libc::c_void, SetProperty>(set);
+        let key = NSString::from_str("SetsCursorInBackground");
+        let value: Retained<AnyObject> = msg_send![class!(NSNumber), numberWithBool: on];
+        let connection = main();
+        set(
+            connection,
+            connection,
+            Retained::as_ptr(&key),
+            Retained::as_ptr(&value),
+        );
+    }
 }
 
 fn fill(button: Button, hover: bool) -> Retained<NSColor> {
@@ -979,7 +1028,8 @@ fn create_panel(mtm: MainThreadMarker) -> Panel {
         .map(|button| {
             let image = symbol(button, false).unwrap_or_default();
             let inner = if button.on_top() {
-                let title = NSString::from_str(&labelled_title(button));
+                // The label, a thin space away from the icon.
+                let title = NSString::from_str(&format!("\u{2009}{}", button.label(false)));
                 // SAFETY: no target or action: the panel's view handles clicks.
                 unsafe {
                     NSButton::buttonWithTitle_image_target_action(&title, &image, None, None, mtm)
@@ -1047,6 +1097,20 @@ mod tests {
         let back = place(&places, Button::BackToTab).unwrap();
         let minimize = place(&places, Button::Minimize).unwrap();
         assert!(back.x + back.w < minimize.x);
+    }
+
+    #[test]
+    fn seek_buttons_stay_on_a_narrow_video() {
+        let (_, places) = layout(160.0, 284.0, LABELLED, false);
+        let back = place(&places, Button::Back).unwrap();
+        let play = place(&places, Button::PlayPause).unwrap();
+        let forward = place(&places, Button::Forward).unwrap();
+        assert!(back.x >= MARGIN && forward.x + forward.w <= 160.0 - MARGIN);
+        assert!(back.x + back.w < play.x && play.x + play.w < forward.x);
+        // Too narrow for them: play/pause alone.
+        let (_, places) = layout(120.0, 213.0, LABELLED, false);
+        assert!(place(&places, Button::Back).is_none());
+        assert!(place(&places, Button::PlayPause).is_some());
     }
 
     #[test]

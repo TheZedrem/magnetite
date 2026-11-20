@@ -24,6 +24,9 @@ export const Reload = icon(L.RotateCw);
 export const Reset = icon(L.RotateCcw);
 export const SidebarIcon = icon(L.PanelLeft);
 export const Close = icon(L.X);
+/** The bar before a docked web panel (Empty.tsx): put the panel away. */
+/** The private space. */
+export const MaskIcon = icon(L.VenetianMask);
 /** The top bar's maximize button (Linux, Windows). */
 export const Maximize = icon(L.Square, { size: 13 });
 export const ChevronDown = icon(L.ChevronDown);
@@ -47,6 +50,7 @@ export const Pause = icon(L.Pause, filled);
 export const SkipBack = icon(L.SkipBack, filled);
 export const SkipForward = icon(L.SkipForward, filled);
 export const Speaker = icon(L.Volume2);
+export const ScreenShareIcon = icon(L.ScreenShare);
 export const SpeakerOff = icon(L.VolumeX);
 export const PictureInPicture = icon(L.PictureInPicture2);
 // Isolation levels: shared, separate, private.
@@ -66,14 +70,28 @@ export const PaletteIcon = icon(L.Palette);
 export const CookieIcon = icon(L.Cookie);
 export const PuzzleIcon = icon(L.Puzzle);
 export const DevicesIcon = icon(L.MonitorSmartphone);
+export const PhoneIcon = icon(L.Smartphone);
 export const PrivacyIcon = icon(L.ShieldCheck);
 export const AdblockIcon = icon(L.ShieldBan);
+export const VideoIcon = icon(L.MonitorPlay);
 export const InfoIcon = icon(L.Info);
 export const GlobeIcon = icon(L.Globe);
 export const NotesIcon = icon(L.ScrollText);
 export const BugIcon = icon(L.Bug);
 export const CodeIcon = icon(L.SquareCode);
 export const BracesIcon = icon(L.Braces);
+// The developer bar (DevBar.tsx).
+export const PickerIcon = icon(L.SquareMousePointer);
+export const ConsoleIcon = icon(L.SquareTerminal);
+export const RequestsIcon = icon(L.ArrowDownUp);
+export const EmulateIcon = icon(L.Contrast);
+/** Clear a local page's site data and load it again. */
+export const ClearDataIcon = icon(L.Eraser);
+export const TimezoneIcon = icon(L.Globe);
+export const ResponsiveIcon = icon(L.TabletSmartphone);
+export const CaptureSetIcon = icon(L.Images);
+export const RecordIcon = icon(L.Video);
+export const StopIcon = icon(L.Square);
 export const CaptureIcon = icon(L.Focus);
 export const TabPlus = icon(L.SquarePlus);
 export const SmartFolderIcon = icon(L.FolderSync);

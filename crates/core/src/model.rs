@@ -78,9 +78,31 @@ pub struct TabItem {
     /// sight, and a Today tab is not archived by itself.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub keep_active: bool,
+    /// A favorite that opens as a web panel: over the page in front, not
+    /// as a tab in its place. Counts for favorites only.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub panel: bool,
+    /// The width the web panel was dragged to, in points; none: the usual.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub panel_width: Option<u32>,
+    /// The web panel's page is shown as on a phone (a mobile browser's
+    /// identity).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub panel_mobile: bool,
+    /// A favorite that shows in these spaces only; empty: in every space.
+    /// Counts for favorites only (`SidebarSnapshot::favorite_shows`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub only_in: Vec<Id>,
 }
 
 impl TabItem {
+    /// No web panel any more: a plain tab, without a panel's settings.
+    pub fn end_panel(&mut self) {
+        self.panel = false;
+        self.panel_width = None;
+        self.panel_mobile = false;
+    }
+
     /// A tab with just an id, address and title; set the other fields with
     /// struct update syntax (`TabItem { home_url: …, ..TabItem::new(…) }`).
     pub fn new(id: impl Into<Id>, url: impl Into<String>, title: impl Into<String>) -> Self {
@@ -123,9 +145,19 @@ pub struct Space {
     /// Emoji or a named icon from our icon set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
+    /// A picture of the user's own, shown in place of `icon`: a small WebP
+    /// file as base64 (the app keeps it within `MAX_ICON_IMAGE_BYTES`).
+    /// Part of the space, so it syncs with it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_image: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accent: Option<Color>,
     pub profile_id: Id,
+    /// The keys that go to this space, as Settings → Shortcuts saves keys
+    /// (`ctrl+shift+W`). The app reads them and leaves out what cannot be
+    /// a shortcut.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shortcut: Option<String>,
     #[serde(default)]
     pub pinned: Vec<SidebarNode>,
     #[serde(default)]
@@ -172,6 +204,17 @@ impl SidebarSnapshot {
             favorites: Vec::new(),
             spaces: Vec::new(),
         }
+    }
+
+    /// Whether favorite `tab` shows in space `space`: in every space, unless
+    /// it names the spaces it is for. Spaces that are gone (deleted, or of
+    /// another device) do not count: a favorite left with none shows
+    /// everywhere rather than nowhere.
+    pub fn favorite_shows(&self, tab: &TabItem, space: &str) -> bool {
+        let mut named = (tab.only_in.iter())
+            .filter(|id| self.spaces.iter().any(|s| s.id == **id))
+            .peekable();
+        named.peek().is_none() || named.any(|id| id == space)
     }
 
     /// Whether anything in the sidebar runs in profile `id`: a space, a

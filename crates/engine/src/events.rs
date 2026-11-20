@@ -8,8 +8,6 @@ pub type ContentId = u64;
 #[serde(rename_all = "snake_case")]
 pub enum Shortcut {
     NewTab,
-    /// A private window: a Magnetite of its own that keeps nothing.
-    NewPrivateWindow,
     /// `Cmd+N`: another window on the same sidebar.
     NewWindow,
     /// `Cmd+Shift+W`: close the window (the last one quits).
@@ -22,12 +20,26 @@ pub enum Shortcut {
     ReopenClosed,
     TogglePin,
     NewSpace,
+    /// `Cmd+Shift+P`: open the private space, or go to it.
+    PrivateSpace,
+    /// `Cmd+Shift+X`: close the private space at once, from any
+    /// space, with everything opened from it.
+    ClosePrivateSpace,
+    /// `Cmd+Shift+D`: hide the private space, from any space: it stays
+    /// open but shows nowhere until `PrivateSpace` goes to it again.
+    HidePrivateSpace,
     NextSpace,
     PrevSpace,
     /// 1-based, `Cmd+1` to `Cmd+9`.
     SelectTab(u8),
     /// 1-based, `Ctrl+1` to `Ctrl+9` (`Alt` outside macOS).
     SelectSpace(u8),
+    /// `Ctrl+0` (`Alt+0` outside macOS): the list of all spaces by name,
+    /// to choose one from.
+    SpacePicker,
+    /// Keys a space has of its own were pressed (Settings → Shortcuts);
+    /// the app knows whose they are.
+    SpaceKeys(crate::keymap::Combo),
     /// Escape inside the peek window.
     ClosePeek,
     /// `Cmd+O` inside the peek window: keep the page as a tab.
@@ -38,14 +50,21 @@ pub enum Shortcut {
     CopyLink,
     /// `Cmd+Shift+O`: open the site panel (the page may claim the key).
     SitePanel,
+    /// `Cmd+Option+P`: close the open web panel, or open the one used
+    /// last (the page may claim the key).
+    WebPanel,
     /// `Cmd+Shift+2`: start the capture tool (the page may claim the key).
     Capture,
     /// `Cmd+Shift+=`: open a page beside the current one (split view).
     NewSplit,
     /// `Cmd+Option+I` / F12: open or close the page's `DevTools`.
     ToggleDevTools,
-    /// `Cmd+Option+J` / `Cmd+Option+C`: open the page's `DevTools`.
-    OpenDevTools,
+    /// `Cmd+Option+J`, `Cmd+Option+C`, `Cmd+Option+E`: open the page's
+    /// `DevTools` on that panel, or start their element picker.
+    DevPanel(DevPanel),
+    /// `Cmd+Option+R`: clear the site's storage and load the page anew,
+    /// past the cache (the page may claim the key).
+    DevReset,
     /// Menu bar, `Cmd+,`: open Settings.
     Settings,
     /// Menu bar, `Cmd+Option+L` (Chromium's downloads command): the sidebar's
@@ -73,6 +92,32 @@ pub enum Shortcut {
     /// `Cmd+Option+N`, system-wide or from the menu bar: the quick search,
     /// whose pick opens in a mini window.
     NewMini,
+}
+
+/// Where `DevTools` open (`Engine::content_show_panel`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DevPanel {
+    Elements,
+    Console,
+    Network,
+    Sources,
+    Application,
+    /// The Elements panel with the element picker started.
+    Picker,
+}
+
+impl DevPanel {
+    /// The panel's name in the `DevTools` frontend.
+    pub(crate) fn frontend_name(self) -> &'static str {
+        match self {
+            Self::Elements | Self::Picker => "elements",
+            Self::Console => "console",
+            Self::Network => "network",
+            Self::Sources => "sources",
+            Self::Application => "resources",
+        }
+    }
 }
 
 /// A choice from our items in the `DevTools` menu (`EngineEvent::DevToolsMenu`).
@@ -167,12 +212,39 @@ pub enum EngineEvent {
     /// The divider beside docked DevTools was let go or double-clicked:
     /// their size per side, to keep.
     DevToolsResized(crate::DevToolsSize),
+    /// The web panel showing page `id` was dragged to `width` points and
+    /// let go, or double-clicked at its edge (none: the usual width).
+    WebPanelResized {
+        id: ContentId,
+        width: Option<u32>,
+    },
+    /// The close button of the open web panel was pressed.
+    WebPanelClose,
     /// A divider between split pages was dragged, let go or double-clicked.
     /// `path` and `index` name it as in `magnetite_core::split::Divider`.
     SplitDivider {
         path: Vec<usize>,
         index: usize,
         action: DividerAction,
+    },
+    /// Page `id` logged an error to its console: an uncaught exception, a
+    /// failed request, `console.error`.
+    ConsoleError {
+        id: ContentId,
+    },
+    /// A picture of page `id`, which is being recorded
+    /// (`Engine::screencast`): a JPEG, base64.
+    ScreencastFrame {
+        id: ContentId,
+        jpeg: String,
+    },
+    /// Page `id` could not load `url` and shows an error page at that
+    /// address; no `UrlChanged` comes for it. `refused`: nothing listens at
+    /// that address (a development server that is not running).
+    LoadFailed {
+        id: ContentId,
+        url: String,
+        refused: bool,
     },
     /// CEF is initialised; the delegate may create the frame now.
     Ready,
@@ -221,6 +293,10 @@ pub enum EngineEvent {
     /// Chromium's own extension pins changed ("Pin to toolbar"): read
     /// [`crate::Engine::extensions`] again.
     ExtensionPinsChanged,
+    /// The password and autofill switches were changed on one of Chromium's
+    /// own pages, to these: keep them and hand them back with
+    /// [`crate::Engine::set_autofill`], which sets every profile alike.
+    AutofillChanged(crate::AutofillPrefs),
     /// A download started, moved on (about every percent), finished or failed.
     Download(DownloadReport),
     /// A page asks for a permission; answer with
@@ -247,6 +323,12 @@ pub enum EngineEvent {
         camera: bool,
         microphone: bool,
     },
+    /// Another page (or the page itself) started or stopped sharing this
+    /// tab's picture (`tabshare.rs`).
+    ShareChanged {
+        id: ContentId,
+        shared: bool,
+    },
     LoadingChanged {
         id: ContentId,
         loading: bool,
@@ -271,6 +353,16 @@ pub enum EngineEvent {
         source: UrlSource,
         context: Option<String>,
     },
+    /// An extension opened a tab (`chrome.tabs.create`) and its page exists
+    /// already: content `id`, loading `url` in the profile `context` (`""`:
+    /// the default context) of the page the tab was opened from. The
+    /// delegate makes a tab for it, or closes the content.
+    ExtensionTabOpened {
+        id: ContentId,
+        url: String,
+        background: bool,
+        context: String,
+    },
     Shortcut {
         from: Option<ContentId>,
         shortcut: Shortcut,
@@ -282,9 +374,13 @@ pub enum EngineEvent {
         argv: Vec<String>,
         cwd: Option<std::path::PathBuf>,
     },
-    /// The user asked to quit (Cmd+Q, Dock menu, SIGTERM). The delegate
+    /// The user asked to quit (Quit in a menu, the second Cmd+Q, SIGTERM;
+    /// on Linux and Windows also closing the last window). The delegate
     /// should save state and call [`crate::Engine::quit`].
     QuitRequested,
+    /// The last window was closed and Magnetite runs on without one (macOS).
+    /// The delegate should save state, as before quitting.
+    FrameHidden,
     /// Fires roughly once a minute for housekeeping (auto-archive, unloading).
     Tick,
     /// The system is short of memory: pages nobody looks at should go.
@@ -294,6 +390,12 @@ pub enum EngineEvent {
     MiniToTab {
         id: ContentId,
         space: Option<String>,
+    },
+    /// Enter in mini window `id`'s address field: `input` is what was
+    /// typed, an address or a search.
+    MiniNavigate {
+        id: ContentId,
+        input: String,
     },
 }
 
@@ -305,6 +407,11 @@ impl EngineEvent {
             Self::DevToolsMenu { .. } => "DevToolsMenu",
             Self::SplitDivider { .. } => "SplitDivider",
             Self::DevToolsResized(_) => "DevToolsResized",
+            Self::WebPanelResized { .. } => "WebPanelResized",
+            Self::WebPanelClose => "WebPanelClose",
+            Self::ConsoleError { .. } => "ConsoleError",
+            Self::LoadFailed { .. } => "LoadFailed",
+            Self::ScreencastFrame { .. } => "ScreencastFrame",
             Self::Ready => "Ready",
             Self::FrameCreated { .. } => "FrameCreated",
             Self::WindowClosed { .. } => "WindowClosed",
@@ -317,8 +424,10 @@ impl EngineEvent {
             Self::FaviconChanged { .. } => "FaviconChanged",
             Self::ContentFocused { .. } => "ContentFocused",
             Self::MediaChanged { .. } => "MediaChanged",
+            Self::ShareChanged { .. } => "ShareChanged",
             Self::ExtensionMenu(..) => "ExtensionMenu",
             Self::ExtensionPinsChanged => "ExtensionPinsChanged",
+            Self::AutofillChanged(_) => "AutofillChanged",
             Self::Download(_) => "Download",
             Self::PermissionPrompt(_) => "PermissionPrompt",
             Self::PermissionPromptClosed { .. } => "PermissionPromptClosed",
@@ -327,12 +436,15 @@ impl EngineEvent {
             Self::MediaAccessChanged { .. } => "MediaAccessChanged",
             Self::LoadingChanged { .. } => "LoadingChanged",
             Self::OpenUrlRequested { .. } => "OpenUrlRequested",
+            Self::ExtensionTabOpened { .. } => "ExtensionTabOpened",
             Self::Shortcut { .. } => "Shortcut",
             Self::Relaunched { .. } => "Relaunched",
             Self::QuitRequested => "QuitRequested",
+            Self::FrameHidden => "FrameHidden",
             Self::Tick => "Tick",
             Self::MemoryPressure(_) => "MemoryPressure",
             Self::MiniToTab { .. } => "MiniToTab",
+            Self::MiniNavigate { .. } => "MiniNavigate",
         }
     }
 }

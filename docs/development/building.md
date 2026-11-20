@@ -20,9 +20,9 @@ export CEF_PATH="$HOME/.local/share/cef"
 ```
 
 The official CEF builds come without the H.264, AAC and HEVC decoders. On
-macOS with Apple silicon, releases and CI use
+macOS with Apple silicon and on Linux and Windows x86_64, releases and CI use
 [Magnetite's own CEF build](https://github.com/magnetite-browser/magnetite-cef)
-instead, which has them and one patch. `scripts/cef.sh` fetches it (135 MB),
+instead, which has them and our patches. `scripts/cef.sh` fetches it,
 checks its hash and unpacks it:
 
 ```sh
@@ -98,7 +98,8 @@ container: `scripts/linux-container.sh build` or `scripts/linux-container.sh tes
 In a Wayland session Magnetite runs as a Wayland client if its CEF has
 Magnetite's Wayland patch (`docs/adr/0012-wayland.md`): the package then
 holds `magnetite-patches.txt`, from Magnetite's CEF build, which names it.
-With the official CEF of the build above it runs as an X11 client, through
+The Linux x86_64 releases have it. With the official CEF (a build without
+`scripts/cef.sh`, or aarch64) it runs as an X11 client, through
 XWayland, and `--ozone-platform=wayland` stops it at the first page; a
 session without XWayland therefore needs Magnetite's CEF.
 `--ozone-platform=x11` or `=wayland` picks one by hand. To test
@@ -111,18 +112,38 @@ scripts/wayland-test.sh dist/magnetite-<version>      # the smoke test
 scripts/wayland-test.sh --help                        # steps files, results
 ```
 
-## Windows (not built yet)
+## Windows
 
-Nobody has built Magnetite on Windows so far. The scripts are prepared for
-it, and these should be the steps: Visual Studio 2022 Build Tools with
-"Desktop development with C++" (brings CMake and Ninja), Rust for MSVC,
-Node 22, pnpm 10 and Git for Windows. Run the script in Git Bash started
-from the "x64 Native Tools Command Prompt", so `cl`, `cmake` and `ninja` are
-on `PATH`:
+Visual Studio 2022 Build Tools with "Desktop development with C++" (brings
+CMake and Ninja), Rust for MSVC, Node 22, pnpm 10 and Git for Windows. Run
+the script in Git Bash started from the "x64 Native Tools Command Prompt"
+(`"C:\Program Files\Git\bin\bash.exe"`), so `cl`, `cmake` and `ninja` are on
+`PATH`:
 
 ```sh
-scripts/build.sh
+scripts/build.sh              # dist/magnetite-<version>/, a zip and the installer
 ```
+
+Start `dist/magnetite-<version>/magnetite.exe`. That file is CEF's
+`bootstrap.exe` under our name: it loads Magnetite from `magnetite.dll`
+(`crates/windows`) and makes the sandbox information Chromium needs on
+Windows. `cargo build` alone also makes a plain `target/debug/magnetite.exe`;
+it starts, but without that information its GPU process fails and pages are
+drawn without the graphics card.
+
+The installer (`Magnetite-<version>-windows-<arch>-setup.exe`) is made when
+[Inno Setup 6](https://jrsoftware.org/isinfo.php) is installed
+(`winget install JRSoftware.InnoSetup`), from `packaging/windows/magnetite.iss`.
+It asks whether to install for all users (the default: administrator rights,
+`Program Files`) or for the current user only (no rights needed,
+`%LOCALAPPDATA%\Programs`), and then for the folder. Without questions:
+`/VERYSILENT` with `/ALLUSERS` or `/CURRENTUSER`, and `/DIR=<folder>`.
+
+Windows builds start, show pages and pass the tests. The window's buttons
+(minimise, maximise, close) are at the top right, in a row above the page
+area (`crates/engine/src/caption.rs`), or in the top bar when that is on.
+Still missing there: a signature for
+`magnetite.exe` and the installer, and what the specs list as macOS only.
 
 ## Testing
 

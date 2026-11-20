@@ -1,10 +1,12 @@
 // Pinned extensions in the sidebar's top row, or in the top bar. A click
 // opens the extension (its popup) for the page in front; right-click offers
-// its options and taking it out of the sidebar or the top bar. All extensions
-// are in the menu bar too.
+// its options and taking it out of the sidebar or the top bar. In the top
+// bar a button after the icons lists the extensions without one. All
+// extensions are in the menu bar too.
 import { useEffect, useState } from "react";
-import type { MenuItem } from "./ContextMenu";
-import { extensionIcon, send, type ExtensionInfo, type UiState } from "./bridge";
+import { SEPARATOR, type MenuItem } from "./ContextMenu";
+import { PuzzleIcon } from "./Icons";
+import { IS_MAC, extensionIcon, send, type ExtensionInfo, type UiState } from "./bridge";
 
 /** Longest wait for a popup before the button takes clicks again (CEF holds
  * each popup for 2 s, see docs/development/upstream.md). */
@@ -12,26 +14,117 @@ const OPENING_MS = 5000;
 
 /** Room per icon in the top row (button plus gap), in points. */
 export const SLOT = 30;
-/** What the rest of the row takes: traffic lights, sidebar toggle, back, forward, reload, padding. */
-const RESERVED = 86 + 28 + 3 * 30 + 12;
+/** What the rest of the sidebar's row takes: the traffic lights (macOS; elsewhere the left padding), sidebar toggle, back and forward (narrow there, `.hdr .nav`), reload, the gaps around the empty stretch and the right padding. */
+const RESERVED = (IS_MAC ? 86 : 8) + 28 + 2 * 22 + 30 + 10;
 
 type OpenMenu = (x: number, y: number, items: MenuItem[]) => void;
 
-/** `popups`: in the top bar, which opens menus as windows below itself.
- * `room`: how many icons fit there; the sidebar works it out from its width. */
-export function PinnedExtensions({ state, openMenu, popups = false, room }: { state: UiState; openMenu: OpenMenu; popups?: boolean; room?: number }) {
+/** The installed extensions that are pinned, in the order they were pinned. */
+function pinnedOf(state: UiState): ExtensionInfo[] {
   const installed = new Map(state.extensions.map((e) => [e.id, e]));
-  const pinned = state.settings.pinned_extensions.flatMap((id) => installed.get(id) ?? []);
-  // Those that do not fit stay in the menu bar's Extensions menu. The row
-  // grows with the text size, the sidebar's width in points does not.
-  const { sidebar_width, text_scale } = state.settings.appearance;
-  room ??= Math.max(0, Math.floor((sidebar_width / (text_scale / 100) - RESERVED) / SLOT));
+  return state.pinned_extensions.flatMap((id) => installed.get(id) ?? []);
+}
+
+/**
+ * As many pinned icons as fit.
+ * `room`: in the top bar, how many places it has. There the icons end in a
+ * button that lists the extensions without one (pinned ones that do not
+ * fit, then the unpinned) and takes one of the places, and menus open as
+ * windows below the bar. The sidebar works its room out from its width and
+ * shows pinned icons only; the rest stay in the menu bar's Extensions menu.
+ */
+export function PinnedExtensions({ state, openMenu, room }: { state: UiState; openMenu: OpenMenu; room?: number }) {
+  const pinned = pinnedOf(state);
+  if (room === undefined) {
+    // The row grows with the text size, the sidebar's width in points does not.
+    const { sidebar_width, text_scale } = state.settings.appearance;
+    const fit = Math.max(0, Math.floor((sidebar_width / (text_scale / 100) - RESERVED) / SLOT));
+    return pinned.slice(0, fit).map((e) => <ExtensionButton key={e.id} extension={e} openMenu={openMenu} popups={false} />);
+  }
+  const unpinned = state.extensions.filter((e) => !pinned.includes(e));
+  const all = pinned.length <= room && unpinned.length === 0;
+  const shown = pinned.slice(0, all ? room : Math.max(0, room - 1));
+  const rest = [...pinned.slice(shown.length), ...unpinned];
   return (
     <>
-      {pinned.slice(0, room).map((e) => (
-        <ExtensionButton key={e.id} extension={e} openMenu={openMenu} popups={popups} />
+      {shown.map((e) => (
+        <ExtensionButton key={e.id} extension={e} openMenu={openMenu} popups />
       ))}
+      {rest.length > 0 && room > 0 && <MoreButton rest={rest} />}
     </>
+  );
+}
+
+/**
+ * The extension bar (Settings → Appearance), a row below the sidebar's
+ * address: the pinned extensions that fit in one line, then a button at the
+ * right edge that lists the rest (pinned ones that do not fit, then the
+ * unpinned) and opens Settings → Extensions. Nothing shows while no
+ * extension is installed.
+ */
+export function ExtensionBar({ state, openMenu }: { state: UiState; openMenu: OpenMenu }) {
+  if (state.extensions.length === 0) return null;
+  const pinned = pinnedOf(state);
+  // The row's padding (8 each side) and the button come off the width.
+  const { sidebar_width, text_scale } = state.settings.appearance;
+  const fit = Math.max(0, Math.floor((sidebar_width / (text_scale / 100) - 16 - 28) / SLOT));
+  const rest = [...pinned.slice(fit), ...state.extensions.filter((e) => !pinned.includes(e))];
+  return (
+    <div className="flex shrink-0 items-center gap-0.5 px-2 pt-1">
+      {pinned.slice(0, fit).map((e) => (
+        <ExtensionButton key={e.id} extension={e} openMenu={openMenu} popups={false} />
+      ))}
+      <span className="flex-1" />
+      <button
+        className="ib no-drag"
+        title="Extensions"
+        aria-label="Extensions"
+        aria-haspopup="menu"
+        onClick={(ev) => {
+          const r = ev.currentTarget.getBoundingClientRect();
+          openMenu(Math.round(r.left), Math.round(r.bottom + 4), moreExtensionsMenu(rest));
+        }}
+      >
+        <PuzzleIcon />
+      </button>
+    </div>
+  );
+}
+
+/** The menu of the button after the icons: a click on an extension opens it, as its icon would. */
+export function moreExtensionsMenu(rest: ExtensionInfo[]): MenuItem[] {
+  return [
+    ...rest.map((e) => ({ label: e.name, icon: <ExtensionIcon extension={e} />, onClick: () => void send({ cmd: "open_extension", id: e.id }) })),
+    ...(rest.length > 0 ? [SEPARATOR] : []),
+    { label: "Manage extensions", onClick: () => void send({ cmd: "new_tab", url: "magnetite://ui/settings#extensions" }) },
+  ];
+}
+
+function MoreButton({ rest }: { rest: ExtensionInfo[] }) {
+  return (
+    <button
+      className="ib no-drag"
+      title="More extensions"
+      aria-label="More extensions"
+      aria-haspopup="menu"
+      onClick={(ev) => {
+        const r = ev.currentTarget.getBoundingClientRect();
+        const [x, y] = [Math.round(r.left), Math.round(r.bottom + 4)];
+        send({ cmd: "top_bar_popup", popup: "extensions", id: rest.map((e) => e.id).join(","), x, y, width: 208, height: 8 + 9 + (rest.length + 1) * 28 });
+      }}
+    >
+      <PuzzleIcon />
+    </button>
+  );
+}
+
+/** An extension's icon, or its first letter if it has none that loads. */
+function ExtensionIcon({ extension: e }: { extension: ExtensionInfo }) {
+  const [broken, setBroken] = useState(false);
+  return broken ? (
+    <span className="grid w-4 shrink-0 place-items-center text-[12px] font-semibold">{e.name.slice(0, 1).toUpperCase()}</span>
+  ) : (
+    <img className="shrink-0" src={extensionIcon(e.id)} alt="" width={16} height={16} draggable={false} onError={() => setBroken(true)} />
   );
 }
 
@@ -44,7 +137,6 @@ export function extensionMenu(e: ExtensionInfo, place: "Sidebar" | "Top Bar"): M
 }
 
 function ExtensionButton({ extension: e, openMenu, popups }: { extension: ExtensionInfo; openMenu: OpenMenu; popups: boolean }) {
-  const [broken, setBroken] = useState(false);
   // While the popup loads, another click would cancel it: ignore clicks until
   // the popup takes the keyboard (the sidebar loses focus) or OPENING_MS pass.
   const [opening, setOpening] = useState(false);
@@ -81,11 +173,7 @@ function ExtensionButton({ extension: e, openMenu, popups }: { extension: Extens
         menu(ev.clientX, ev.clientY);
       }}
     >
-      {broken ? (
-        <span className="text-[12px] font-semibold">{e.name.slice(0, 1).toUpperCase()}</span>
-      ) : (
-        <img src={extensionIcon(e.id)} alt="" width={16} height={16} draggable={false} onError={() => setBroken(true)} />
-      )}
+      <ExtensionIcon extension={e} />
     </button>
   );
 }

@@ -57,6 +57,12 @@ host_arch() {
   esac
 }
 
+# Windows: Git Bash puts its own /usr/bin/link (a Unix tool) ahead of MSVC's
+# link.exe, and rustc would call that one. The compiler's folder goes first.
+if [[ $(host_os) == windows ]] && command -v cl >/dev/null; then
+  PATH="$(dirname "$(command -v cl)"):$PATH"
+fi
+
 # Cargo's target folder, as a path this shell can use.
 target_dir() {
   local dir="${CARGO_TARGET_DIR:-$ROOT/target}"
@@ -125,6 +131,15 @@ sha256_of() {
     sha256sum "$1" | cut -d' ' -f1
   else
     shasum -a 256 "$1" | cut -d' ' -f1
+  fi
+}
+
+# Lowercase hex SHA-1 of a file.
+sha1_of() {
+  if command -v sha1sum >/dev/null; then
+    sha1sum "$1" | cut -d' ' -f1
+  else
+    shasum -a 1 "$1" | cut -d' ' -f1
   fi
 }
 

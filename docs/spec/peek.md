@@ -20,11 +20,11 @@ it as a tab, or put it beside the current tab in split view.
   lock follows the pin state within a minute.
 - Links opened in the background (`Cmd`+click, middle click) become
   background Today tabs, never a peek.
-- Settings → General → "Open links from other apps in" offers "a mini
+- Settings → Links → "Open links from other apps in" offers "a mini
   window" (the default, `mini-window.md`), "a new tab in the current space"
   and "a peek window".
-- A rule can send the links to a site to a space of their own
-  (`spaces.md`, "Links from other apps").
+- A rule can send the links to a site to a space of their own: they open
+  as tabs there, never as a peek (`spaces.md`, "Links from other apps").
 - An address Magnetite does not open from that source, such as
   `javascript:` or `data:`, opens nothing.
 
@@ -32,13 +32,13 @@ it as a tab, or put it beside the current tab in split view.
 
 - The peek sits centred over the page area at 86 % of its width (less in a
   narrow window, to leave room for the buttons) and 90 % of its height. On
-  macOS the pages behind it are dimmed.
+  macOS and Windows the pages behind it are dimmed; a click on them closes
+  the peek.
 - There is one peek at a time. A new one replaces the open one. Opening a
   tab in front or switching tabs closes it.
 - The peek runs in the profile of the page that opened it. A link from
   another app, or one picked in the command bar, runs in the active
-  space's profile; a link from another app to a site with a rule runs in
-  the profile of the rule's space (`spaces.md`, "Links from other apps").
+  space's profile.
 - A link inside the peek navigates the peek. A link there that asks for a
   new tab or window opens as a Today tab, and the peek closes.
 - While a peek is open, reload, back and forward (the sidebar's buttons and
@@ -58,7 +58,8 @@ it as a tab, or put it beside the current tab in split view.
 | Keep as tab | `Cmd+O`, "Open as tab", "Keep" in the sidebar | A Today tab at the top of the active space |
 | Open in split view | The split button | A Today tab right of the current tab |
 
-- On macOS the buttons are a column of round buttons right of the peek.
+- On macOS the buttons are a column of round buttons right of the peek;
+  elsewhere they are in the sidebar only.
   The sidebar shows "Peek ·" and the page title in place of the address
   field, with the same three actions.
 - `Esc` and `Cmd+O` count while the keyboard is in the peek.

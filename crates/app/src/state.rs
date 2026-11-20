@@ -1,6 +1,7 @@
 //! Application state: the sidebar snapshot plus per-tab runtime data, and
 //! its persistence. Pure data and logic; no engine calls here.
 
+use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
@@ -13,33 +14,44 @@ mod adopt;
 mod bookmarks;
 mod folders;
 mod history;
-mod import;
+pub mod import;
+mod panels;
 mod persist;
+mod private;
 mod profiles;
 mod search;
 mod settings;
+mod share;
+mod space_keys;
 mod splits;
 mod tabs;
 #[cfg(test)]
-mod testing;
+pub(crate) mod testing;
 mod windows;
 
+pub use adopt::icon_image_ok;
 pub(crate) use folders::folder_in_tree_mut;
 pub use history::{History, Visit};
 pub use settings::{
-    AdblockSettings, Appearance, Settings, SidebarEffect, SiteSearch, SyncSettings, TabOrder,
+    AdblockSettings, Appearance, PROTECTED_VIDEO_SITES, Settings, SidebarEffect, SiteSearch,
+    SyncSettings, TabOrder, typed_site,
 };
+pub use share::read_link as read_shared;
 pub use tabs::TabSwitch;
 
 /// What the sidebar UI receives on every change.
 #[derive(Serialize)]
 pub struct UiState<'a> {
-    pub sidebar: &'a SidebarSnapshot,
+    pub sidebar: Cow<'a, SidebarSnapshot>,
     pub active_space: &'a str,
+    /// The private space, while one is open (`private.rs`).
+    pub private_space: Option<&'a str>,
     pub active_tab: Option<&'a str>,
     pub runtime: &'a HashMap<Id, TabRuntime>,
     pub sidebar_visible: bool,
     pub archive_count: usize,
+    /// Tabs open on other devices of the sync chain; a click takes one over.
+    pub device_tabs: &'a [crate::devices::RemoteTab],
     /// Visits in the history: the history view asks again when it changes.
     pub history_count: usize,
     /// Tabs currently on screen in the active space (one, or a split's pages).
@@ -49,6 +61,8 @@ pub struct UiState<'a> {
     /// Every split, on screen or not; the sidebar shows each as one row.
     pub splits: Vec<SplitNode<Id>>,
     pub peek: Option<&'a Peek>,
+    /// The favorite whose web panel is open.
+    pub web_panel: Option<&'a str>,
     /// The tabs `Ctrl+Tab` is going through and where it stands, while
     /// Ctrl is held: what the switcher's list shows.
     pub switcher: Option<&'a TabSwitch>,
@@ -56,6 +70,9 @@ pub struct UiState<'a> {
     /// The keys each shortcut has now (as `Combo` saves them), for the
     /// hints beside buttons and menu entries; one without keys is left out.
     pub keys: std::collections::BTreeMap<magnetite_engine::Action, String>,
+    /// The keys that go to a space, by space; one without keys of its own
+    /// is left out.
+    pub space_keys: std::collections::BTreeMap<&'a str, String>,
     /// Chrome colour behind the page cards, `#rrggbb`, derived from the space accent.
     pub chrome: String,
     /// Connected smart folder accounts (never their tokens).
@@ -64,6 +81,8 @@ pub struct UiState<'a> {
     pub smart: &'a HashMap<Id, SmartStatus>,
     /// Installed extensions of the profile the page in front uses.
     pub extensions: &'a [magnetite_engine::ExtensionInfo],
+    /// Those of them pinned to the sidebar in that profile, in order.
+    pub pinned_extensions: &'a [String],
 }
 
 /// Refresh state of a smart folder, for the sidebar and the dialog.
@@ -98,6 +117,17 @@ pub struct Peek {
     pub profile: String,
 }
 
+/// The phone of a responsive split: a second page of tab `tab`, shown right
+/// of it while that tab is on screen. No tab of its own: it is in no
+/// sidebar, archive or sync, and goes with its tab.
+#[derive(Debug, Clone)]
+pub struct Phone {
+    pub tab: Id,
+    pub page: Peek,
+    /// Its width in points.
+    pub width: i32,
+}
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct TabRuntime {
     #[serde(skip)]
@@ -115,12 +145,20 @@ pub struct TabRuntime {
     /// The page uses the camera / microphone right now.
     pub camera: bool,
     pub microphone: bool,
+    /// A page shares this tab's picture right now (screen sharing).
+    #[serde(default)]
+    pub shared: bool,
+    /// For developers: whether the page is a local one, its console errors,
+    /// what it is shown as (`dev.rs`).
+    #[serde(default)]
+    pub dev: crate::dev::DevState,
 }
 
 impl TabRuntime {
     /// Forget the tab's page window (made again when the tab is shown): the
     /// tab is no longer loaded, loading or playing, nor muted, and nothing
-    /// is known about its connection or its use of camera and microphone.
+    /// is known about its connection or its use of camera and microphone,
+    /// and it is no longer shared.
     /// Returns the window for the caller to close.
     pub fn unload(&mut self) -> Option<ContentId> {
         self.loaded = false;
@@ -130,6 +168,8 @@ impl TabRuntime {
         self.site = None;
         self.camera = false;
         self.microphone = false;
+        self.shared = false;
+        self.dev = crate::dev::DevState::default();
         self.content.take()
     }
 }
@@ -156,8 +196,8 @@ pub enum ArcImport {
 
 pub struct AppState {
     pub sidebar: SidebarSnapshot,
-    /// The window `active_space`, `active_tab`, `peek` and `sidebar_visible`
-    /// are of: the current one (`windows.rs`).
+    /// The window `active_space`, `active_tab`, `peek`, `web_panel` and
+    /// `sidebar_visible` are of: the current one (`windows.rs`).
     pub window: WindowId,
     /// What the other windows show.
     pub views: HashMap<WindowId, windows::View>,
@@ -175,9 +215,13 @@ pub struct AppState {
     /// is in at most one; the one holding the active tab is on screen.
     pub splits: Vec<SplitNode<Id>>,
     pub peek: Option<Peek>,
+    /// The favorite whose web panel is open (`panels.rs`). In memory only.
+    pub web_panel: Option<Id>,
     /// Pages in mini windows, in the order they opened. Like the peek, they
     /// live in memory only.
     pub minis: Vec<Peek>,
+    /// The phones of responsive splits (`dev_responsive`), in memory only.
+    pub phones: Vec<Phone>,
     pub settings: Settings,
     /// Tabs in the order they were last chosen, the latest first: what
     /// `Ctrl+Tab` goes through. In memory only; a tab not in it counts by
@@ -194,6 +238,9 @@ pub struct AppState {
     /// took one from sync: while what it would send now is still this, the
     /// device has changed nothing and writes nothing. Not saved.
     pub synced_sidebar: Option<SidebarSnapshot>,
+    /// The tabs open on the chain's other devices, as of the last sync.
+    /// Not saved.
+    pub device_tabs: Vec<crate::devices::RemoteTab>,
     /// Nothing was saved in this data folder before this start. Not saved.
     pub first_start: bool,
     /// Spaces kept on this device alone ("Only on this device"). The
@@ -207,6 +254,16 @@ pub struct AppState {
     /// another device's list (`adopt_sidebar`), and its data folder goes at
     /// the next start (`deleted_profile_data`).
     pub deleted_profiles: Vec<Id>,
+    /// The private space, while one is open (`private.rs`). Not saved, like
+    /// the space itself.
+    pub private_space: Option<Id>,
+    /// The private space is hidden (`hide_private_space`): open, with its
+    /// pages, but listed nowhere and in front in no window. Not saved.
+    pub private_hidden: bool,
+    /// The in-memory profiles made for the private space: the space's own
+    /// and one per tab. Not saved, never synced, and each is dropped once
+    /// nothing runs in it (`release_private_profiles`).
+    pub private_profiles: BTreeSet<Id>,
     path: PathBuf,
     saver: persist::Saver,
 }
@@ -235,24 +292,79 @@ impl AppState {
         extensions: &'a [magnetite_engine::ExtensionInfo],
     ) -> UiState<'a> {
         UiState {
-            sidebar: &self.sidebar,
+            sidebar: self.ui_sidebar(),
             active_space: &self.active_space,
+            private_space: self.shown_private_space(),
             active_tab: self.active_tab.get(&self.active_space).map(String::as_str),
             runtime: &self.runtime,
             sidebar_visible: self.sidebar_visible,
             archive_count: self.archive.len(),
+            device_tabs: &self.device_tabs,
             history_count: self.history.len(),
             panes: self.visible_panes(),
             split: self.visible_split(),
             splits: self.live_splits().collect(),
             peek: self.peek.as_ref(),
+            web_panel: self.web_panel.as_deref(),
             switcher: self.switcher.as_ref(),
             settings: &self.settings,
             keys: self.settings.shortcut_keys().collect(),
+            space_keys: (self.space_keys().into_iter())
+                .map(|(space, keys)| (space.id.as_str(), keys.to_string()))
+                .collect(),
             chrome: format!("#{:06x}", self.chrome_rgb()),
             accounts: self.accounts.list(),
             smart: &self.smart_status,
             extensions,
+            pinned_extensions: self.pins(&self.front_context().map(|c| c.id).unwrap_or_default()),
+        }
+    }
+
+    /// The sidebar as the UI lists it: without the profiles of the private
+    /// space, which are no choice for anything else, and without the space
+    /// itself while it is hidden.
+    fn ui_sidebar(&self) -> Cow<'_, SidebarSnapshot> {
+        if self.private_profiles.is_empty() {
+            return Cow::Borrowed(&self.sidebar);
+        }
+        let mut sidebar = self.sidebar.clone();
+        (sidebar.profiles).retain(|p| !self.private_profiles.contains(&p.id));
+        (sidebar.spaces).retain(|sp| !self.is_hidden_space(&sp.id));
+        Cow::Owned(sidebar)
+    }
+
+    /// The key of profile `profile`'s pins: none for the default profile
+    /// (also named by `""`), whose list is `settings.pinned_extensions`, and
+    /// for a private profile, which runs the default profile's extensions.
+    fn pin_key(&self, profile: &str) -> Option<String> {
+        let other = (self.sidebar.profiles.iter())
+            .any(|p| p.id == profile && !p.is_default && !p.ephemeral);
+        (other && !self.private_profiles.contains(profile)).then(|| profile.to_string())
+    }
+
+    /// The extensions pinned to the sidebar in profile `profile`. A profile
+    /// that never had a pin changed shows those of the default profile.
+    pub fn pins(&self, profile: &str) -> &[String] {
+        let own = self
+            .pin_key(profile)
+            .and_then(|key| self.settings.profile_pins.get(&key));
+        own.unwrap_or(&self.settings.pinned_extensions)
+    }
+
+    /// The same, to change. From the first change on every lasting profile
+    /// has its own list (started as what it showed until then), so a pin in
+    /// one profile is not one in another.
+    pub fn pins_mut(&mut self, profile: &str) -> &mut Vec<String> {
+        let shown = self.settings.pinned_extensions.clone();
+        for p in &self.sidebar.profiles {
+            if !p.is_default && !p.ephemeral && !self.private_profiles.contains(&p.id) {
+                let own = self.settings.profile_pins.entry(p.id.clone());
+                own.or_insert_with(|| shown.clone());
+            }
+        }
+        match self.pin_key(profile) {
+            Some(key) => self.settings.profile_pins.entry(key).or_insert(shown),
+            None => &mut self.settings.pinned_extensions,
         }
     }
 
@@ -260,23 +372,26 @@ impl AppState {
     /// extensions page) for `profile`: an extension Chromium newly pins is
     /// pinned here too, one it unpins leaves the sidebar. Pins changed here
     /// stay as they are until Chromium's change. Returns whether any changed.
+    /// A profile of the private space is not followed: its id would be saved
+    /// with what was seen, and its pins are the default profile's anyway.
     pub fn follow_chromium_pins(&mut self, profile: &str, chromium: Vec<String>) -> bool {
-        let seen = self
-            .settings
-            .chromium_pins_seen
-            .entry(profile.to_string())
-            .or_default();
-        if *seen == chromium {
+        if self.private_profiles.contains(profile) {
             return false;
         }
-        let pinned = &mut self.settings.pinned_extensions;
+        let seen = (self.settings.chromium_pins_seen.get(profile))
+            .cloned()
+            .unwrap_or_default();
+        if seen == chromium {
+            return false;
+        }
+        let pinned = self.pins_mut(profile);
         for id in chromium.iter().filter(|id| !seen.contains(id)) {
             if !pinned.contains(id) {
                 pinned.push(id.clone());
             }
         }
         pinned.retain(|id| chromium.contains(id) || !seen.contains(id));
-        *seen = chromium;
+        (self.settings.chromium_pins_seen).insert(profile.to_string(), chromium);
         true
     }
 
@@ -358,8 +473,21 @@ mod tests {
         s.settings.pinned_extensions = ids(&["ours", "vault"]);
         assert!(s.follow_chromium_pins("", ids(&["ours"])));
         assert_eq!(s.settings.pinned_extensions, ids(&["ours"]));
-        // Another profile has its own record.
+        // Another profile has its own record, and its own pins: they start
+        // as the default profile's and part from them with the first change.
+        s.sidebar.profiles.push(magnetite_core::Profile {
+            id: "work".into(),
+            name: "Work".into(),
+            is_default: false,
+            ephemeral: false,
+        });
+        assert_eq!(s.pins("work"), ids(&["ours"]));
         assert!(s.follow_chromium_pins("work", ids(&["vault"])));
-        assert_eq!(s.settings.pinned_extensions, ids(&["ours", "vault"]));
+        assert_eq!(s.pins("work"), ids(&["ours", "vault"]));
+        assert_eq!(s.pins(""), ids(&["ours"]));
+        s.pins_mut("").clear();
+        assert_eq!(s.pins("work"), ids(&["ours", "vault"]));
+        // A profile that is gone, or unknown, has the default profile's.
+        assert_eq!(s.pins("nope"), ids(&[]));
     }
 }

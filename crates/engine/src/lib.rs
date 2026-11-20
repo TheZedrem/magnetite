@@ -18,9 +18,11 @@
     clippy::borrow_as_ptr
 )]
 
+mod applink;
 mod autofill;
 mod blocker;
 mod bootstrap;
+mod caption;
 mod capture;
 mod cef_app;
 mod client;
@@ -42,6 +44,7 @@ mod frame;
 mod glyphs;
 mod keymap;
 mod keys;
+mod languages;
 #[cfg(target_os = "macos")]
 mod mac;
 mod media;
@@ -50,8 +53,10 @@ mod menubar;
 mod mini;
 mod notifications;
 mod overlay;
+mod panel_close;
 #[cfg(target_os = "macos")]
 mod pip;
+mod privacy;
 mod prompts;
 mod router;
 mod scheme;
@@ -62,51 +67,75 @@ mod sitedata;
 mod splitui;
 mod stray;
 mod strings;
+mod system;
+mod tabshare;
+#[cfg(target_os = "windows")]
+mod win;
 
 pub use autofill::AutofillPrefs;
 pub use blocker::{Filters, List as FilterList, set_allowed_sites, set_filters};
-pub use bootstrap::{run, run_helper};
+#[cfg(target_os = "windows")]
+pub use bootstrap::set_sandbox_info;
+pub use bootstrap::{run, run_helper, started_by_bootstrap};
 pub use capture::{FrozenFrame, PageTiles};
 pub use client::host_of;
 pub use config::EngineConfig;
 pub use content::SPLIT_GAP;
 pub use default_browser::DefaultBrowser;
 pub use devdock::{DevToolsDock, DevToolsSize};
+pub use downloads::DownloadPrefs;
 pub use engine::{ContextProfile, Engine, EngineDelegate, WindowId};
 pub use events::{
-    ContentId, DevToolsAction, DividerAction, DownloadReport, DownloadState, EngineEvent,
+    ContentId, DevPanel, DevToolsAction, DividerAction, DownloadReport, DownloadState, EngineEvent,
     ExtensionMenuAction, MemoryPressure, Shortcut, UrlSource,
 };
-pub use extensions::ExtensionInfo;
-pub use keymap::{Action, Combo, KeysError, Overrides};
+pub use extensions::{ExtensionInfo, is_extension_id};
+pub use keymap::{Action, Combo, First, KeysError, Overrides, Priorities};
+pub use keys::set_page_first_sites;
+pub use languages::LanguagePrefs;
 pub use media::{MediaAction, MediaState};
+pub use privacy::set_global_privacy_control;
 pub use prompts::{PermissionPrompt, PromptAnswer, PromptKind};
 pub use router::ReplyTicket;
 pub use scheme::user_image_dir;
 pub use site::{SiteState, ZOOM_STEPS, zoom_step};
 pub use sitecode::SiteCode;
 pub use sitedata::{
-    ClearReport, PermissionKind, PermissionRow, PermissionValue, in_domain, registrable_domain,
+    ClearReport, PermissionEntry, PermissionKind, PermissionRow, PermissionValue, in_domain,
+    registrable_domain,
 };
+#[cfg(target_os = "windows")]
+pub use win::installer_ready;
 
-/// The Chromium and CEF versions Magnetite is built on (Settings → About).
+/// The Chromium and CEF versions Magnetite is built on (Settings → About):
+/// those of the CEF build it is linked against (`build.rs`), else those the
+/// bindings were made from.
 pub fn engine_versions() -> (String, String) {
     use cef::sys;
-    (
-        format!(
-            "{}.{}.{}.{}",
-            sys::CHROME_VERSION_MAJOR,
-            sys::CHROME_VERSION_MINOR,
-            sys::CHROME_VERSION_BUILD,
-            sys::CHROME_VERSION_PATCH
-        ),
-        format!(
-            "{}.{}.{}",
-            sys::CEF_VERSION_MAJOR,
-            sys::CEF_VERSION_MINOR,
-            sys::CEF_VERSION_PATCH
-        ),
-    )
+    let chromium = option_env!("MAGNETITE_CHROMIUM_VERSION").map_or_else(
+        || {
+            format!(
+                "{}.{}.{}.{}",
+                sys::CHROME_VERSION_MAJOR,
+                sys::CHROME_VERSION_MINOR,
+                sys::CHROME_VERSION_BUILD,
+                sys::CHROME_VERSION_PATCH
+            )
+        },
+        str::to_string,
+    );
+    let cef = option_env!("MAGNETITE_CEF_VERSION").map_or_else(
+        || {
+            format!(
+                "{}.{}.{}",
+                sys::CEF_VERSION_MAJOR,
+                sys::CEF_VERSION_MINOR,
+                sys::CEF_VERSION_PATCH
+            )
+        },
+        str::to_string,
+    );
+    (chromium, cef)
 }
 
 /// Debug tracing to stderr when `MAGNETITE_LOG` is set.
