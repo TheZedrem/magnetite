@@ -11,6 +11,8 @@ use cef::sys;
 use cef::*;
 
 use std::collections::HashSet;
+#[cfg(not(target_os = "macos"))]
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, RwLock};
 use std::time::{Duration, Instant};
 
@@ -154,8 +156,7 @@ impl crate::Engine {
     }
 }
 
-/// The keys of `action` now (for the menu bar, which only macOS has).
-#[cfg(target_os = "macos")]
+/// The keys of `action` now (for the menu bar and the tab switcher).
 pub fn combo_of(action: Action) -> Option<Combo> {
     match KEYS.read().ok()?.as_ref() {
         Some(keys) => keys.combo_of(action),
@@ -174,6 +175,34 @@ fn action_for(combo: Combo) -> Option<Action> {
 fn space_keys(combo: Combo) -> Option<Shortcut> {
     let combo = combo.here();
     (SPACE_KEYS.read().ok()?.contains(&combo)).then_some(Shortcut::SpaceKeys(combo))
+}
+
+/// The modifier flags held after the last key event any of our browsers
+/// saw. Outside macOS, where the system cannot be asked, this is how the
+/// end of a round of `Ctrl+Tab` (the tab switcher) is seen.
+#[cfg(not(target_os = "macos"))]
+static MODIFIERS: AtomicU32 = AtomicU32::new(0);
+
+/// Note the modifiers of `event`; called for every key event before the
+/// page sees it. Letting go of Ctrl or Alt clears its flag even where the
+/// key-up still carries it (as under X11).
+#[cfg(not(target_os = "macos"))]
+pub fn note_modifiers(event: &KeyEvent) {
+    // VK_CONTROL, VK_LCONTROL, VK_RCONTROL; VK_MENU, VK_LMENU, VK_RMENU.
+    let released = match (event.type_ == KeyEventType::KEYUP, event.windows_key_code) {
+        (true, 0x11 | 0xA2 | 0xA3) => CTRL,
+        (true, 0x12 | 0xA4 | 0xA5) => ALT,
+        _ => 0,
+    };
+    MODIFIERS.store(event.modifiers & !released, Ordering::Relaxed);
+}
+
+/// Whether Ctrl (`primary` or `ctrl`) and Alt, as asked, were still held at
+/// the last key event.
+#[cfg(not(target_os = "macos"))]
+pub fn modifiers_held(primary: bool, ctrl: bool, alt: bool) -> bool {
+    let wanted = (if primary || ctrl { CTRL } else { 0 }) | (if alt { ALT } else { 0 });
+    MODIFIERS.load(Ordering::Relaxed) & wanted == wanted
 }
 
 /// A key-down event's key and modifiers.

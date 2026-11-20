@@ -747,6 +747,10 @@ wrap_keyboard_handler! {
             _os_event: OsKeyEvent<'_>,
             is_keyboard_shortcut: Option<&mut ::std::os::raw::c_int>,
         ) -> ::std::os::raw::c_int {
+            #[cfg(not(target_os = "macos"))]
+            if let Some(event) = event {
+                keys::note_modifiers(event);
+            }
             let engine = Engine::global();
             // The sidebar's and the top bar's shortcuts run here, not in their pages: the keys are
             // the user's (`keymap.rs`), and a hidden sidebar can still hold
