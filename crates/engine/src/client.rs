@@ -898,15 +898,15 @@ wrap_context_menu_handler! {
             command_id: ::std::os::raw::c_int,
             _event_flags: EventFlags,
         ) -> ::std::os::raw::c_int {
-            if self.kind != Kind::Content {
-                return 0;
-            }
-            if Some(command_id) == keys::command_id_for("IDC_CONTENT_CONTEXT_OPENLINKNEWWINDOW") {
+            // A page's popup window (`Kind::Stray`) has the item too.
+            if matches!(self.kind, Kind::Content | Kind::Stray)
+                && Some(command_id) == keys::command_id_for("IDC_CONTENT_CONTEXT_OPENLINKNEWWINDOW")
+            {
                 let Some(url) = params.map(|p| CefString::from(&p.link_url()).to_string()) else { return 0 };
                 Engine::global().request_open(browser.as_deref(), url, url_source(self.kind), false, false, true);
                 return 1;
             }
-            if Some(command_id) != keys::command_id_for("IDC_CONTENT_CONTEXT_INSPECTELEMENT") {
+            if self.kind != Kind::Content || Some(command_id) != keys::command_id_for("IDC_CONTENT_CONTEXT_INSPECTELEMENT") {
                 return 0;
             }
             let engine = Engine::global();
