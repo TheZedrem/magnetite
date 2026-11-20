@@ -12,7 +12,8 @@
 //! the popup to its own toolbar, which every page window has out of sight
 //! (`content.rs`), so the popup opens at the page's top-left corner, next to
 //! the sidebar, or with the top bar on at its top-right corner, below the top
-//! bar's buttons.
+//! bar's buttons. A page of the system's engine has a Chromium tab for this
+//! (`shadow.rs`).
 
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
@@ -355,6 +356,16 @@ impl Engine {
         if !is_extension_id(extension) || !crate::devpipe::is_open() {
             return;
         }
+        // A system page made a moment ago, whose shadow Chromium is still
+        // making: the action runs once the shadow is there (`shadow.rs`).
+        {
+            let mut inner = self.lock();
+            let shadow = inner.contents.get_mut(&id).and_then(|c| c.shadow.as_mut());
+            if let Some(shadow) = shadow.filter(|s| s.browser.is_none()) {
+                shadow.asked = Some(extension.to_string());
+                return;
+            }
+        }
         let extension = extension.to_string();
         let asked = std::time::Instant::now();
         self.with_tab_target(id, move |tab| {
@@ -375,8 +386,8 @@ impl Engine {
     }
 
     /// Call `f` with page `id`'s tab target (the `DevTools` id of the tab that
-    /// holds the page), found once and remembered. Every page window is a
-    /// browser window of its own, so the tab is the one in the page's window:
+    /// holds the page, or a system page's shadow), found once and
+    /// remembered. Every page window is a browser window of its own, so the tab is the one in the page's window:
     /// the page names its own target, the browser-wide session gives that
     /// target's window and the tabs, and the tab with the same window wins
     /// (tabs showing the page's address are asked first).
@@ -390,8 +401,18 @@ impl Engine {
             f(tab);
             return;
         }
+        // The page may change its engine while its tab is looked for: the
+        // tab found then belongs to the page that was, not to the one under
+        // the same id now.
+        let Some(serial) = self.lock().contents.get(&id).map(|c| c.serial) else {
+            return;
+        };
         let found = move |tab: String| {
-            if let Some(c) = Engine::global().lock().contents.get_mut(&id) {
+            {
+                let mut inner = Engine::global().lock();
+                let Some(c) = inner.contents.get_mut(&id).filter(|c| c.serial == serial) else {
+                    return;
+                };
                 c.tab_target = Some(tab.clone());
             }
             f(tab);
@@ -402,7 +423,10 @@ impl Engine {
                 let text = |k: &str| info.get(k).and_then(Value::as_str).map(str::to_string);
                 Some((text("targetId")?, text("url").unwrap_or_default()))
             });
-            let Some((page, url)) = page else { return };
+            let Some((page, url)) = page else {
+                crate::trace("extension action: the page has no Chromium tab");
+                return;
+            };
             crate::devpipe::call(
                 "Browser.getWindowForTarget",
                 &json!({ "targetId": page }),
@@ -436,7 +460,14 @@ impl Engine {
                 },
             );
         });
-        self.devtools(id, "Target.getTargetInfo", &json!({}), reply);
+        // A system page is among Chromium's tabs through its shadow.
+        self.devtools_at(
+            self.tab_host(id),
+            id,
+            "Target.getTargetInfo",
+            &json!({}),
+            reply,
+        );
     }
 }
 
