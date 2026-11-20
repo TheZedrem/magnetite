@@ -44,7 +44,6 @@ unsafe extern "system" {
     fn SetClipboardData(format: u32, data: *mut c_void) -> *mut c_void;
     fn RegisterClipboardFormatW(name: *const u16) -> u32;
     fn GetCursorPos(point: *mut [i32; 2]) -> i32;
-    fn GetKeyState(key: i32) -> i16;
 }
 
 #[link(name = "kernel32")]
@@ -205,14 +204,6 @@ pub fn save_png(owner: cef::sys::cef_window_handle_t, png: &[u8], name: &str) ->
     let path = PathBuf::from(String::from_utf16(&file[..end]).ok()?);
     std::fs::write(&path, png).ok()?;
     Some(path)
-}
-
-/// Whether a Shift key is down, as of the input being handled now.
-pub fn shift_held() -> bool {
-    const VK_SHIFT: i32 = 0x10;
-    // SAFETY: a plain query. The top bit says the key is down.
-    let state = unsafe { GetKeyState(VK_SHIFT) };
-    state < 0
 }
 
 /// Where the pointer is, in screen pixels.
