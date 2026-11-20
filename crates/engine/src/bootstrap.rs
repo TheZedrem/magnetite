@@ -63,6 +63,7 @@ pub fn run(config: EngineConfig, delegate: Arc<dyn EngineDelegate>) -> i32 {
         crate::trace(&format!("cannot create {}: {e}", config.data_dir.display()));
     }
     // Before CEF starts: Chromium picks up the pipe's fds during start-up.
+    // Made already when the app opened it first (`open_devtools_pipe`).
     if !crate::devpipe::open() {
         crate::trace("no DevTools pipe: fds 3 and 4 are taken");
     }

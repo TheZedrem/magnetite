@@ -118,6 +118,8 @@ fn is_helper(args: impl Iterator<Item = String>) -> bool {
 
 /// Run the browser. Blocks until it quits; returns the process exit code.
 pub fn run() -> i32 {
+    // Before anything starts a thread: the pipe needs fds 3 and 4 free.
+    magnetite_engine::open_devtools_pipe();
     // Windows starts its default browser with the link as the one argument
     // after `--single-argument` (`packaging/windows/magnetite.iss`): that
     // is a link from another program, never options of ours.
