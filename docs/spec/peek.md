@@ -58,8 +58,8 @@ it as a tab, or put it beside the current tab in split view.
 | Keep as tab | `Cmd+O`, "Open as tab", "Keep" in the sidebar | A Today tab at the top of the active space |
 | Open in split view | The split button | A Today tab right of the current tab |
 
-- On macOS the buttons are a column of round buttons right of the peek;
-  elsewhere they are in the sidebar only.
+- On macOS and Linux the buttons are a column of round buttons right of
+  the peek; on Windows they are in the sidebar only.
   The sidebar shows "Peek ·" and the page title in place of the address
   field, with the same three actions.
 - `Esc` and `Cmd+O` count while the keyboard is in the peek.

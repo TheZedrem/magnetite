@@ -54,6 +54,9 @@ pub(crate) struct WindowState {
     /// The close button of a docked web panel, and the page whose window
     /// it is an overlay of (`panel_close.rs`).
     pub panel_close: Option<(ContentId, OverlayController)>,
+    /// The peek's buttons on Linux, and the page whose window they are
+    /// overlays of (`peek_buttons.rs`).
+    pub peek_buttons: Option<(ContentId, Vec<OverlayController>)>,
     /// The page last shown alone (`show_content`) and not hidden since.
     pub shown: Option<ContentId>,
     /// Last draggable regions reported by the sidebar page (its own
@@ -89,6 +92,7 @@ impl WindowState {
             web_panel: None,
             web_panel_width: None,
             panel_close: None,
+            peek_buttons: None,
             shown: None,
             sidebar_drag: Vec::new(),
             top_bar_drag: Vec::new(),
