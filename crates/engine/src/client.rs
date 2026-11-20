@@ -111,6 +111,16 @@ wrap_client! {
                 Engine::global().on_share_report(browser.as_deref(), frame, &text(0), &text(1));
                 return 1;
             }
+            // A page's main frame says that its protected playback failed.
+            if self.kind == Kind::Content
+                && let (Some(frame), Some(msg)) = (frame.as_deref(), message.as_ref())
+                && frame.is_main() != 0
+                && CefString::from(&msg.name()).to_string() == crate::protected::MESSAGE
+            {
+                let reported = msg.argument_list().map(|a| CefString::from(&a.string(0)).to_string()).unwrap_or_default();
+                Engine::global().on_protected_report(browser.as_deref(), frame, &reported);
+                return 1;
+            }
             let router = Engine::global().lock().router.clone();
             match router {
                 Some(r) => r.on_process_message_received(browser.cloned(), frame.cloned(), source_process, message.cloned()).into(),

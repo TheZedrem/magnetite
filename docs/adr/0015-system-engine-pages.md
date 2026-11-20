@@ -60,6 +60,17 @@ Option 4 until option 3 is there, on macOS and Windows.
   names in Settings or with a switch in the site panel. The list is this
   device's own and is not synced: whether a system has such an engine
   differs per device.
+- **A site whose protected video fails in Chromium joins the list by
+  itself** (`protected.rs`). A script in the page's main frame watches its
+  Widevine key sessions: a licence request without a usable key ten
+  seconds later is reported, and the app names the site and loads the page
+  again. A refusal is decided on the service's licence server and shows as
+  an error page of the service's own, so the missing key is the one sign
+  they share. Moving every page that uses Widevine was rejected: Chromium
+  plays for the services that ask for no verified build, and they would
+  lose their sign-in, ad blocking and extensions for nothing. The report
+  comes from a renderer, so any page can make it; it moves that page's own
+  site and nothing else, and the sidebar says so.
 - **On macOS** the view is a `WKWebView` (`mac/webkit.rs`):
   - It lives in a plain window of AppKit's, without a frame, that lies
     over the page's own window and is attached to it as a child. The
