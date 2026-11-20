@@ -157,7 +157,8 @@ fn server_base(url: &str) -> Result<String, String> {
 /// words could otherwise send every search here to an address of its choice.
 /// `shortcuts` is left out while no shortcut has other keys, so a version
 /// from before them writes the same bytes; such a version writes without
-/// them, which reads as "all on their default keys" here.
+/// them, which reads as "all on their default keys" here. The same goes
+/// for `shortcut_priority` and `shortcut_sites`.
 #[derive(Serialize, Deserialize)]
 struct SyncedSettings {
     auto_archive_hours: u32,
@@ -165,6 +166,13 @@ struct SyncedSettings {
     external_links: String,
     #[serde(default, skip_serializing_if = "magnetite_engine::Overrides::is_empty")]
     shortcuts: magnetite_engine::Overrides,
+    #[serde(
+        default,
+        skip_serializing_if = "magnetite_engine::Priorities::is_empty"
+    )]
+    shortcut_priority: magnetite_engine::Priorities,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    shortcut_sites: Vec<String>,
 }
 
 impl SyncedSettings {
@@ -174,6 +182,8 @@ impl SyncedSettings {
             unload_minutes: s.unload_minutes,
             external_links: s.external_links.clone(),
             shortcuts: s.shortcuts.clone(),
+            shortcut_priority: s.shortcut_priority.clone(),
+            shortcut_sites: s.shortcut_sites.clone(),
         }
     }
     fn apply(self, s: &mut Settings) {
@@ -181,6 +191,8 @@ impl SyncedSettings {
         s.unload_minutes = self.unload_minutes;
         s.external_links = self.external_links;
         s.shortcuts = self.shortcuts;
+        s.shortcut_priority = self.shortcut_priority;
+        s.shortcut_sites = self.shortcut_sites;
     }
 }
 

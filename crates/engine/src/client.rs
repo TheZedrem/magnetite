@@ -271,7 +271,7 @@ wrap_life_span_handler! {
             &self,
             browser: Option<&mut Browser>,
             frame: Option<&mut Frame>,
-            _popup_id: ::std::os::raw::c_int,
+            popup_id: ::std::os::raw::c_int,
             target_url: Option<&CefString>,
             _target_frame_name: Option<&CefString>,
             target_disposition: WindowOpenDisposition,
@@ -284,6 +284,16 @@ wrap_life_span_handler! {
             _no_javascript_access: Option<&mut ::std::os::raw::c_int>,
         ) -> ::std::os::raw::c_int {
             crate::trace(&format!("popup asked: disposition {}", target_disposition.get_raw()));
+            // An extension's new tab, not a page's popup: taken as it is, or
+            // left to Chromium, whose window then goes the old way
+            // (`stray.rs`). Never opened from here as well.
+            if popup_id == crate::content::EXTENSION_TAB_POPUP {
+                let url = target_url.map(CefString::to_string).unwrap_or_default();
+                let background = target_disposition == WindowOpenDisposition::NEW_BACKGROUND_TAB;
+                let taken = self.kind == Kind::Content
+                    && Engine::global().expect_extension_tab(browser.as_deref(), url, background);
+                return i32::from(!taken);
+            }
             if page_asks_for_app(self.kind, frame.as_deref(), target_url) {
                 return 1;
             }
@@ -739,7 +749,7 @@ wrap_keyboard_handler! {
             browser: Option<&mut Browser>,
             event: Option<&KeyEvent>,
             _os_event: OsKeyEvent<'_>,
-            _is_keyboard_shortcut: Option<&mut ::std::os::raw::c_int>,
+            is_keyboard_shortcut: Option<&mut ::std::os::raw::c_int>,
         ) -> ::std::os::raw::c_int {
             let engine = Engine::global();
             // The sidebar's and the top bar's shortcuts run here, not in their pages: the keys are
@@ -752,7 +762,7 @@ wrap_keyboard_handler! {
                     browser.as_deref().is_some_and(|b| b.identifier() == float.identifier())
                 });
             if matches!(self.kind, Kind::Sidebar | Kind::TopBar) || floating {
-                let Some(shortcut) = event.and_then(|e| keys::shortcut_for_key(e).or_else(|| keys::yieldable_shortcut(e))) else { return 0 };
+                let Some(shortcut) = event.and_then(keys::any_shortcut) else { return 0 };
                 engine.emit(EngineEvent::Shortcut { from: None, shortcut });
                 return 1;
             }
@@ -760,12 +770,23 @@ wrap_keyboard_handler! {
             let Some(event) = event else { return 0 };
             // Most keys are no shortcut: find the page only for one that is.
             let from = || engine.content_id_for(browser.as_deref());
-            let (shortcut, from) = if let Some(shortcut) = keys::shortcut_for_key(event) {
+            let site = keys::page_first_site(event, || page_address(browser.as_deref()));
+            let (shortcut, from) = if let Some(shortcut) = keys::shortcut_for_key(event, site) {
                 (shortcut, from())
             } else {
                 // Peek keys count only in the peek; in a mini window `Cmd+O`
                 // ("Open in") does too.
-                let Some(shortcut) = keys::peek_shortcut(event) else { return 0 };
+                let Some(shortcut) = keys::peek_shortcut(event) else {
+                    // The page first, by the user's choice (for the shortcut
+                    // or for the site): Chromium would
+                    // run its own command for some of these keys without
+                    // asking the page. As a shortcut of ours it goes to the
+                    // page, and to `on_key_event` if the page leaves it.
+                    if keys::yielded_by_choice(event, site) && let Some(ours) = is_keyboard_shortcut {
+                        *ours = 1;
+                    }
+                    return 0;
+                };
                 let from = from();
                 let peek = from.is_some() && from == engine.peek_content();
                 let mini = shortcut == Shortcut::PeekToTab && from.is_some_and(|id| engine.is_mini(id));
@@ -786,7 +807,9 @@ wrap_keyboard_handler! {
             _os_event: OsKeyEvent<'_>,
         ) -> ::std::os::raw::c_int {
             if self.kind != Kind::Content { return 0; }
-            let Some(shortcut) = event.and_then(keys::yieldable_shortcut) else { return 0 };
+            let Some(event) = event else { return 0 };
+            let site = keys::page_first_site(event, || page_address(browser.as_deref()));
+            let Some(shortcut) = keys::yieldable_shortcut(event, site) else { return 0 };
             let engine = Engine::global();
             let from = engine.content_id_for(browser.as_deref());
             if from.is_none() { return 0; }
@@ -794,6 +817,12 @@ wrap_keyboard_handler! {
             1
         }
     }
+}
+
+/// The address of the page `browser` shows (its main frame).
+fn page_address(browser: Option<&Browser>) -> Option<String> {
+    let frame = browser?.main_frame()?;
+    Some(CefString::from(&frame.url()).to_string())
 }
 
 /// Host part of an http(s) URL, lower-cased, without a leading `www.`.

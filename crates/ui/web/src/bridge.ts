@@ -3,7 +3,7 @@
 // Rust -> JS: window.__magnetite.setState(state) and a few UI calls.
 // JS -> Rust: window.magnetiteQuery({request: JSON, onSuccess, onFailure}) (CEF message router).
 
-import type { ShortcutAction, ShortcutKeys } from "./settings/shortcutKeys";
+import type { ShortcutAction, ShortcutFirst, ShortcutKeys } from "./settings/shortcutKeys";
 import type { Info } from "./settings/types";
 
 export type Id = string;
@@ -382,6 +382,8 @@ export interface Settings {
   developer: { enabled: boolean; hosts: string[] };
   /** Which sites the system's own web engine shows (Settings → Protected video): the known streaming services, and sites of the user's own, by host. This device's own, never synced. */
   system_engine: { known: boolean; sites: string[] };
+  /** Sites (registrable domains) whose pages get the keys of every shortcut first (the site panel, Settings → Shortcuts). Synced. Changed with `set_site_shortcuts`; a settings patch leaves them. */
+  shortcut_sites: string[];
   adblock: {
     enabled: boolean;
     /** Ids of the filter lists subscribed to (`Info.adblock.lists`). */
@@ -439,6 +441,8 @@ export interface Appearance {
   top_bar: boolean;
   /** A row of extension icons below the sidebar's address, in place of the icons in its title band. */
   extension_bar: boolean;
+  /** When the frame shows around the pages (`windowed`: not in full screen); without it they reach the window's edges. */
+  page_frame: "always" | "windowed" | "never";
   /** How each space looks beyond its colour, by space id; a space without an entry has `DEFAULT_LOOK`. Kept on this device. */
   looks: Record<Id, SpaceLook>;
 }
@@ -519,6 +523,9 @@ export type Command =
   | { cmd: "device_set"; page: number; config: DeviceConfig | null }
   | { cmd: "site_ads"; url: string }
   | { cmd: "set_site_ads"; url: string; blocking: boolean }
+  | { cmd: "site_shortcuts"; url: string }
+  /** The site of the page at `url`, or the site `url` names, gets the keys of every shortcut first from now on, or each shortcut's own choice counts there again. From the site panel and Settings only. */
+  | { cmd: "set_site_shortcuts"; url: string; page_first: boolean }
   | { cmd: "site_engine"; url: string }
   /** Show the site of the page at `url` in the system's engine from now on, or in Chromium again; the page in front loads again. */
   | { cmd: "set_site_engine"; url: string; system: boolean }
@@ -704,6 +711,7 @@ export type Command =
   | { cmd: "export_bookmarks"; format: BookmarkFormat; space?: Id }
   | { cmd: "shortcut"; shortcut: string | { select_tab: number } | { select_space: number } }
   | { cmd: "set_shortcut"; action: ShortcutAction; keys: string | null }
+  | { cmd: "set_shortcut_first"; action: ShortcutAction; first: ShortcutFirst }
   | { cmd: "set_space_shortcut"; id: Id; keys: string | null }
   | { cmd: "reset_shortcut"; action?: ShortcutAction }
   | { cmd: "record_shortcut"; on: boolean };
@@ -840,6 +848,8 @@ interface Replies {
   device_get: DeviceConfig | null;
   /** `site`: the registrable domain of the page asked about; null for no web page. */
   site_ads: { site: string | null; enabled: boolean; blocking: boolean };
+  /** `site`: as for `site_ads`. `page_first`: its pages get the keys of every shortcut first. */
+  site_shortcuts: { site: string | null; page_first: boolean };
   /** `site`: as for `site_ads`, and null also where the system has no engine to use. `known`: one of the services that always open there (Settings → Protected video). */
   /** `name` and `about`: the system's engine as the user reads of it ("WebView2", "Microsoft Edge's engine, …"). */
   site_engine: { site: string | null; system: boolean; known: boolean; name: string; about: string };

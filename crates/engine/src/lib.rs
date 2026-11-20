@@ -61,6 +61,7 @@ mod prompts;
 mod router;
 mod scheme;
 mod scriptlets;
+mod shadow;
 mod site;
 mod sitecode;
 mod sitedata;
@@ -76,14 +77,13 @@ pub use autofill::AutofillPrefs;
 pub use blocker::{Filters, List as FilterList, set_allowed_sites, set_filters};
 #[cfg(target_os = "windows")]
 pub use bootstrap::set_sandbox_info;
-pub use bootstrap::{run, run_helper, started_by_bootstrap};
+pub use bootstrap::{reserve_devtools_pipe, run, run_helper, started_by_bootstrap};
 pub use capture::{FrozenFrame, PageTiles};
 pub use client::host_of;
 pub use config::EngineConfig;
 pub use content::SPLIT_GAP;
 pub use default_browser::DefaultBrowser;
 pub use devdock::{DevToolsDock, DevToolsSize};
-pub use devpipe::open as open_devtools_pipe;
 pub use downloads::DownloadPrefs;
 pub use engine::{ContextProfile, Engine, EngineDelegate, WindowId};
 pub use events::{
@@ -91,7 +91,9 @@ pub use events::{
     ExtensionMenuAction, MemoryPressure, Shortcut, UrlSource,
 };
 pub use extensions::{ExtensionInfo, is_extension_id};
-pub use keymap::{Action, Combo, KeysError, Overrides};
+pub use frame::PageFrame;
+pub use keymap::{Action, Combo, First, KeysError, Overrides, Priorities};
+pub use keys::set_page_first_sites;
 pub use languages::LanguagePrefs;
 pub use media::{MediaAction, MediaState};
 pub use privacy::set_global_privacy_control;

@@ -1,18 +1,67 @@
 //! Keys and menu bar items, and the command palette they open.
 
 use magnetite_core::split::Side;
-use magnetite_engine::{Action, Combo, ContentId, Engine, KeysError, Overrides, Shortcut};
-use serde_json::json;
+use magnetite_engine::{
+    Action, Combo, ContentId, Engine, First, KeysError, Overrides, Priorities, Shortcut,
+};
+use serde_json::{Value, json};
 
 use super::addresses::urlencode;
 use super::{LinkVariant, MagnetiteApp, PaletteMode};
+use crate::state::typed_site;
 
 impl MagnetiteApp {
-    /// Hand the engine the keys the shortcuts have now (Settings →
-    /// Shortcuts): at start, and whenever they change here or through sync.
+    /// Hand the engine the keys the shortcuts have now and who gets them
+    /// first, by shortcut and by site (Settings → Shortcuts, the site
+    /// panel): at start, and whenever they change here or through sync.
     pub(super) fn apply_shortcut_keys(&self, engine: &Engine) {
-        let keys = self.with_state(|s| s.settings.shortcuts.clone());
-        engine.set_shortcut_keys(&keys);
+        let (keys, first, sites) = self.with_state(|s| {
+            let settings = &s.settings;
+            (
+                settings.shortcuts.clone(),
+                settings.shortcut_priority.clone(),
+                settings.shortcut_sites.clone(),
+            )
+        });
+        engine.set_shortcut_keys(&keys, &first);
+        magnetite_engine::set_page_first_sites(sites);
+    }
+
+    /// The site (registrable domain) of the page at `url`, if a web page,
+    /// and whether its pages get the keys of every shortcut first.
+    pub(super) fn site_shortcuts(&self, url: &str) -> Value {
+        let site = typed_site(url);
+        let first = (site.as_ref())
+            .is_some_and(|site| self.with_state(|s| s.settings.shortcut_sites.contains(site)));
+        json!({ "site": site, "page_first": first })
+    }
+
+    /// From now on the pages of the site `url` names (a page's address,
+    /// or a name typed in Settings) get the keys of every shortcut first
+    /// (`page_first`), or each shortcut's own choice counts there again.
+    /// What names no site changes nothing.
+    pub(super) fn set_site_shortcuts(&self, engine: &Engine, url: &str, page_first: bool) {
+        let Some(site) = typed_site(url) else {
+            return;
+        };
+        self.with_state(|s| {
+            let sites = &mut s.settings.shortcut_sites;
+            sites.retain(|s| *s != site);
+            if page_first {
+                sites.push(site);
+                sites.sort();
+            }
+        });
+        self.apply_shortcut_keys(engine);
+        self.push_state(engine);
+    }
+
+    /// From now on a key of `action` pressed in a page goes to `first`
+    /// before the other.
+    pub(super) fn set_shortcut_first(&self, engine: &Engine, action: Action, first: First) {
+        self.with_state(|s| s.settings.shortcut_priority.set(action, first));
+        self.apply_shortcut_keys(engine);
+        self.push_state(engine);
     }
 
     /// Give `action` the keys `keys` (`None`: no keys), or tell why not.
@@ -50,14 +99,18 @@ impl MagnetiteApp {
         Ok(())
     }
 
-    /// Give `action` its default keys back, or every action (`None`); then
-    /// no space has keys of its own either.
+    /// Give `action` its default keys back and let it go first to whom it
+    /// does by default, or every action (`None`); then no space has keys
+    /// of its own either, and no site gets the keys first.
     pub(super) fn reset_shortcut(&self, engine: &Engine, action: Option<Action>) {
         self.with_state(|s| {
             if let Some(action) = action {
                 s.settings.shortcuts.reset(action);
+                (s.settings.shortcut_priority).set(action, action.default_first());
             } else {
                 s.settings.shortcuts = Overrides::default();
+                s.settings.shortcut_priority = Priorities::default();
+                s.settings.shortcut_sites.clear();
                 for space in &mut s.sidebar.spaces {
                     space.shortcut = None;
                 }

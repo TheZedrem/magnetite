@@ -38,6 +38,27 @@ function BlockAds({ url }: { url: string }) {
   );
 }
 
+/** Who gets the keys of Magnetite's shortcuts first on this site: a web app with shortcuts of its own can have them all (Settings → Shortcuts). */
+function SiteShortcuts({ url, saved }: { url: string; saved: string[] }) {
+  const [keys, setKeys] = useState<Reply<"site_shortcuts"> | null>(null);
+  // Asked again when the saved sites change (Settings, sync) while the panel is open.
+  const savedSites = saved.join(" ");
+  useEffect(() => {
+    void send({ cmd: "site_shortcuts", url }).then(setKeys);
+  }, [url, savedSites]);
+  if (!keys?.site) return null;
+  const set = (page_first: boolean) => {
+    setKeys({ ...keys, page_first });
+    send({ cmd: "set_site_shortcuts", url, page_first });
+  };
+  return (
+    <label className="panel-row" title={`For all of ${keys.site}: the site may use the keys of Magnetite's shortcuts itself, and a shortcut runs only if the site leaves its keys alone. The digits that choose a tab or a space stay Magnetite's.`}>
+      <span className="flex-1">Site's shortcuts first</span>
+      <Switch label="This site gets the keys of shortcuts first" checked={keys.page_first} onChange={set} />
+    </label>
+  );
+}
+
 /** What the app says of the site's engine (`site_engine`). */
 type SiteEngine = Reply<"site_engine">;
 
@@ -66,7 +87,7 @@ function SystemEngine({ url }: { url: string }) {
   };
   return (
     <>
-      <label className="panel-row" title={`For all of ${engine.site}: its pages open in ${engine.name}, ${engine.about}, which plays protected video. No extensions or ad blocking there, and the site asks you to sign in again. The page loads again.`}>
+      <label className="panel-row" title={`For all of ${engine.site}: its pages open in ${engine.name}, ${engine.about}, which plays protected video. Extensions cannot read or fill its pages, there is no ad blocking, and the site asks you to sign in again. The page loads again.`}>
         <span className="flex-1">Open in {engine.name}</span>
         {engine.known ? <span className="text-[12px] text-[var(--muted)]">Always, for its video</span> : <Switch label={`Open this site in ${engine.name}`} checked={engine.system} onChange={set} />}
       </label>
@@ -294,7 +315,7 @@ export function SitePanel({ state, item, rt, onClose, inWindow = false }: { stat
         {!internal && !system && <Permissions key={`${item.id} ${host}`} pageHost={host} />}
         {system && (
           <div className="panel-group">
-            <div className="panel-note">{engine ? `${engine.name}, ${engine.about},` : "The system's own web engine"} shows this page. Extensions, ad blocking, Global Privacy Control and developer tools do not work here, and the site signs in apart from your other pages.</div>
+            <div className="panel-note">{engine ? `${engine.name}, ${engine.about},` : "The system's own web engine"} shows this page. Extensions cannot read or fill it; ad blocking, Global Privacy Control and developer tools do not work here, and the site signs in apart from your other pages.</div>
           </div>
         )}
 
@@ -315,6 +336,7 @@ export function SitePanel({ state, item, rt, onClose, inWindow = false }: { stat
                 {rt?.muted ? <SpeakerOff width={15} height={15} /> : <Speaker width={15} height={15} />}
               </button>
             )}
+            {!system && <SiteShortcuts key={`${item.id} ${host} keys`} url={item.url} saved={state.settings.shortcut_sites} />}
             <SystemEngine key={`${item.id} ${host} engine`} url={item.url} />
             {!system && <DevSwitch state={state} url={item.url} own={rt?.dev.clears ?? false} />}
             {/* Per tab: a confirmation or a report is not the next tab's. */}

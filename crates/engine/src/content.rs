@@ -18,6 +18,8 @@ pub(crate) struct ContentState {
     pub view: PageView,
     /// The Chromium browser of the page; a system page has none.
     pub browser: Option<Browser>,
+    /// A system page's Chromium tab for extensions (`shadow.rs`).
+    pub shadow: Option<crate::shadow::Shadow>,
     /// Profile id of the page's context (`""` for the default context).
     pub profile: String,
     /// The context lives in memory only (a private profile): nothing about
@@ -74,6 +76,19 @@ pub(crate) struct QueuedContent {
     pub home: crate::WindowId,
 }
 
+/// The `popup_id` Magnetite's CEF (`extension-tab.patch`) asks with in
+/// `on_before_popup` for a tab an extension opens with `chrome.tabs.create`.
+/// No popup of a page has it.
+pub(crate) const EXTENSION_TAB_POPUP: i32 = -1;
+
+/// A tab an extension asked for, between CEF's question (`on_before_popup`)
+/// and the view of its page, which CEF makes within the same call
+/// (`on_popup_browser_view_created`).
+pub(crate) struct PendingTab {
+    pub url: String,
+    pub background: bool,
+}
+
 /// Space between split pages (and around docked `DevTools`).
 pub const SPLIT_GAP: i32 = 8;
 
@@ -125,9 +140,10 @@ impl Engine {
     }
 
     /// Make page `id` for `url` in the engine `url` belongs in
-    /// (`system.rs`). A Chromium page whose profile's context is still
-    /// being made waits for it (`context_ready`). A mini window is always
-    /// Chromium's: its row is laid out with a Chromium view.
+    /// (`system.rs`). A page whose profile's context is still being made
+    /// waits for it (`context_ready`): a Chromium page, and a system page
+    /// that gets a Chromium tab for extensions (`shadow.rs`). A mini window
+    /// is always Chromium's: its row is laid out with a Chromium view.
     pub(crate) fn make_page(
         &self,
         id: ContentId,
@@ -135,8 +151,8 @@ impl Engine {
         profile: Option<&crate::ContextProfile>,
         mini: bool,
     ) {
-        if !mini && self.wants_system(url) {
-            self.build_system_content(id, url, profile);
+        if !mini && !crate::shadow::HOSTED && self.wants_system(url) {
+            self.build_system_content(id, url, profile, None);
             return;
         }
         let context = self.request_context(profile);
@@ -151,6 +167,23 @@ impl Engine {
                 mini,
                 home,
             });
+        } else {
+            self.build_page(id, url, profile, context, mini);
+        }
+    }
+
+    /// Make page `id` in the engine `url` belongs in, with `context`
+    /// (`profile`'s) ready.
+    fn build_page(
+        &self,
+        id: ContentId,
+        url: &str,
+        profile: Option<&crate::ContextProfile>,
+        context: Option<RequestContext>,
+        mini: bool,
+    ) {
+        if !mini && self.wants_system(url) {
+            self.build_system_content(id, url, profile, context);
         } else {
             self.build_content(id, url, profile, context, mini);
         }
@@ -177,7 +210,7 @@ impl Engine {
             // window closed meanwhile.
             let build = || {
                 let context = self.request_context(Some(&page.profile));
-                self.build_content(page.id, &page.url, Some(&page.profile), context, page.mini);
+                self.build_page(page.id, &page.url, Some(&page.profile), context, page.mini);
                 self.show_late(page.id);
             };
             if self.in_window(page.home, build).is_none() {
@@ -258,6 +291,7 @@ impl Engine {
                 window: None,
                 view: PageView::Chromium(view.clone()),
                 browser: None,
+                shadow: None,
                 profile: profile.map(|p| p.id.clone()).unwrap_or_default(),
                 ephemeral: profile.is_some_and(|p| p.ephemeral),
                 devtools: None,
@@ -270,9 +304,86 @@ impl Engine {
         );
 
         let bounds = mini.then(|| self.mini_rect());
-        let mut wd = ContentWindowDelegate::new(id, PageView::Chromium(view), bounds, serial);
+        let mut wd = ContentWindowDelegate::new(id, PageView::Chromium(view), None, bounds, serial);
         window_create_top_level(Some(&mut wd));
         crate::trace(&format!("create_content #{id} window created"));
+    }
+
+    /// CEF asks whether the tab an extension opens for `url`, from the page
+    /// in `opener`, may come to us as a view. True for a page of ours (or
+    /// a system page's shadow) and an address to show; the view follows at once (`adopt_extension_tab`).
+    pub(crate) fn expect_extension_tab(
+        &self,
+        opener: Option<&Browser>,
+        url: String,
+        background: bool,
+    ) -> bool {
+        let ours = self
+            .content_id_for(opener)
+            .or_else(|| self.shadow_owner(opener));
+        if crate::stray::is_blank(&url) || ours.is_none() {
+            return false;
+        }
+        self.lock().pending_tab = Some(PendingTab { url, background });
+        true
+    }
+
+    /// CEF made `view` for the tab an extension opened from the page in
+    /// `source`: it becomes a page of ours in a window of its own (hidden),
+    /// in `source`'s profile, as `build_content` makes one. The extension
+    /// holds this very tab, so nothing is loaded a second time and the id
+    /// it got stays good. CEF needs the view in a window before this
+    /// returns. False if no such tab is expected, or `source` is no page
+    /// of ours any more: CEF then gives the view a window of its own.
+    pub(crate) fn adopt_extension_tab(&self, source: &BrowserView, view: &BrowserView) -> bool {
+        let (tab, opener, id) = {
+            let mut inner = self.lock();
+            let Some(tab) = inner.pending_tab.take() else {
+                return false;
+            };
+            let mut target = View::from(source);
+            let opener = (inner.contents.values())
+                .find(|c| {
+                    c.view.is(&mut target) || c.shadow.as_ref().is_some_and(|s| s.is(&mut target))
+                })
+                .map(|c| (c.profile.clone(), c.ephemeral));
+            let id = inner.next_id;
+            inner.next_id += 1;
+            (tab, opener, id)
+        };
+        let Some((profile, ephemeral)) = opener else {
+            return false;
+        };
+        crate::trace(&format!("extension tab: content #{id}"));
+        let serial = self.next_serial();
+        self.lock().contents.insert(
+            id,
+            ContentState {
+                home: self.current_window(),
+                window: None,
+                view: PageView::Chromium(view.clone()),
+                browser: None,
+                shadow: None,
+                profile: profile.clone(),
+                ephemeral,
+                devtools: None,
+                slot: None,
+                tab_target: None,
+                mini: None,
+                adopted: false,
+                serial,
+            },
+        );
+        let mut wd =
+            ContentWindowDelegate::new(id, PageView::Chromium(view.clone()), None, None, serial);
+        window_create_top_level(Some(&mut wd));
+        self.emit(EngineEvent::ExtensionTabOpened {
+            id,
+            url: tab.url,
+            background: tab.background,
+            context: profile,
+        });
+        true
     }
 
     /// The frame of the window page `id` lives in: the parent of the page's
@@ -957,7 +1068,17 @@ impl Engine {
         #[cfg(target_os = "windows")]
         {
             let focused = pages.iter().find(|(_, ring)| *ring);
-            crate::win::set_focus_ring(focused.map(|(window, _)| window.window_handle()), accent);
+            // A page of a split has the frame's corners, or none.
+            let radius = if Self::page_frame_shows(&self.lock()) {
+                Self::PAGE_RADIUS
+            } else {
+                0
+            };
+            crate::win::set_focus_ring(
+                focused.map(|(window, _)| window.window_handle()),
+                accent,
+                radius,
+            );
         }
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         let _ = (pages, accent);
@@ -1130,7 +1251,7 @@ impl Engine {
 }
 
 wrap_browser_view_delegate! {
-    struct ContentViewDelegate {
+    pub(crate) struct ContentViewDelegate {
         toolbar: bool,
     }
     impl ViewDelegate {
@@ -1159,7 +1280,14 @@ wrap_browser_view_delegate! {
             _client: Option<&mut Client>,
             is_devtools: ::std::os::raw::c_int,
         ) -> Option<BrowserViewDelegate> {
-            (is_devtools != 0).then(crate::devdock::DevToolsViewDelegate::new)
+            if is_devtools != 0 {
+                return Some(crate::devdock::DevToolsViewDelegate::new());
+            }
+            // An extension's tab becomes a page like this one; a page's
+            // popup window keeps CEF's default view.
+            let engine = Engine::global();
+            let tab = engine.lock().pending_tab.is_some();
+            tab.then(|| ContentViewDelegate::new(engine.chrome_toolbar()))
         }
         fn on_popup_browser_view_created(
             &self,
@@ -1168,10 +1296,12 @@ wrap_browser_view_delegate! {
             is_devtools: ::std::os::raw::c_int,
         ) -> ::std::os::raw::c_int {
             // DevTools dock beside the page unless the user wants Chromium's
-            // own window. A page's popup window (the only other popup that
-            // gets here, see on_before_popup) gets CEF's default window.
+            // own window. An extension's tab becomes a page of ours. A
+            // page's popup window (the only other popup that gets here, see
+            // on_before_popup) gets CEF's default window.
             match (is_devtools != 0, browser_view, popup_browser_view) {
                 (true, Some(source), Some(tools)) => i32::from(Engine::global().dock_devtools(source, tools)),
+                (false, Some(source), Some(tab)) => i32::from(Engine::global().adopt_extension_tab(source, tab)),
                 _ => 0,
             }
         }
@@ -1182,6 +1312,8 @@ wrap_window_delegate! {
     pub(crate) struct ContentWindowDelegate {
         id: ContentId,
         view: PageView,
+        // A system page's Chromium tab for extensions, under its view.
+        shadow: Option<BrowserView>,
         // Where a mini window opens; `None` for a tab's page window.
         mini: Option<Rect>,
         // The making of the page this window belongs to (`ContentState`).
@@ -1204,9 +1336,16 @@ wrap_window_delegate! {
                     window.add_child_view(Some(&mut v));
                     layout.set_flex_for_view(Some(&mut v), 1);
                 }
-                // No view of CEF's: the system's own is laid over the
-                // window below, once the window has its corners.
-                PageView::System(_) => {}
+                // The system's own view is laid over the window below,
+                // once the window has its corners. Under it, at most, the
+                // page's Chromium tab for extensions (`shadow.rs`).
+                PageView::System(_) => {
+                    if let Some(shadow) = &self.shadow {
+                        let mut v = View::from(shadow);
+                        window.add_child_view(Some(&mut v));
+                        layout.set_flex_for_view(Some(&mut v), 1);
+                    }
+                }
             }
             crate::trace(&format!("content window #{} view added", self.id));
             let row = {
@@ -1224,6 +1363,7 @@ wrap_window_delegate! {
                 if let Some(row) = row {
                     window.add_child_view_at(Some(&mut View::from(&row)), 0);
                 }
+                crate::mini::colour_window(window);
                 window.set_bounds(Some(bounds));
                 #[cfg(target_os = "macos")]
                 crate::mac::round_window_corners(window.window_handle(), 10.0, true);
@@ -1237,9 +1377,16 @@ wrap_window_delegate! {
             // Hidden until the app activates the tab.
             window.set_bounds(Some(&engine.content_rect()));
             #[cfg(target_os = "macos")]
-            crate::mac::round_window_corners(window.window_handle(), 10.0, false);
+            crate::mac::round_window_corners(
+                window.window_handle(),
+                f64::from(engine.corner_radius(self.id)),
+                false,
+            );
             #[cfg(target_os = "windows")]
-            crate::win::round_window_corners(window.window_handle(), false);
+            {
+                crate::win::round_window_corners(window.window_handle(), false);
+                crate::win::clip_page(window.window_handle(), engine.corner_radius(self.id));
+            }
             #[cfg(target_os = "macos")]
             crate::mac::pin_window(window.window_handle());
             if let PageView::System(id) = &self.view {
@@ -1273,6 +1420,12 @@ wrap_window_delegate! {
             // `window-reparent.patch`): a page moves with its answer.
             Engine::global().home_frame(self.id)
         }
+        // A theme change resets the colours of a mini window's address field.
+        fn on_theme_colors_changed(&self, window: Option<&mut Window>, _chrome_theme: ::std::os::raw::c_int) {
+            if let (Some(_), Some(window)) = (&self.mini, window) {
+                crate::mini::colour_window(window);
+            }
+        }
         fn initial_bounds(&self, _window: Option<&mut Window>) -> Rect {
             self.mini.clone().unwrap_or_else(|| Engine::global().content_rect())
         }
@@ -1288,7 +1441,7 @@ wrap_window_delegate! {
         fn with_standard_window_buttons(&self, _window: Option<&mut Window>) -> ::std::os::raw::c_int { 0 }
         fn can_close(&self, _window: Option<&mut Window>) -> ::std::os::raw::c_int { 1 }
         fn on_key_event(&self, _window: Option<&mut Window>, event: Option<&KeyEvent>) -> ::std::os::raw::c_int {
-            let Some(shortcut) = event.and_then(|e| crate::keys::shortcut_for_key(e).or_else(|| crate::keys::yieldable_shortcut(e))) else { return 0 };
+            let Some(shortcut) = event.and_then(crate::keys::any_shortcut) else { return 0 };
             Engine::global().emit(EngineEvent::Shortcut { from: Some(self.id), shortcut });
             1
         }
@@ -1296,9 +1449,10 @@ wrap_window_delegate! {
         // (macOS would otherwise spend it on activating the window).
         fn accepts_first_mouse(&self, _window: Option<&mut Window>) -> State { State::ENABLED }
         fn window_runtime_style(&self) -> RuntimeStyle {
-            match self.view {
-                PageView::Chromium(_) => RuntimeStyle::CHROME,
-                PageView::System(_) => RuntimeStyle::ALLOY,
+            // A Chromium view needs a window of Chrome's style.
+            match (&self.view, &self.shadow) {
+                (PageView::Chromium(_), _) | (_, Some(_)) => RuntimeStyle::CHROME,
+                (PageView::System(_), None) => RuntimeStyle::ALLOY,
             }
         }
         // Mini windows are windows of their own on the desktop.

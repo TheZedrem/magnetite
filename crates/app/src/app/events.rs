@@ -44,6 +44,7 @@ impl EngineDelegate for MagnetiteApp {
                     .set_system_engine_sites(self.with_state(|s| s.settings.system_engine.hosts()));
                 engine.set_sidebar_width(width);
                 engine.set_top_bar_visible(self.with_state(|s| s.settings.appearance.top_bar));
+                engine.set_page_frame(self.with_state(|s| s.settings.appearance.page_frame));
                 if toolbar {
                     engine.set_chrome_toolbar(true);
                 }
@@ -289,12 +290,19 @@ impl EngineDelegate for MagnetiteApp {
                     engine.activate_frame();
                 }
             }
+            EngineEvent::ExtensionTabOpened {
+                id,
+                url,
+                background,
+                context,
+            } => self.keep_extension_tab(engine, id, &url, background, &context),
             // Keys and menu bar items from a mini window act on its page.
             EngineEvent::Shortcut {
                 from: Some(id),
                 shortcut,
             } if self.is_mini(id) => self.mini_shortcut(engine, id, shortcut),
             EngineEvent::MiniToTab { id, space } => self.mini_to_tab(engine, id, space.as_deref()),
+            EngineEvent::MiniNavigate { id, input } => self.mini_navigate(engine, id, &input),
             // Keys from a page window act on that page (peek, split pane).
             EngineEvent::Shortcut {
                 shortcut: Shortcut::CopyLink,
@@ -482,6 +490,7 @@ impl EngineDelegate for MagnetiteApp {
                 | UiCommand::SyncLeave
                 | UiCommand::SyncDeleteChain
                 | UiCommand::SetShortcut { .. }
+                | UiCommand::SetShortcutFirst { .. }
                 | UiCommand::SetSpaceShortcut { .. }
                 | UiCommand::ResetShortcut { .. }
                 | UiCommand::RecordShortcut { .. }
@@ -489,6 +498,15 @@ impl EngineDelegate for MagnetiteApp {
         let trusted = ["magnetite://ui/settings", WELCOME_URL];
         if settings_only && !trusted.iter().any(|page| origin.starts_with(page)) {
             return Err("only the Settings page may do that".into());
+        }
+        // Which sites get the shortcuts' keys first is chosen in the site
+        // panel (the sidebar, the top bar's window) and in Settings alone.
+        let site_panel = origin.strip_prefix("magnetite://ui/").is_some_and(|page| {
+            let pages = ["?", "#", "popup", "settings"];
+            page.is_empty() || pages.iter().any(|p| page.starts_with(p))
+        });
+        if matches!(cmd, UiCommand::SetSiteShortcuts { .. }) && !site_panel {
+            return Err("only the site panel and Settings may do that".into());
         }
         // Pictures are stored from Settings and the space dialog alone: the
         // welcome page has no use for them.

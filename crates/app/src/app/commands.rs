@@ -519,6 +519,12 @@ pub(super) enum UiCommand {
         #[serde(default)]
         keys: Option<String>,
     },
+    /// A key of shortcut `action` pressed in a page goes to `first`
+    /// ("magnetite" or "page") before the other.
+    SetShortcutFirst {
+        action: magnetite_engine::Action,
+        first: magnetite_engine::First,
+    },
     /// Give space `id` the keys `keys` (as `Combo` saves them), or none.
     /// A shortcut or space that had these keys loses them. Answers
     /// `{"error": …}` for keys a shortcut cannot have.
@@ -675,6 +681,17 @@ pub(super) enum UiCommand {
     /// Site panel: whether ads are blocked on the site of the page at `url`.
     SiteAds {
         url: String,
+    },
+    /// Site panel: whether the site of the page at `url` gets the keys of
+    /// every shortcut first.
+    SiteShortcuts {
+        url: String,
+    },
+    /// Site panel and Settings: the site of the page at `url`, or the site
+    /// `url` names, gets the keys of every shortcut first, or no longer.
+    SetSiteShortcuts {
+        url: String,
+        page_first: bool,
     },
     /// Site panel: block ads on the site of the page at `url` again, or not.
     SetSiteAds {
@@ -1973,6 +1990,8 @@ impl MagnetiteApp {
                             "action": action,
                             "keys": s.settings.shortcuts.combo_of(*action).map(|c| c.to_string()),
                             "default": action.default_combo().map(|c| c.to_string()),
+                            "first": s.settings.shortcut_priority.first(*action),
+                            "default_first": action.default_first(),
                         })).collect::<Vec<_>>(),
                     })
                 }));
@@ -2065,6 +2084,7 @@ impl MagnetiteApp {
                 })?;
                 engine.set_sidebar_width(settings.appearance.sidebar_width);
                 engine.set_top_bar_visible(settings.appearance.top_bar);
+                engine.set_page_frame(settings.appearance.page_frame);
                 engine
                     .set_chrome_toolbar(settings.chrome_toolbar || engine.config().chrome_toolbar);
                 Self::apply_devtools_dock(engine, settings.devtools_dock);
@@ -2098,6 +2118,9 @@ impl MagnetiteApp {
                 if let Err(error) = self.set_shortcut(engine, action, keys.as_deref()) {
                     return Ok(json!({ "error": error.to_string() }));
                 }
+            }
+            UiCommand::SetShortcutFirst { action, first } => {
+                self.set_shortcut_first(engine, action, first);
             }
             UiCommand::SetSpaceShortcut { id, keys } => {
                 if let Err(error) = self.set_space_shortcut(engine, &id, keys.as_deref()) {
@@ -2584,6 +2607,10 @@ impl MagnetiteApp {
                 lock(&self.capture).result = None;
             }
             UiCommand::SiteAds { url } => return Ok(self.site_ads(&url)),
+            UiCommand::SiteShortcuts { url } => return Ok(self.site_shortcuts(&url)),
+            UiCommand::SetSiteShortcuts { url, page_first } => {
+                self.set_site_shortcuts(engine, &url, page_first);
+            }
             UiCommand::SiteEngine { url } => return Ok(self.site_engine(&url)),
             UiCommand::SetSiteEngine { url, system } => {
                 self.set_site_engine(engine, &url, system)?;

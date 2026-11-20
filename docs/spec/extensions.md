@@ -77,11 +77,22 @@ Settings.
   that page's top-left corner, next to the sidebar (with the top bar on, at
   its top-right corner, below the top bar's buttons), and acts on that page:
   a password manager fills it, a blocker's switch applies to its site.
+- On a page the system's engine shows (`protected-video.md`) the popup
+  opens the same way on macOS and is told the page's address, but the
+  extension does not reach the page: nothing is filled in.
+- That page is also what Chromium tells the extension when it asks for
+  the tab in front (the active tab of the window focused last): to
+  Chromium every page is a window of its own, and the page is made the one
+  focused last as its action runs. Between two actions an extension that
+  asks in the background is told the page clicked into last.
 - With no page open, a notice asks to open one first.
 - "Options" opens the extension's options page as a tab, in the profile of
   the page in front, where the extension is installed.
 - Pages an extension opens itself (a welcome page, `chrome.tabs.create`, a
   normal window) open as Magnetite tabs in the profile they came from. A
+  tab from `chrome.tabs.create` is the tab the extension got back: its id
+  stays good for `chrome.tabs.get`, `update` and `remove`, and
+  `active: false` opens it in the background, marked unread. A
   pop-up window (Bitwarden's passkey window) opens as a small window of its
   own, as in other browsers.
 
@@ -151,9 +162,17 @@ Settings.
   see `docs/development/upstream.md`). A second click during the wait would
   cancel the popup, so a sidebar button ignores clicks until the popup has
   the keyboard, for at most five seconds.
-- A tab or normal window an extension opens with `chrome.tabs.create` or
-  `chrome.windows.create` becomes a new Magnetite tab. The id Chromium
+- A normal window an extension opens with `chrome.windows.create` becomes
+  a new Magnetite tab that loads the address again. The id Chromium
   returned to the extension belongs to the closed window.
+- With no page open, `chrome.tabs.create` fails ("No current window") and
+  opens nothing.
+- `chrome.tabs.create` ignores `index` and `pinned`: the tab goes where
+  Magnetite puts new tabs. With the official CEF (systems Magnetite's own
+  CEF build is not made for) such a tab still loads again under another id.
+- A tab an extension closes with `chrome.tabs.remove` stays in the sidebar
+  without its page, as a tab does whose page closed itself; it loads again
+  when chosen.
 - An extension's pop-up window is a plain Chromium window outside
   Magnetite's layout. On Linux it still becomes a tab, so an extension
   that waits for its window (Bitwarden's passkeys) gives up there.

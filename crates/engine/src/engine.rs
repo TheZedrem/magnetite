@@ -151,6 +151,8 @@ pub(crate) struct Inner {
     /// an extension's pop-up window. `quit` closes them; each one left open
     /// would keep the app running.
     pub foreign: HashMap<i32, Browser>,
+    /// The tab of an extension that CEF hands over next (`content.rs`).
+    pub pending_tab: Option<crate::content::PendingTab>,
     /// Keeps the watches on each profile's Chromium preferences alive
     /// (`extensions::watch_pins`, `autofill::watch`).
     pub pref_watches: Vec<Registration>,
@@ -164,6 +166,8 @@ pub(crate) struct Inner {
     pub chrome_toolbar: bool,
     /// The top bar is on (`set_top_bar_visible`).
     pub top_bar_visible: bool,
+    /// When the frame around the pages shows (`set_page_frame`).
+    pub page_frame: crate::PageFrame,
     /// Where DevTools open, and the docked ones per page.
     pub devtools_dock: crate::DevToolsDock,
     pub docked: HashMap<ContentId, crate::devdock::DockedDevTools>,
@@ -289,11 +293,13 @@ impl Engine {
                 ui_reloads: HashMap::new(),
                 contexts: HashMap::new(),
                 foreign: HashMap::new(),
+                pending_tab: None,
                 pref_watches: Vec::new(),
                 ready_contexts: HashSet::new(),
                 queued: Vec::new(),
                 chrome_toolbar: config.chrome_toolbar,
                 top_bar_visible: false,
+                page_frame: crate::PageFrame::default(),
                 devtools_dock: crate::DevToolsDock::default(),
                 docked: HashMap::new(),
                 pending_panels: HashMap::new(),
