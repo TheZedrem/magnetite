@@ -161,6 +161,45 @@ from a context Magnetite did not make is not opened.
   List, so tenants of shared hosts such as `github.io` stay apart.
 - Every profile id has its own data folder (`profile_dir_name`).
 
+## Pages in the system's engine
+
+Pages of some sites are shown by the system's own web engine instead of
+Chromium (WebKit on macOS; `docs/spec/protected-video.md`, ADR-0015). What
+holds for them:
+
+- Only the sites of a list the user sees and can change get such a page,
+  and only at `http://` and `https://` addresses. Its main frame is not
+  sent to any other scheme: an app's own scheme, `mailto:`, a `data:` or
+  a `blob:` address opens nothing. The one exception is the note that
+  Magnetite itself loads where a page failed to load.
+- A link out of such a page reaches the app as a link out of a Chromium
+  page does (`OpenUrlRequested`, source "page"), with the page's profile,
+  and goes through the same checks.
+- A profile's data in that engine is apart from every other profile's, and
+  a private profile's is in memory only (`mac/webkit.rs`, `store`). It
+  lies outside the data folder, where the system's engine keeps it; the
+  file that names the stores is written for the user alone (0600).
+- The icon of such a page is fetched by a request of its own, in a session
+  without a place for cookies, so it cannot tie two profiles together. It
+  goes over `https://` only, also after a redirect, to an address without
+  a name or password, and ends when more than 1 MiB arrives.
+- A profile's store is opened on disk only under an identifier that is
+  written to the data folder, and the identifier stays there until the
+  engine has removed the store: no store is left that Magnetite cannot
+  find again to delete. If that file cannot be read, no store is opened
+  on disk and deleting the engine's data reports the failure.
+- The engine's check of addresses against a list of fraudulent sites is
+  off, as Chromium's Safe Browsing is: it would ask a service.
+- What Magnetite adds to Chromium pages is absent there: ad blocking,
+  Global Privacy Control, the permission prompts. Settings and the site
+  panel say so for the first two, and the site panel has no permission
+  rows for such a page. The engine asks for camera and microphone with a
+  prompt of its own, each time.
+- The engine is the system's and is updated with it, not with Magnetite.
+- The page's view lives in a window of AppKit's attached to the page's own
+  window. It is made by Magnetite, shows only that view and is closed with
+  the page.
+
 ## Network
 
 - Smart folders: `https://` only, plain `http://` only to this computer

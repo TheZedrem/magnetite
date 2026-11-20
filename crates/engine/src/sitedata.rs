@@ -241,6 +241,9 @@ impl Engine {
     }
 
     fn page_url(&self, id: ContentId) -> Option<String> {
+        if self.is_system_page(id) {
+            return crate::system::backend::address_of(id);
+        }
         let frame = self
             .lock()
             .contents
@@ -448,6 +451,28 @@ impl Engine {
             });
             return;
         };
+        // A system page's data is in the system engine's own store.
+        if self.is_system_page(id) {
+            let profile = self.content_profile(id);
+            // Nothing deleted reads as it does for a Chromium page: the
+            // cookies could not be reached, and none of the storage went.
+            let report = move |cleared: Result<Option<usize>, String>| {
+                let failed_origins = if cleared.is_ok() {
+                    vec![]
+                } else {
+                    origins.clone()
+                };
+                done(ClearReport {
+                    domain,
+                    cookies: cleared.ok().flatten(),
+                    origins,
+                    failed_origins,
+                    moved: false,
+                });
+            };
+            self.clear_system_data(profile.as_ref(), Some(confirmed), Box::new(report));
+            return;
+        }
         let job = CLEAR_JOBS.with(|j| {
             let mut j = j.borrow_mut();
             let key = j.keys().max().map_or(1, |k| k + 1);

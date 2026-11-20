@@ -5,6 +5,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use magnetite_core::{Id, UnixSeconds};
+use magnetite_engine::in_domain;
 use serde::{Deserialize, Serialize};
 
 /// The longest retention period in days, for the archive and the history:
@@ -129,6 +130,107 @@ pub struct Settings {
     /// Developer features: the row for local pages, the hosts that count
     /// as local. Not synced.
     pub developer: crate::dev::DeveloperSettings,
+    /// Which sites the system's own web engine shows instead of Chromium.
+    /// Not synced: only some systems have such an engine.
+    pub system_engine: SystemEngine,
+}
+
+/// The services known to play protected video only in a browser build that
+/// Google's Widevine programme has verified, which Magnetite's Chromium is
+/// not: they refuse it and play in the system's engine. By host, each with
+/// its subdomains. Ships with each release; never fetched from anywhere.
+pub const PROTECTED_VIDEO_SITES: &[&str] = &[
+    "netflix.com",
+    "disneyplus.com",
+    "max.com",
+    "hbomax.com",
+    "primevideo.com",
+    "hulu.com",
+];
+
+/// The most sites of their own a user names for the system's engine.
+const MAX_SYSTEM_ENGINE_SITES: usize = 100;
+
+/// Which sites open in the system's own web engine (Settings → Protected
+/// video; `magnetite_engine`'s `system.rs`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct SystemEngine {
+    /// The services of `PROTECTED_VIDEO_SITES` do.
+    pub known: bool,
+    /// Sites the user named, by host in lower case without `www.`.
+    pub sites: Vec<String>,
+}
+
+impl Default for SystemEngine {
+    fn default() -> Self {
+        Self {
+            known: true,
+            sites: Vec::new(),
+        }
+    }
+}
+
+impl SystemEngine {
+    /// Hosts only, each once, and none that the known services cover
+    /// while those are on.
+    fn sanitised(mut self) -> Self {
+        let mut sites: Vec<String> = Vec::new();
+        for site in std::mem::take(&mut self.sites) {
+            if let Some(host) = site_host(&site)
+                && !sites.contains(&host)
+                && !(self.known && PROTECTED_VIDEO_SITES.contains(&host.as_str()))
+                && sites.len() < MAX_SYSTEM_ENGINE_SITES
+            {
+                sites.push(host);
+            }
+        }
+        self.sites = sites;
+        self
+    }
+
+    /// Whether `host` is one of the known services, while those are on.
+    pub fn knows(&self, host: &str) -> bool {
+        self.known && (PROTECTED_VIDEO_SITES.iter()).any(|site| in_domain(host, site))
+    }
+
+    /// Whether `host` is under one of the user's own sites.
+    pub fn names(&self, host: &str) -> bool {
+        self.sites.iter().any(|site| in_domain(host, site))
+    }
+
+    /// Name `site` for the system's engine (the site panel's switch), or
+    /// take every own site that covers `host` out again. An error if the
+    /// list is full: the next check of the settings would drop the site
+    /// again without a word.
+    pub fn set_site(&mut self, host: &str, site: String, system: bool) -> Result<(), String> {
+        let covers = |own: &String| in_domain(host, own);
+        // Counted before anything changes: a site that is refused leaves
+        // the list as it was.
+        let others = self.sites.iter().filter(|own| !covers(own)).count();
+        if system && others >= MAX_SYSTEM_ENGINE_SITES {
+            return Err(format!(
+                "The list holds {MAX_SYSTEM_ENGINE_SITES} sites already. Remove one in Settings → Protected video first."
+            ));
+        }
+        self.sites.retain(|own| !covers(own));
+        if system {
+            self.sites.push(site);
+        }
+        Ok(())
+    }
+
+    /// Every site that opens in the system's engine.
+    pub fn hosts(&self) -> Vec<String> {
+        let known = if self.known {
+            PROTECTED_VIDEO_SITES
+        } else {
+            &[]
+        };
+        (known.iter().map(ToString::to_string))
+            .chain(self.sites.iter().cloned())
+            .collect()
+    }
 }
 
 /// The ad blocker (Settings → Ad blocking, `adblock.rs`). A new installation
@@ -528,6 +630,7 @@ impl Settings {
         self.appearance = self.appearance.clamped();
         self.adblock = self.adblock.sanitised();
         self.developer = self.developer.sanitised();
+        self.system_engine = self.system_engine.sanitised();
         if !usable_search(&self.search_template) {
             self.search_template = defaults.search_template;
         }
@@ -690,6 +793,7 @@ impl Default for Settings {
             smart_allowed: None,
             adblock: AdblockSettings::default(),
             developer: crate::dev::DeveloperSettings::default(),
+            system_engine: SystemEngine::default(),
         }
     }
 }
@@ -979,6 +1083,81 @@ mod tests {
         };
         let saved = serde_json::to_string(&on).unwrap();
         assert_eq!(serde_json::from_str::<Appearance>(&saved).unwrap(), on);
+    }
+
+    #[test]
+    fn the_known_services_open_in_the_system_engine_until_turned_off() {
+        let engine = Settings::default().system_engine;
+        assert_eq!(engine.hosts(), PROTECTED_VIDEO_SITES);
+        let own = SystemEngine {
+            known: false,
+            sites: vec!["tv.example.org".into()],
+        };
+        assert_eq!(own.hosts(), ["tv.example.org"]);
+    }
+
+    #[test]
+    fn a_known_service_can_be_named_alone_while_the_known_ones_are_off() {
+        let mut engine = SystemEngine {
+            known: false,
+            sites: Vec::new(),
+        };
+        engine
+            .set_site("www.netflix.com", "netflix.com".into(), true)
+            .unwrap();
+        // As after any later change of the settings.
+        let kept = engine.sanitised();
+        assert_eq!(kept.sites, ["netflix.com"]);
+        assert!(kept.names("www.netflix.com") && !kept.knows("www.netflix.com"));
+        // With the known services on again they cover it.
+        let known = SystemEngine {
+            known: true,
+            ..kept
+        }
+        .sanitised();
+        assert!(known.sites.is_empty() && known.knows("www.netflix.com"));
+    }
+
+    #[test]
+    fn the_site_panel_cannot_name_more_sites_than_are_kept() {
+        let mut engine = SystemEngine {
+            known: true,
+            sites: (0..MAX_SYSTEM_ENGINE_SITES)
+                .map(|n| format!("tv{n}.example.org"))
+                .collect(),
+        };
+        let full = engine.sites.clone();
+        assert!(
+            engine
+                .set_site("more.example.org", "more.example.org".into(), true)
+                .is_err()
+        );
+        assert_eq!(engine.sites, full);
+        // Taking one out, and naming one that is there already, still work.
+        engine
+            .set_site("tv0.example.org", "tv0.example.org".into(), true)
+            .unwrap();
+        engine
+            .set_site("tv1.example.org", "tv1.example.org".into(), false)
+            .unwrap();
+        assert_eq!(engine.sites.len(), MAX_SYSTEM_ENGINE_SITES - 1);
+    }
+
+    #[test]
+    fn own_sites_for_the_system_engine_are_hosts_each_once() {
+        let typed = SystemEngine {
+            known: true,
+            sites: vec![
+                "https://www.TV.example.org/watch?v=1".into(),
+                "tv.example.org".into(),
+                "not a host".into(),
+                // One of the known services: the switch above covers it.
+                "netflix.com".into(),
+                "music.example.com".into(),
+            ],
+        };
+        let kept = typed.sanitised();
+        assert_eq!(kept.sites, ["tv.example.org", "music.example.com"]);
     }
 
     #[test]

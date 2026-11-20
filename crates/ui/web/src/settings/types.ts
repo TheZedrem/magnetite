@@ -39,6 +39,8 @@ export interface Info {
     /** The ids of the recommended lists, which a new installation starts with. */
     recommended: string[];
   };
+  /** Whether this system has a web engine of its own that Magnetite can show pages in, and the services that open in it. */
+  system_engine: { available: boolean; known_sites: string[] };
   /** Every shortcut whose keys can be changed, with the keys it has and those it began with (null: none). */
   shortcuts: { action: ShortcutAction; keys: string | null; default: string | null }[];
   /** Where Chromium keeps its encryption key: macOS Keychain, or its fixed test key (`--mock-keychain`). */
