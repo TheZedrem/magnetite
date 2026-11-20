@@ -575,6 +575,9 @@ impl Engine {
         self.lock().win.split = Some(tree.clone());
         self.layout_split(tree);
         self.update_dividers(Some(tree));
+        // The peek's buttons follow the page they sit over.
+        #[cfg(target_os = "linux")]
+        self.sync_peek_buttons();
         // The outline follows the resized page.
         let focus = self.lock().win.focused_pane;
         self.update_focus_ring(focus);
@@ -610,7 +613,8 @@ impl Engine {
         view.request_focus();
     }
 
-    /// Dim the pages behind the open peek and show its buttons (macOS).
+    /// Dim the pages behind the open peek (macOS, Windows) and show its
+    /// buttons (macOS, Linux).
     pub(crate) fn update_peek_backdrop(&self) {
         // Two statements: a guard taken inside a statement lives to its end,
         // and `frame_window` locks again.
@@ -637,6 +641,8 @@ impl Engine {
             &display_convert_screen_rect_to_pixels(Some(&self.content_rect())),
             &display_convert_screen_rect_to_pixels(Some(&window.bounds())),
         );
+        #[cfg(target_os = "linux")]
+        self.sync_peek_buttons();
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         let _ = (frame, window);
     }
@@ -662,7 +668,11 @@ impl Engine {
         if ended {
             crate::win::hide_peek_backdrop();
         }
-        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        #[cfg(target_os = "linux")]
+        if ended {
+            self.sync_peek_buttons();
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
         let _ = ended;
     }
 
@@ -920,6 +930,7 @@ impl Engine {
                 }
                 // Its window took the close button over it along.
                 w.panel_close.take_if(|(host, _)| *host == id);
+                w.peek_buttons.take_if(|(host, _)| *host == id);
                 if w.focused_pane == Some(id) {
                     w.focused_pane = None;
                 }

@@ -16,6 +16,12 @@ pub(crate) enum Glyph {
     /// Two links of a chain: "copy link", as in the address row.
     Link,
     Check,
+    /// Two arrows out to opposite corners: "open as tab", beside a peek.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    Expand,
+    /// A frame cut in two halves: "open in split view", beside a peek.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    Split,
 }
 
 type Point = (f32, f32);
@@ -32,6 +38,22 @@ impl Glyph {
                 vec![(6.0, 6.0), (18.0, 18.0)],
             ],
             Self::Check => vec![vec![(20.0, 6.0), (9.0, 17.0), (4.0, 12.0)]],
+            Self::Expand => vec![
+                vec![(4.0, 10.0), (4.0, 4.0), (10.0, 4.0)],
+                vec![(4.0, 4.0), (10.0, 10.0)],
+                vec![(20.0, 14.0), (20.0, 20.0), (14.0, 20.0)],
+                vec![(20.0, 20.0), (14.0, 14.0)],
+            ],
+            Self::Split => vec![
+                vec![
+                    (3.0, 5.0),
+                    (21.0, 5.0),
+                    (21.0, 19.0),
+                    (3.0, 19.0),
+                    (3.0, 5.0),
+                ],
+                vec![(12.0, 5.0), (12.0, 19.0)],
+            ],
             Self::Link => {
                 // The upper right link: a short arc out of the middle, then
                 // half a circle round its end and a short way back. The
