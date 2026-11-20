@@ -366,6 +366,12 @@ impl Engine {
                 return;
             }
         }
+        // Wayland: the popup is a bubble inside the page's bubble, and
+        // Chromium activates one level only, so it gets keys only while the
+        // page's bubble is the frame's active one. A click in the sidebar
+        // made the frame itself active: hand the page the keyboard first.
+        #[cfg(target_os = "linux")]
+        self.focus_content(id);
         // Extensions ask Chromium for the tab in front as the active tab of
         // the window focused last. Every page is a window of its own to
         // Chromium, and one becomes the last focused when it is activated: by
