@@ -366,9 +366,18 @@ impl Engine {
                 return;
             }
         }
+        // Extensions ask Chromium for the tab in front as the active tab of
+        // the window focused last. Every page is a window of its own to
+        // Chromium, and one becomes the last focused when it is activated: by
+        // a click into it, not by being shown. So the page is activated as
+        // its action is sent, once its tab is known.
         let extension = extension.to_string();
         let asked = std::time::Instant::now();
         self.with_tab_target(id, move |tab| {
+            let window = (Engine::global().lock().contents.get(&id)).and_then(|c| c.window.clone());
+            if let Some(window) = window {
+                window.activate();
+            }
             crate::devpipe::call(
                 "Extensions.triggerAction",
                 &json!({ "id": extension, "targetId": tab }),
@@ -392,12 +401,10 @@ impl Engine {
     /// target's window and the tabs, and the tab with the same window wins
     /// (tabs showing the page's address are asked first).
     fn with_tab_target(&self, id: ContentId, f: impl FnOnce(String) + Send + 'static) {
-        if let Some(tab) = self
-            .lock()
-            .contents
-            .get(&id)
-            .and_then(|c| c.tab_target.clone())
-        {
+        // Its own statement: `f` runs without the engine's lock, which it
+        // may take itself.
+        let known = (self.lock().contents.get(&id)).and_then(|c| c.tab_target.clone());
+        if let Some(tab) = known {
             f(tab);
             return;
         }
