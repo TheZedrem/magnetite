@@ -73,10 +73,10 @@ impl Engine {
         use crate::keymap::Action;
         let keys = crate::keys::combo_of(Action::NextTab)
             .or_else(|| crate::keys::combo_of(Action::PrevTab))?;
-        #[cfg(target_os = "macos")]
-        use crate::mac::modifiers_held;
         #[cfg(not(target_os = "macos"))]
         use crate::keys::modifiers_held;
+        #[cfg(target_os = "macos")]
+        use crate::mac::modifiers_held;
         (keys.primary || keys.ctrl || keys.alt)
             .then(|| modifiers_held(keys.primary, keys.ctrl, keys.alt))
     }
