@@ -357,6 +357,7 @@ export interface Settings {
   strip_trackers: boolean;
   /** A web panel closes by itself when a page behind it is used. */
   panel_autoclose: boolean;
+  load_pinned_at_start: boolean;
   devtools_dock: "right" | "bottom" | "window";
   sync: SyncSettings;
   /** Extensions with an icon in the sidebar or the top bar; all are in the menu bar's Extensions menu. */

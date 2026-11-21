@@ -1065,6 +1065,7 @@ impl MagnetiteApp {
                 // Once: `Ready` repeats when the sidebar reloads.
                 static OPENED: std::sync::Once = std::sync::Once::new();
                 OPENED.call_once(|| {
+                    self.load_pinned(engine);
                     if let Some(url) = self.open_on_start.clone() {
                         self.open_url(engine, &url, false);
                     }

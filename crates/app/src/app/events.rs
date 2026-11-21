@@ -68,6 +68,7 @@ impl EngineDelegate for MagnetiteApp {
             | EngineEvent::ContentCreated { .. } => {}
             EngineEvent::SidebarLoaded => self.push_state(engine),
             EngineEvent::ContentClosed { id } => {
+                self.start_load_done(engine, id);
                 self.record_page_closed(engine, id);
                 self.with_prompts(|p| p.open.retain(|q| q.content != id));
                 self.show_prompts(engine);
@@ -220,6 +221,7 @@ impl EngineDelegate for MagnetiteApp {
                     self.dev_load_started(id);
                 } else {
                     self.dev_load_ended(id);
+                    self.start_load_done(engine, id);
                 }
                 self.with_state(|s| {
                     if let Some(rt) = s.page_runtime(id) {

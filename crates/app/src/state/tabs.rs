@@ -412,6 +412,23 @@ impl AppState {
             .collect()
     }
 
+    /// The tabs to load at start (Settings: `load_pinned_at_start`): the
+    /// favorites and the pinned tabs of every space. Not web panels: they
+    /// open over the page in front, not as tabs.
+    pub fn tabs_to_load_at_start(&self) -> Vec<Id> {
+        if !self.settings.load_pinned_at_start {
+            return Vec::new();
+        }
+        let favorites = (self.sidebar.favorites.iter()).flat_map(|f| f.items.iter());
+        let pinned = (self.sidebar.spaces.iter())
+            .flat_map(|space| space.pinned.iter().flat_map(SidebarNode::tabs));
+        favorites
+            .chain(pinned)
+            .filter(|t| !t.panel)
+            .map(|t| t.id.clone())
+            .collect()
+    }
+
     /// The tabs whose page is to be unloaded now: out of sight for longer
     /// than the unload time of the settings (0: never). Only Today tabs, and
     /// the same ones are spared as in `stale_today_tabs`: favorites and
@@ -604,6 +621,25 @@ impl AppState {
 mod tests {
     use super::*;
     use crate::state::testing::{state, tab};
+
+    #[test]
+    fn favorites_and_pinned_tabs_load_at_start_when_asked_but_not_panels() {
+        let mut s = state();
+        let profile = s.sidebar.spaces[0].profile_id.clone();
+        s.sidebar.favorites = vec![magnetite_core::FavoriteSet {
+            profile_id: profile,
+            items: vec![
+                tab("f"),
+                TabItem {
+                    panel: true,
+                    ..tab("w")
+                },
+            ],
+        }];
+        assert_eq!(s.tabs_to_load_at_start(), Vec::<Id>::new());
+        s.settings.load_pinned_at_start = true;
+        assert_eq!(s.tabs_to_load_at_start(), ["f", "p"]);
+    }
 
     #[test]
     fn tab_cycling_wraps_and_starts_at_the_ends_from_a_favorite() {

@@ -99,6 +99,8 @@ pub struct MagnetiteApp {
     /// themselves or with the site panel's switch (`engines.rs`): for this
     /// run only, never written anywhere. Only its two lists count.
     private_engines: Mutex<crate::state::SystemEngine>,
+    /// The pinned tabs loading at start, a few at a time (`load_pinned`).
+    start_loads: Mutex<tabs::StartLoads>,
 }
 
 /// When the sidebar was last sent the state, and whether another sending
@@ -268,6 +270,7 @@ impl MagnetiteApp {
                 known: false,
                 ..Default::default()
             }),
+            start_loads: Mutex::default(),
         }
     }
 

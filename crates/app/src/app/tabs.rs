@@ -9,6 +9,17 @@ use crate::{lock, trace, url_policy};
 
 use super::{DOWNLOADS_URL, MagnetiteApp, WELCOME_URL, global};
 
+/// How many tabs load at the same time at start (`load_pinned`): all at
+/// once keeps every core busy and heats a laptop up.
+const START_LOADS_AT_ONCE: usize = 3;
+
+/// The tabs loading at start: those still waiting, and the pages loading now.
+#[derive(Default)]
+pub(super) struct StartLoads {
+    waiting: std::collections::VecDeque<String>,
+    loading: Vec<ContentId>,
+}
+
 /// The list of the tabs `Ctrl+Tab` goes through (`Switcher.tsx`).
 const SWITCHER_URL: &str = "magnetite://ui/switcher";
 /// Its width and the height of one of its rows, in points at the normal
@@ -697,6 +708,58 @@ impl MagnetiteApp {
             }
         });
         self.push_state(engine);
+    }
+
+    /// At start: the favorites and pinned tabs get their pages, hidden,
+    /// when Settings asks for it (`tabs_to_load_at_start`), up to
+    /// `START_LOADS_AT_ONCE` at a time.
+    pub(super) fn load_pinned(&self, engine: &Engine) {
+        let ids = self.with_state(|s| s.tabs_to_load_at_start());
+        lock(&self.start_loads).waiting = ids.into();
+        self.load_next_pinned(engine);
+    }
+
+    /// Start the next tabs waiting to load at start, until
+    /// `START_LOADS_AT_ONCE` are loading. A tab that is gone, or got its
+    /// page meanwhile (opened by hand), is skipped.
+    fn load_next_pinned(&self, engine: &Engine) {
+        let mut started = false;
+        loop {
+            let next = {
+                let mut loads = lock(&self.start_loads);
+                if loads.loading.len() >= START_LOADS_AT_ONCE {
+                    break;
+                }
+                let Some(id) = loads.waiting.pop_front() else {
+                    break;
+                };
+                id
+            };
+            let unloaded = self.with_state(|s| s.find_tab(&next).is_some())
+                && self.content_of(&next).is_none();
+            if unloaded {
+                let page = self.page_of(engine, &next);
+                lock(&self.start_loads).loading.push(page);
+                started = true;
+            }
+        }
+        if started {
+            self.push_state(engine);
+        }
+    }
+
+    /// Page `id` finished loading or closed: if it was a tab loading at
+    /// start, the next one waiting takes its place.
+    pub(super) fn start_load_done(&self, engine: &Engine, id: ContentId) {
+        let was_one = {
+            let mut loads = lock(&self.start_loads);
+            let before = loads.loading.len();
+            loads.loading.retain(|c| *c != id);
+            loads.loading.len() != before
+        };
+        if was_one {
+            self.load_next_pinned(engine);
+        }
     }
 
     /// Load `url` in the page of tab `tab_id`. Magnetite's own pages are
