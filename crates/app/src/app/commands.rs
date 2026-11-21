@@ -887,6 +887,10 @@ pub(super) enum UiCommand {
         id: String,
         what: DownloadCopy,
     },
+    /// Fetch failed download `id` again, as a new download.
+    RetryDownload {
+        id: String,
+    },
     ClearDownloads,
     /// "Downloads" from the palette: show the list in the sidebar.
     ShowDownloads,
@@ -2084,6 +2088,7 @@ impl MagnetiteApp {
                 })?;
                 engine.set_sidebar_width(settings.appearance.sidebar_width);
                 engine.set_top_bar_visible(settings.appearance.top_bar);
+                engine.set_page_frame(settings.appearance.page_frame);
                 engine
                     .set_chrome_toolbar(settings.chrome_toolbar || engine.config().chrome_toolbar);
                 Self::apply_devtools_dock(engine, settings.devtools_dock);
@@ -2097,7 +2102,8 @@ impl MagnetiteApp {
                 // reads the level when it starts, before Magnetite could set it.
                 engine.set_default_zoom(settings.page_zoom);
                 engine.set_languages(&settings.languages);
-                engine.set_system_engine_sites(settings.system_engine.hosts());
+                self.settle_private_engines();
+                engine.set_system_engine_sites(self.system_engine_sites());
                 engine.set_quick_search_key(settings.quick_search);
                 self.dev_settings_changed(engine);
                 // Open pages get changed CSS at once.
@@ -2329,6 +2335,25 @@ impl MagnetiteApp {
                     (Some(_), _) => "Could not copy",
                 };
                 Self::ui_call(engine, "notice", &json!({ "text": text }));
+            }
+            UiCommand::RetryDownload { id } => {
+                let source = self.with_state(|s| {
+                    let (context, url) = s.downloads.retry(&id)?;
+                    Some((context.to_string(), url.to_string()))
+                });
+                let started =
+                    source.is_some_and(|(context, url)| engine.start_download(&context, &url));
+                if started {
+                    // The new download takes its place in the list.
+                    self.with_state(|s| {
+                        s.downloads.remove(&id);
+                        s.persist();
+                    });
+                } else {
+                    let text = "Could not start that download again.";
+                    Self::ui_call(engine, "notice", &json!({ "text": text }));
+                }
+                self.show_downloads(engine);
             }
             UiCommand::ClearDownloads => {
                 self.with_state(|s| {

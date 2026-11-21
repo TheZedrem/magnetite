@@ -29,13 +29,12 @@
 >
 > | Patch | Upstream | CEF it needs |
 > | --- | --- | --- |
-> | Linux: extension popups open after every start and take the keyboard under Wayland. | [#267](https://github.com/magnetite-browser/magnetite/pull/267) | Any CEF. |
-> | Linux: Shift+click on a link opens a peek, not a mini window. | [#270](https://github.com/magnetite-browser/magnetite/pull/270) | Any CEF. |
-> | Linux: the peek's buttons (close, open as tab, split) beside it, as on macOS. | [#271](https://github.com/magnetite-browser/magnetite/pull/271) | Any CEF. |
+> | Linux: Ctrl+Tab by last use goes on while Ctrl is held, with the list of tabs, as on macOS. | Not yet | Any CEF. |
+> | Ctrl+Tab in sidebar order skips the tabs of closed folders. | Not yet | Any CEF. |
 >
 > None of them needs a CEF of my own: my [magnetite-cef fork](https://github.com/TheZedrem/magnetite-cef) has no patches upstream lacks.
 >
-> **Already upstream:** synced windows as in Zen ([#93](https://github.com/magnetite-browser/magnetite/pull/93)), the Wayland client by default ([#68](https://github.com/magnetite-browser/magnetite/pull/68)), and the Linux fixes [#78](https://github.com/magnetite-browser/magnetite/pull/78), [#79](https://github.com/magnetite-browser/magnetite/pull/79) and [#80](https://github.com/magnetite-browser/magnetite/pull/80).
+> **Already upstream:** synced windows as in Zen ([#93](https://github.com/magnetite-browser/magnetite/pull/93)), the Wayland client by default ([#68](https://github.com/magnetite-browser/magnetite/pull/68)), the peek's buttons beside it ([#271](https://github.com/magnetite-browser/magnetite/pull/271)), and the Linux fixes [#78](https://github.com/magnetite-browser/magnetite/pull/78), [#79](https://github.com/magnetite-browser/magnetite/pull/79), [#80](https://github.com/magnetite-browser/magnetite/pull/80), [#267](https://github.com/magnetite-browser/magnetite/pull/267) and [#270](https://github.com/magnetite-browser/magnetite/pull/270).
 
 <p align="center">
   <img src="docs/assets/readme/window.webp" width="860" alt="The Magnetite window: the sidebar with favorites, a space with pinned tabs, a smart folder and today's tabs, next to a web page">
@@ -89,7 +88,7 @@ Magnetite started as a new home for the workflow of the Arc browser and has grow
 - **Chromium's own tools.** Find in page, the PDF viewer, and DevTools docked beside or below the page.
 - **Passwords and autofill.** Saved passwords, addresses and cards, filled in for you and kept on your computer.
 - **Media controls** in the sidebar for whatever plays in another tab, and picture-in-picture with its own controls.
-- **Protected video.** Netflix, Disney+ and a few other streaming services ask for a browser verified by Google, which Magnetite is not yet. They, and sites you add, open in the system's own engine in a normal tab: WebKit on macOS 14 or newer, WebView2 on Windows.
+- **Protected video.** Netflix, Disney+ and a few other streaming services ask for a browser verified by Google, which Magnetite is not yet. They open in the system's own engine in a normal tab: WebKit on macOS 14 or newer, WebView2 on Windows. So does any other site whose protected video is refused in Magnetite's own engine.
 - **Capture.** A screenshot of an element, a region, the visible part or the whole page.
 - **Smart folders.** Your review requests and issues from GitHub, GitLab, Jira or YouTrack as tabs that keep themselves current.
 
@@ -104,7 +103,7 @@ Magnetite is developed and used daily on macOS (Apple silicon). Linux and Window
 
 There are no releases yet, so for now you [build it yourself](#build-it-yourself). Expect breaking changes, including to the data format on disk.
 
-Not there yet: moving a page between windows on macOS and Windows (to do: written for both, tested on neither), and H.264 or AAC playback on Linux aarch64 and Intel Macs (the standard build of the engine comes without these codecs, so some video and music sites do not play; on Macs with Apple silicon, Linux x86_64 and Windows x86_64, Magnetite uses [its own build](https://github.com/magnetite-browser/magnetite-cef) with them). Protected video from services that ask for a verified browser plays on macOS and Windows only, for the services on a short list and sites you add, in a tab without extensions ([protected-video.md](docs/spec/protected-video.md)). Every spec in [`docs/spec/`](docs/spec/README.md) ends with what its feature still lacks.
+Not there yet: moving a page between windows on macOS and Windows (to do: written for both, tested on neither), and H.264 or AAC playback on Linux aarch64 and Intel Macs (the standard build of the engine comes without these codecs, so some video and music sites do not play; on Macs with Apple silicon, Linux x86_64 and Windows x86_64, Magnetite uses [its own build](https://github.com/magnetite-browser/magnetite-cef) with them). Protected video from services that ask for a verified browser plays on macOS and Windows only, in a tab of the system's own engine, without extensions ([protected-video.md](docs/spec/protected-video.md)). Every spec in [`docs/spec/`](docs/spec/README.md) ends with what its feature still lacks.
 
 ## Install
 

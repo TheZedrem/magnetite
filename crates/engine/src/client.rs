@@ -111,6 +111,16 @@ wrap_client! {
                 Engine::global().on_share_report(browser.as_deref(), frame, &text(0), &text(1));
                 return 1;
             }
+            // A page's main frame says that its protected playback failed.
+            if self.kind == Kind::Content
+                && let (Some(frame), Some(msg)) = (frame.as_deref(), message.as_ref())
+                && frame.is_main() != 0
+                && CefString::from(&msg.name()).to_string() == crate::protected::MESSAGE
+            {
+                let reported = msg.argument_list().map(|a| CefString::from(&a.string(0)).to_string()).unwrap_or_default();
+                Engine::global().on_protected_report(browser.as_deref(), frame, &reported);
+                return 1;
+            }
             let router = Engine::global().lock().router.clone();
             match router {
                 Some(r) => r.on_process_message_received(browser.cloned(), frame.cloned(), source_process, message.cloned()).into(),
@@ -931,15 +941,15 @@ wrap_context_menu_handler! {
             command_id: ::std::os::raw::c_int,
             _event_flags: EventFlags,
         ) -> ::std::os::raw::c_int {
-            if self.kind != Kind::Content {
-                return 0;
-            }
-            if Some(command_id) == keys::command_id_for("IDC_CONTENT_CONTEXT_OPENLINKNEWWINDOW") {
+            // A page's popup window (`Kind::Stray`) has the item too.
+            if matches!(self.kind, Kind::Content | Kind::Stray)
+                && Some(command_id) == keys::command_id_for("IDC_CONTENT_CONTEXT_OPENLINKNEWWINDOW")
+            {
                 let Some(url) = params.map(|p| CefString::from(&p.link_url()).to_string()) else { return 0 };
                 Engine::global().request_open(browser.as_deref(), url, url_source(self.kind), false, false, true);
                 return 1;
             }
-            if Some(command_id) != keys::command_id_for("IDC_CONTENT_CONTEXT_INSPECTELEMENT") {
+            if self.kind != Kind::Content || Some(command_id) != keys::command_id_for("IDC_CONTENT_CONTEXT_INSPECTELEMENT") {
                 return 0;
             }
             let engine = Engine::global();

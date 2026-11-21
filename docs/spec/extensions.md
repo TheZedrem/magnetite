@@ -77,6 +77,14 @@ Settings.
   that page's top-left corner, next to the sidebar (with the top bar on, at
   its top-right corner, below the top bar's buttons), and acts on that page:
   a password manager fills it, a blocker's switch applies to its site.
+- On a page the system's engine shows (`protected-video.md`) the popup
+  opens the same way on macOS and is told the page's address, but the
+  extension does not reach the page: nothing is filled in.
+- That page is also what Chromium tells the extension when it asks for
+  the tab in front (the active tab of the window focused last): to
+  Chromium every page is a window of its own, and the page is made the one
+  focused last as its action runs. Between two actions an extension that
+  asks in the background is told the page clicked into last.
 - With no page open, a notice asks to open one first.
 - "Options" opens the extension's options page as a tab, in the profile of
   the page in front, where the extension is installed.

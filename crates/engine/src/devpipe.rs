@@ -44,18 +44,17 @@ const CHROME_WRITES: RawFd = 4;
 
 /// No pipe on Windows yet (see above).
 #[cfg(not(unix))]
-pub fn open() -> bool {
+pub(crate) fn open() -> bool {
     false
 }
 
-/// Make the pipe in the browser process, first thing, before any thread
-/// starts: a file another thread has open on fd 3 or 4 at that moment (the
-/// ad blocker reading its scriptlets) turns the pipe, and with it extension
-/// popups, off for the whole run. Returns false (and the features needing
-/// it stay off) when fds 3 and 4 are already in use; true when the pipe
-/// exists, so later calls are harmless.
+/// Make the pipe; call in the browser process before CEF starts, and before
+/// any thread that may open a file (`reserve_devtools_pipe`). A second call
+/// finds it made.
+/// Returns false (and the features needing it stay off) when fds 3 and 4
+/// are already in use.
 #[cfg(unix)]
-pub fn open() -> bool {
+pub(crate) fn open() -> bool {
     if PIPE.get().is_some() {
         return true;
     }

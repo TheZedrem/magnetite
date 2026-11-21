@@ -30,6 +30,26 @@ Such a page is called a system page below. Why it is built this way:
   host per line, each with its subdomains), or with "Open in WebKit"
   ("Open in WebView2" on Windows) in the site panel, which names the site of the page in front and loads the
   page again. At most 100 sites; the panel says so when the list is full.
+- A site whose protected video fails in Chromium: the site is added to
+  "Other sites" (by its domain, or by the page's own host where the
+  domain would take in a site kept in Chromium; not at all where that
+  site lies under the page's own host) and the page loads again in the system's engine, with a
+  note in the sidebar. It counts as failed when the page itself asks
+  Widevine for a licence request and none of its keys is usable ten
+  seconds later, which is how a service that refuses an unverified
+  browser looks from inside, whatever error it shows. A service that plays
+  in Chromium has its key within a second or two as a rule, and stays
+  there. A player in a frame
+  from another site does not move the page around it. "Move sites whose
+  protected video fails to WebKit" (to WebView2) in Settings turns this
+  off. On by default.
+- A site taken out again with the site panel's switch stays in Chromium
+  whatever it plays: it is listed under "Kept in Chromium" in Settings,
+  where sites can be added and removed (at most 100; the oldest makes
+  room).
+- In a private space both count until Magnetite is quit and are written
+  nowhere: a site that moves by itself, and the site panel's switch. The
+  switch there cannot take out a site that Settings names.
 - "Open streaming services in WebKit" (in WebView2) in Settings turns the known services
   off as a whole. On by default. A known service shows "Always, for its
   video" in the site panel in place of a switch.
@@ -66,6 +86,12 @@ the page's own full screen.
   `Shift+Cmd`+click one in front, `Shift`+click a peek, as in a Chromium
   page. A link out of a tab locked to its site (a pinned tab, a favorite)
   opens elsewhere.
+- **Extensions.** On macOS an extension opens on a system page as on any
+  other: its popup at the page's corner, with the page's address as the
+  tab in front, so a password manager lists the logins of the site and a
+  password can be copied from it. The extension does not reach the page
+  itself: it fills nothing in and changes nothing there (see below). A tab
+  it opens from its popup opens as a tab.
 - **Pointer.** On macOS hover effects and the page's own cursors show
   while the page has the keyboard, which it gets when it is shown and with
   a click into it. After a click into the sidebar they rest until the next
@@ -95,7 +121,10 @@ the page's own full screen.
 
 What a system page does not have, because it hooks into Chromium:
 
-- Chrome extensions, also password managers.
+- What an extension does in a page: filling a form, content scripts,
+  reading the page. On macOS the extension gets a Chromium tab of the
+  page's own to act on, which holds an empty document at the page's
+  address and is never seen; on Windows it gets none.
 - Ad blocking, Global Privacy Control, the user's own CSS and JavaScript.
 - The media row in the sidebar, the floating video, muting a tab.
 - DevTools and the developer features, capture, find in page, printing.
@@ -132,14 +161,21 @@ WebView2's developer tools are off too.
 - JavaScript dialogs (`alert`, `confirm`) and choosing a file to upload.
 - A service on a path of a larger site (Prime Video under `amazon.com`):
   only whole hosts can be named.
-- Noticing that a page failed to play in Chromium and offering the switch.
+- A service that refuses before it asks for a licence is not noticed: it
+  stays in Chromium unless it is on the list or named.
+- A service whose licence arrives after more than ten seconds moves,
+  although it would have played in Chromium.
+- A site that moved from a player in one of its frames, and asking before
+  a page with unsaved input loads again.
 
 Code: `crates/engine/src/system.rs` (which engine, changing it, a system
-page's events), `mac/webkit.rs` (the WebKit view, its data stores),
+page's events), `protected.rs` and `protected_hook.js` (a Chromium page
+whose protected video fails), `shadow.rs` (the Chromium tab extensions act on), `mac/webkit.rs` (the WebKit view, its data stores),
 `win/webview2.rs` (the WebView2 view, its profiles), `win/icon_fetch.rs`,
 `mac/mod.rs` (`set_focus_ring`), `content.rs` (`PageView`, `make_page`),
 `client.rs` (`on_before_browse`), `favicon.rs`, `sitedata.rs`,
 `crates/app/src/state/settings.rs` (`SystemEngine`,
-`PROTECTED_VIDEO_SITES`), `app/engines.rs` (the site panel's switch),
+`PROTECTED_VIDEO_SITES`), `app/engines.rs` (the site panel's switch, a
+site that moves by itself),
 `crates/ui/web/src/settings/ProtectedVideoSection.tsx`, `SitePanel.tsx`
 (`SystemEngine`).

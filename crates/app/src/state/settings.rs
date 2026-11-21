@@ -165,15 +165,24 @@ const MAX_SYSTEM_ENGINE_SITES: usize = 100;
 pub struct SystemEngine {
     /// The services of `PROTECTED_VIDEO_SITES` do.
     pub known: bool,
-    /// Sites the user named, by host in lower case without `www.`.
+    /// A site whose protected video fails in Chromium does from then on
+    /// (`moves`): it joins `sites`.
+    pub auto: bool,
+    /// Sites the user named, or that moved by themselves, by host in lower
+    /// case without `www.`.
     pub sites: Vec<String>,
+    /// Sites the user took back to Chromium: they do not move by
+    /// themselves again.
+    pub chromium: Vec<String>,
 }
 
 impl Default for SystemEngine {
     fn default() -> Self {
         Self {
             known: true,
+            auto: true,
             sites: Vec::new(),
+            chromium: Vec::new(),
         }
     }
 }
@@ -192,8 +201,47 @@ impl SystemEngine {
                 sites.push(host);
             }
         }
+        // A site named for both lists opens in the system's engine.
+        let mut chromium: Vec<String> = Vec::new();
+        for site in std::mem::take(&mut self.chromium) {
+            if let Some(host) = site_host(&site)
+                && !chromium.contains(&host)
+                && !sites.contains(&host)
+                && chromium.len() < MAX_SYSTEM_ENGINE_SITES
+            {
+                chromium.push(host);
+            }
+        }
         self.sites = sites;
+        self.chromium = chromium;
         self
+    }
+
+    /// Whether the site of `host` moves to the system's engine when
+    /// protected video fails in a page of it: not one that is there already, and
+    /// not one the user took back to Chromium, and not one that has such a
+    /// site under it, which the move would take along.
+    pub fn moves(&self, host: &str) -> bool {
+        self.auto
+            && !self.knows(host)
+            && !self.names(host)
+            && !self.keeps(host)
+            && !self.chromium.iter().any(|kept| in_domain(kept, host))
+    }
+
+    /// The name `host`'s site moves under: its `domain`, or `host` alone
+    /// where the domain would take in a site kept in Chromium.
+    pub fn site_to_move(&self, host: &str, domain: String) -> String {
+        if self.chromium.iter().any(|kept| in_domain(kept, &domain)) {
+            host.to_string()
+        } else {
+            domain
+        }
+    }
+
+    /// Whether `host` is under a site the user took back to Chromium.
+    pub fn keeps(&self, host: &str) -> bool {
+        self.chromium.iter().any(|site| in_domain(host, site))
     }
 
     /// Whether `host` is one of the known services, while those are on.
@@ -206,10 +254,11 @@ impl SystemEngine {
         self.sites.iter().any(|site| in_domain(host, site))
     }
 
-    /// Name `site` for the system's engine (the site panel's switch), or
-    /// take every own site that covers `host` out again. An error if the
-    /// list is full: the next check of the settings would drop the site
-    /// again without a word.
+    /// Name `site` for the system's engine (the site panel's switch, a page
+    /// whose protected video failed), or take every own site that covers
+    /// `host` out again: `site` then stays in Chromium, whatever it plays.
+    /// An error if the list is full: the next check of the settings would
+    /// drop the site again without a word.
     pub fn set_site(&mut self, host: &str, site: String, system: bool) -> Result<(), String> {
         let covers = |own: &String| in_domain(host, own);
         // Counted before anything changes: a site that is refused leaves
@@ -221,8 +270,16 @@ impl SystemEngine {
             ));
         }
         self.sites.retain(|own| !covers(own));
+        self.chromium.retain(|own| !covers(own));
         if system {
             self.sites.push(site);
+        } else {
+            // The oldest choice makes room: this list is only ever added to
+            // from here.
+            if self.chromium.len() >= MAX_SYSTEM_ENGINE_SITES {
+                self.chromium.remove(0);
+            }
+            self.chromium.push(site);
         }
         Ok(())
     }
@@ -334,6 +391,9 @@ pub struct Appearance {
     /// A row of extension icons below the sidebar's address, in place of
     /// the icons in its title band.
     pub extension_bar: bool,
+    /// When the frame shows around the pages; without it they reach the
+    /// window's edges.
+    pub page_frame: magnetite_engine::PageFrame,
     /// How each space looks beyond its colour, by space id. A space without
     /// an entry has the default look. Kept on this device.
     pub looks: BTreeMap<String, SpaceLook>,
@@ -374,6 +434,7 @@ impl Default for Appearance {
             sidebar_width: 264,
             top_bar: false,
             extension_bar: false,
+            page_frame: magnetite_engine::PageFrame::Always,
             looks: BTreeMap::new(),
         }
     }
@@ -630,9 +691,16 @@ const MAX_SITE_CODE: usize = 256 * 1024;
 /// The host a site was named by, in lower case and without `www.`: what
 /// was typed may be a whole address. `None` if it names no host.
 fn site_host(typed: &str) -> Option<String> {
+    let typed = typed.trim();
     // The host as `host_and_path` finds it: a scheme counts only at the start.
-    let (host, _) = host_and_path(typed.trim())?;
-    Some(host)
+    if let Some((host, _)) = host_and_path(typed) {
+        return Some(host);
+    }
+    // A server on this computer is the one name without a dot.
+    let rest = typed.split_once("://").map_or(typed, |(_, rest)| rest);
+    let host = rest.split(['/', ':', '?', '#']).next()?;
+    host.eq_ignore_ascii_case("localhost")
+        .then(|| "localhost".to_string())
 }
 
 /// Sync configuration. Keys are kept out of `state.json` (see `sync.rs`).
@@ -1174,6 +1242,7 @@ mod tests {
         let own = SystemEngine {
             known: false,
             sites: vec!["tv.example.org".into()],
+            ..SystemEngine::default()
         };
         assert_eq!(own.hosts(), ["tv.example.org"]);
     }
@@ -1182,7 +1251,7 @@ mod tests {
     fn a_known_service_can_be_named_alone_while_the_known_ones_are_off() {
         let mut engine = SystemEngine {
             known: false,
-            sites: Vec::new(),
+            ..SystemEngine::default()
         };
         engine
             .set_site("www.netflix.com", "netflix.com".into(), true)
@@ -1207,6 +1276,7 @@ mod tests {
             sites: (0..MAX_SYSTEM_ENGINE_SITES)
                 .map(|n| format!("tv{n}.example.org"))
                 .collect(),
+            ..SystemEngine::default()
         };
         let full = engine.sites.clone();
         assert!(
@@ -1237,9 +1307,57 @@ mod tests {
                 "netflix.com".into(),
                 "music.example.com".into(),
             ],
+            // Named for both lists: it opens in the system's engine.
+            chromium: vec![
+                "Radio.example.net".into(),
+                "tv.example.org".into(),
+                "http://localhost:8080/player".into(),
+            ],
+            ..SystemEngine::default()
         };
         let kept = typed.sanitised();
         assert_eq!(kept.sites, ["tv.example.org", "music.example.com"]);
+        assert_eq!(kept.chromium, ["radio.example.net", "localhost"]);
+    }
+
+    #[test]
+    fn a_site_moves_by_itself_until_it_is_taken_back_to_chromium() {
+        let mut engine = SystemEngine::default();
+        assert!(engine.moves("play.example.org"));
+        // One of the known services is there already.
+        assert!(!engine.moves("www.netflix.com"));
+        engine
+            .set_site("play.example.org", "example.org".into(), true)
+            .unwrap();
+        assert!(!engine.moves("play.example.org") && engine.names("www.example.org"));
+        // Taken back with the site panel's switch: it stays in Chromium.
+        engine
+            .set_site("play.example.org", "example.org".into(), false)
+            .unwrap();
+        assert!(!engine.moves("www.example.org") && !engine.names("www.example.org"));
+        assert_eq!(engine.clone().sanitised(), engine);
+        // Named again by hand, it is no longer kept in Chromium.
+        engine
+            .set_site("play.example.org", "example.org".into(), true)
+            .unwrap();
+        assert_eq!(engine.chromium, Vec::<String>::new());
+        let off = SystemEngine {
+            auto: false,
+            ..SystemEngine::default()
+        };
+        assert!(!off.moves("play.example.org"));
+        // A site kept in Chromium is not taken along by its neighbour.
+        let kept = SystemEngine {
+            chromium: vec!["music.example.org".into()],
+            ..SystemEngine::default()
+        };
+        assert!(kept.moves("video.example.org") && !kept.moves("example.org"));
+        let named = |host: &str| kept.site_to_move(host, "example.org".into());
+        assert_eq!(named("video.example.org"), "video.example.org");
+        assert_eq!(
+            SystemEngine::default().site_to_move("video.example.org", "example.org".into()),
+            "example.org"
+        );
     }
 
     #[test]

@@ -381,7 +381,7 @@ export interface Settings {
   /** Developer features (Settings → Developer). */
   developer: { enabled: boolean; hosts: string[] };
   /** Which sites the system's own web engine shows (Settings → Protected video): the known streaming services, and sites of the user's own, by host. This device's own, never synced. */
-  system_engine: { known: boolean; sites: string[] };
+  system_engine: { known: boolean; auto: boolean; sites: string[]; chromium: string[] };
   /** Sites (registrable domains) whose pages get the keys of every shortcut first (the site panel, Settings → Shortcuts). Synced. Changed with `set_site_shortcuts`; a settings patch leaves them. */
   shortcut_sites: string[];
   adblock: {
@@ -441,6 +441,8 @@ export interface Appearance {
   top_bar: boolean;
   /** A row of extension icons below the sidebar's address, in place of the icons in its title band. */
   extension_bar: boolean;
+  /** When the frame shows around the pages (`windowed`: not in full screen); without it they reach the window's edges. */
+  page_frame: "always" | "windowed" | "never";
   /** How each space looks beyond its colour, by space id; a space without an entry has `DEFAULT_LOOK`. Kept on this device. */
   looks: Record<Id, SpaceLook>;
 }
@@ -664,6 +666,8 @@ export type Command =
   | { cmd: "open_download"; id: Id; reveal?: boolean }
   /** Put a finished download's file, or its path as text, on the clipboard. */
   | { cmd: "copy_download"; id: Id; what: "file" | "path" }
+  /** Fetch a failed download again (`retryable`); it comes back as a new entry. */
+  | { cmd: "retry_download"; id: Id }
   | { cmd: "clear_downloads" }
   | { cmd: "show_downloads" }
   /** One of Chromium's own pages (saved passwords, addresses, cards) as a peek, in the logins of `profile`. */
@@ -930,6 +934,8 @@ export interface DownloadEntry {
   missing: boolean;
   /** Runs code or hands off when opened: only ever shown in the file manager. */
   risky: boolean;
+  /** Failed, and the app can fetch it again: in the run it failed in. */
+  retryable: boolean;
 }
 
 /** What a permission prompt asks for (`PromptKind` in the engine). */

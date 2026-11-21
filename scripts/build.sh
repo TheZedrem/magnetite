@@ -141,7 +141,9 @@ sign_macos() {
   local app_ent="$ent/app.entitlements"
   if [[ -n ${MACOS_PROVISIONING_PROFILE:-} ]]; then
     [[ $identity != - ]] || die "MACOS_PROVISIONING_PROFILE needs a Developer ID in MACOS_SIGN_IDENTITY"
-    cp "$MACOS_PROVISIONING_PROFILE" "$app/Contents/embedded.provisionprofile"
+    # Not cp: a read-only profile would be a read-only file in the bundle
+    # (see the chmod in package_macos).
+    install -m 644 "$MACOS_PROVISIONING_PROFILE" "$app/Contents/embedded.provisionprofile"
     app_ent="$(mktemp -t magnetite-entitlements)"
     passkey_entitlements "$MACOS_PROVISIONING_PROFILE" "$app_ent"
   fi
@@ -179,6 +181,10 @@ package_macos() {
     cp "$bin/magnetite-helper" "$helper/Contents/MacOS/$name"
   done
 
+  # CEF ships a read-only file (gpu_shader_cache.bin). Magnetite 0.0.8 to
+  # 0.0.11 cannot take the download mark off such a file, and then refuse
+  # the update: every file in the bundle is writable by its owner.
+  chmod -R u+w "$app"
   log "signing (${MACOS_SIGN_IDENTITY:-ad hoc})"
   sign_macos "$app"
   # A bad signature gets the process killed at launch; --help only prints.
