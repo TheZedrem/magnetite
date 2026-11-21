@@ -89,7 +89,9 @@ Settings.
 - "Options" opens the extension's options page as a tab, in the profile of
   the page in front, where the extension is installed.
 - Pages an extension opens itself (a welcome page, `chrome.tabs.create`, a
-  normal window) open as Magnetite tabs in the profile they came from. A
+  normal window) open as Magnetite tabs in the profile they came from (on
+  Linux, a normal window showing the extension's own page stays a window,
+  see Limits). A
   tab from `chrome.tabs.create` is the tab the extension got back: its id
   stays good for `chrome.tabs.get`, `update` and `remove`, and
   `active: false` opens it in the background, marked unread. A
@@ -167,7 +169,9 @@ Settings.
   the keyboard, for at most five seconds.
 - A normal window an extension opens with `chrome.windows.create` becomes
   a new Magnetite tab that loads the address again. The id Chromium
-  returned to the extension belongs to the closed window.
+  returned to the extension belongs to the closed window. On Linux a normal
+  window showing the extension's own page (`chrome-extension://`) stays a
+  window, and its id stays good.
 - With no page open, `chrome.tabs.create` fails ("No current window") and
   opens nothing.
 - `chrome.tabs.create` ignores `index` and `pinned`: the tab goes where
