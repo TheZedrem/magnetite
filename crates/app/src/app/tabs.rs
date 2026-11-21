@@ -742,8 +742,8 @@ impl MagnetiteApp {
             };
             // Still one to load: it may have been unpinned, closed or made a
             // web panel meanwhile.
-            let due = self.with_state(|s| s.tabs_to_load_at_start().contains(&next))
-                && self.content_of(&next).is_none();
+            let due =
+                self.with_state(|s| s.loads_at_start(&next)) && self.content_of(&next).is_none();
             if due {
                 let page = self.page_of(engine, &next);
                 lock(&self.start_loads).loading.push(page);
@@ -803,6 +803,12 @@ impl MagnetiteApp {
     /// pinned tab is unloaded and stays. A kept split (`kept_split`) closes
     /// as the one item it is: all its pages are unloaded, and it stays.
     pub(super) fn close_tab(&self, engine: &Engine, tab_id: &str) {
+        // Closed by hand: it does not load by itself after all (`load_pinned`).
+        let closed = self.with_state(|s| s.kept_split(tab_id));
+        let closed = closed.unwrap_or_else(|| vec![tab_id.to_owned()]);
+        lock(&self.start_loads)
+            .waiting
+            .retain(|id| !closed.contains(id));
         let (contents, next, was_active, on_screen) = self.with_state(|s| {
             let kept = s.kept_split(tab_id);
             let closing = kept.clone().unwrap_or_else(|| vec![tab_id.to_owned()]);

@@ -412,28 +412,30 @@ impl AppState {
             .collect()
     }
 
-    /// The tabs to load at start (Settings: `load_pinned_at_start`): the
-    /// favorites and the pinned tabs of every space that `loads_at_start`.
+    /// The tabs to load at start (Settings: `load_pinned_at_start`), in
+    /// sidebar order.
     pub fn tabs_to_load_at_start(&self) -> Vec<Id> {
-        if !self.settings.load_pinned_at_start {
-            return Vec::new();
-        }
+        self.start_loads().map(|t| t.id.clone()).collect()
+    }
+
+    /// Whether tab `id` is (still) one to load at start.
+    pub fn loads_at_start(&self, id: &str) -> bool {
+        self.start_loads().any(|t| t.id == id)
+    }
+
+    /// The favorites and the pinned tabs of every space, if Settings asks
+    /// to load them at start. Not web panels: they open over the page in
+    /// front, not as tabs. Only web addresses: those the policy takes from
+    /// stored data (no files, no pages of ours), as nobody chose to open
+    /// them this time.
+    fn start_loads(&self) -> impl Iterator<Item = &TabItem> {
+        let on = self.settings.load_pinned_at_start;
         let favorites = (self.sidebar.favorites.iter()).flat_map(|f| f.items.iter());
         let pinned = (self.sidebar.spaces.iter())
             .flat_map(|space| space.pinned.iter().flat_map(SidebarNode::tabs));
-        favorites
-            .chain(pinned)
-            .filter(|t| Self::loads_at_start(t))
-            .map(|t| t.id.clone())
-            .collect()
-    }
-
-    /// Whether `tab` may load at start, unasked. Not a web panel: it opens
-    /// over the page in front, not as a tab. Only a web address: one the
-    /// policy takes from stored data (no files, no pages of ours), as
-    /// nobody chose to open it this time.
-    fn loads_at_start(tab: &TabItem) -> bool {
-        !tab.panel && crate::url_policy::allowed(&tab.url, crate::url_policy::Source::Stored)
+        favorites.chain(pinned).filter(move |t| {
+            on && !t.panel && crate::url_policy::allowed(&t.url, crate::url_policy::Source::Stored)
+        })
     }
 
     /// The tabs whose page is to be unloaded now: out of sight for longer
@@ -647,6 +649,7 @@ mod tests {
         assert_eq!(s.tabs_to_load_at_start(), Vec::<Id>::new());
         s.settings.load_pinned_at_start = true;
         assert_eq!(s.tabs_to_load_at_start(), ["f", "p"]);
+        assert!(s.loads_at_start("p") && !s.loads_at_start("w") && !s.loads_at_start("a"));
     }
 
     #[test]
