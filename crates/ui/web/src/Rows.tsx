@@ -666,6 +666,10 @@ function takesFolder(state: UiState, target: string, dragged: string): boolean {
 /** A folder's row with what it holds below; `parentId`: the folder it is in. */
 export function FolderRow({ ctx, folder, index, depth, parentId, onDropAt }: { ctx: RowContext; folder: Folder; index: number; depth: number; parentId?: string; onDropAt: (index: number) => void }) {
   const [open, setOpen] = useState(() => localStorage.getItem("folder:" + folder.id) !== "closed");
+  // The app skips the tabs of closed folders on Ctrl+Tab.
+  useEffect(() => {
+    send({ cmd: "set_folder_open", id: folder.id, open });
+  }, [folder.id, open]);
   // Where a dragged tab or folder would go: into this folder, or beside it.
   const [over, setOver] = useState<"before" | "inside" | "after" | null>(null);
   // Where the menu opened: the icon picker opens there too.

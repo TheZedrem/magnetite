@@ -283,6 +283,11 @@ pub(super) enum UiCommand {
         id: String,
         title: String,
     },
+    /// The sidebar shows folder `id` open or closed (it keeps that itself).
+    SetFolderOpen {
+        id: String,
+        open: bool,
+    },
     /// Remove folder `id`; its tabs stay (a smart folder's items go with it).
     DeleteFolder {
         id: String,
@@ -1267,6 +1272,15 @@ impl MagnetiteApp {
             UiCommand::NewFolder { title, parent } => {
                 self.with_state(|s| s.new_folder(&title, parent.as_deref()));
                 self.push_state(engine);
+            }
+            UiCommand::SetFolderOpen { id, open } => {
+                self.with_state(|s| {
+                    if open {
+                        s.closed_folders.remove(&id);
+                    } else {
+                        s.closed_folders.insert(id);
+                    }
+                });
             }
             UiCommand::RenameFolder { id, title } => {
                 self.with_state(|s| {

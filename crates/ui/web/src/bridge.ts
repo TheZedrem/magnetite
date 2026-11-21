@@ -557,6 +557,7 @@ export type Command =
   | { cmd: "move_space"; id: Id; index: number }
   | { cmd: "new_folder"; title: string; parent?: Id }
   | { cmd: "rename_folder"; id: Id; title: string }
+  | { cmd: "set_folder_open"; id: Id; open: boolean }
   | { cmd: "share_folder"; id: Id }
   | { cmd: "read_shared"; url: string }
   | { cmd: "add_shared"; url: string }
