@@ -253,12 +253,23 @@ impl AppState {
     }
 
     /// The tab `Ctrl+Tab` (`forward`) or `Ctrl+Shift+Tab` goes to: the next
-    /// or previous row of `visible_tab_ids`, wrapping around. From a tab
-    /// with no row there (a favorite), the first or the last row.
+    /// or previous row of `visible_tab_ids`, wrapping around, past the tabs
+    /// of closed folders. From a tab with no row there (a favorite), the
+    /// first or the last row.
     pub fn cycle_tab(&self, forward: bool) -> Option<Id> {
-        let order = self.visible_tab_ids();
+        let active = self.active_tab_id();
+        let mut hidden = Vec::new();
+        tabs_in_closed_folders(
+            &self.active_space().pinned,
+            &self.closed_folders,
+            &mut hidden,
+        );
+        // The active tab keeps its row, also in a closed folder: the round goes on from there.
+        let order: Vec<Id> = (self.visible_tab_ids().into_iter())
+            .filter(|t| Some(t.as_str()) == active || !hidden.contains(&t.as_str()))
+            .collect();
         let n = order.len();
-        let pos = (self.active_tab_id()).and_then(|a| order.iter().position(|t| t == a));
+        let pos = active.and_then(|a| order.iter().position(|t| t == a));
         let next = match (pos, forward) {
             (Some(p), true) => (p + 1) % n,
             (Some(p), false) => (p + n - 1) % n,
@@ -600,6 +611,24 @@ impl AppState {
     }
 }
 
+/// The tabs in `nodes` that a closed folder (one of `closed`) hides, also
+/// in folders within it, added to `out`.
+fn tabs_in_closed_folders<'a>(
+    nodes: &'a [SidebarNode],
+    closed: &HashSet<Id>,
+    out: &mut Vec<&'a str>,
+) {
+    for node in nodes {
+        if let SidebarNode::Folder(f) = node {
+            if closed.contains(&f.id) {
+                out.extend(node.tabs().map(|t| t.id.as_str()));
+            } else {
+                tabs_in_closed_folders(&f.children, closed, out);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -618,6 +647,52 @@ mod tests {
         s.active_tab.insert(space, "fav".into());
         assert_eq!(s.cycle_tab(true).as_deref(), Some("p"));
         assert_eq!(s.cycle_tab(false).as_deref(), Some("c"));
+    }
+
+    #[test]
+    fn tab_cycling_skips_the_tabs_of_closed_folders() {
+        let mut s = state();
+        let folder = |id: &str, children| {
+            SidebarNode::Folder(magnetite_core::Folder {
+                id: id.into(),
+                title: id.into(),
+                icon: None,
+                children,
+                smart: None,
+            })
+        };
+        // Rows: p, open o [x, closed n [y]], closed f [z, open g [w]], then a, b, c.
+        let space = s.active_space.clone();
+        s.space_mut(&space).unwrap().pinned = vec![
+            SidebarNode::Tab(tab("p")),
+            folder(
+                "o",
+                vec![
+                    SidebarNode::Tab(tab("x")),
+                    folder("n", vec![SidebarNode::Tab(tab("y"))]),
+                ],
+            ),
+            folder(
+                "f",
+                vec![
+                    SidebarNode::Tab(tab("z")),
+                    folder("g", vec![SidebarNode::Tab(tab("w"))]),
+                ],
+            ),
+        ];
+        s.closed_folders = HashSet::from(["n".into(), "f".into()]);
+        s.active_tab.insert(space.clone(), "x".into());
+        assert_eq!(s.cycle_tab(true).as_deref(), Some("a"), "past y, z and w");
+        assert_eq!(s.cycle_tab(false).as_deref(), Some("p"));
+        s.active_tab.insert(space.clone(), "a".into());
+        assert_eq!(
+            s.cycle_tab(false).as_deref(),
+            Some("x"),
+            "an open folder's tab"
+        );
+        s.active_tab.insert(space, "z".into());
+        assert_eq!(s.cycle_tab(true).as_deref(), Some("a"), "on from z, past w");
+        assert_eq!(s.cycle_tab(false).as_deref(), Some("x"), "back from z");
     }
 
     #[test]

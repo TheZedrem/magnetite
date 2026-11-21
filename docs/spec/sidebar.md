@@ -297,8 +297,8 @@ way ends the round. The list never takes the keyboard.
 | Settings → Tabs & archive → "Ctrl+Tab goes through the tabs" | by last use, in sidebar order | by last use |
 
 In sidebar order the two keys go through the rows of the current space in
-the order of `Cmd+1` to `Cmd+9`: the pinned tabs, those in folders included
-(also closed ones), then Today; after the last comes the first. The tabs of
+the order of `Cmd+1` to `Cmd+9`: the pinned tabs, those in open folders
+included (closed folders are passed over), then Today; after the last comes the first. The tabs of
 a split count one by one, so the keys can leave a split or move within it.
 Favorites are not part of the round; from a favorite the keys go to the
 first or the last row.
