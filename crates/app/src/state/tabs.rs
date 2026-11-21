@@ -413,8 +413,7 @@ impl AppState {
     }
 
     /// The tabs to load at start (Settings: `load_pinned_at_start`): the
-    /// favorites and the pinned tabs of every space. Not web panels: they
-    /// open over the page in front, not as tabs.
+    /// favorites and the pinned tabs of every space that `loads_at_start`.
     pub fn tabs_to_load_at_start(&self) -> Vec<Id> {
         if !self.settings.load_pinned_at_start {
             return Vec::new();
@@ -424,9 +423,17 @@ impl AppState {
             .flat_map(|space| space.pinned.iter().flat_map(SidebarNode::tabs));
         favorites
             .chain(pinned)
-            .filter(|t| !t.panel)
+            .filter(|t| Self::loads_at_start(t))
             .map(|t| t.id.clone())
             .collect()
+    }
+
+    /// Whether `tab` may load at start, unasked. Not a web panel: it opens
+    /// over the page in front, not as a tab. Only a web address: one the
+    /// policy takes from stored data (no files, no pages of ours), as
+    /// nobody chose to open it this time.
+    pub fn loads_at_start(tab: &TabItem) -> bool {
+        !tab.panel && crate::url_policy::allowed(&tab.url, crate::url_policy::Source::Stored)
     }
 
     /// The tabs whose page is to be unloaded now: out of sight for longer
@@ -623,7 +630,7 @@ mod tests {
     use crate::state::testing::{state, tab};
 
     #[test]
-    fn favorites_and_pinned_tabs_load_at_start_when_asked_but_not_panels() {
+    fn favorites_and_pinned_tabs_load_at_start_when_asked_but_not_panels_or_files() {
         let mut s = state();
         let profile = s.sidebar.spaces[0].profile_id.clone();
         s.sidebar.favorites = vec![magnetite_core::FavoriteSet {
@@ -634,6 +641,7 @@ mod tests {
                     panel: true,
                     ..tab("w")
                 },
+                TabItem::new("l", "file:///home/me/notes.html", "l"),
             ],
         }];
         assert_eq!(s.tabs_to_load_at_start(), Vec::<Id>::new());

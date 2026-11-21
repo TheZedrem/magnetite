@@ -71,7 +71,8 @@ the row turns the icon into a back arrow that takes the page back.
 - **Load pinned tabs at start** (Settings → Tabs & archive, off by
   default): the favorites and pinned tabs of every space load their pages
   in the background when Magnetite starts, three at a time, so none waits
-  for its first click. Web panels are left out; they load when opened.
+  for its first click. Web panels and tabs that are no web address
+  (files, Magnetite's own pages) are left out; they load when opened.
 - Closing a favorite or a pinned tab unloads it and takes it back to its
   pinned page, which it opens at next time. Its title stays the last page's
   until then.
