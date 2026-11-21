@@ -25,18 +25,9 @@
 > - Each branch is tested on its own, then also merged into this `main` to test it together with the other patches.
 > - This `main` is never merged into upstream. Changes go upstream through their own branches only.
 >
-> **Patches here that upstream does not have yet:**
+> **Patches here that upstream does not have yet:** none right now. This `main` is upstream's `main`.
 >
-> | Patch | Upstream | CEF it needs |
-> | --- | --- | --- |
-> | Linux: an extension's pop-up window stays a window. | [#287](https://github.com/magnetite-browser/magnetite/pull/287) | Any CEF. |
-> | Pinned tabs load at start, three at a time. | [#284](https://github.com/magnetite-browser/magnetite/pull/284) | Any CEF. |
-> | Linux: Ctrl+Tab by last use goes on while Ctrl is held, with the list of tabs, as on macOS. | [#290](https://github.com/magnetite-browser/magnetite/pull/290) | Any CEF. |
-> | Ctrl+Tab in sidebar order skips the tabs of closed folders. | [#289](https://github.com/magnetite-browser/magnetite/pull/289) | Any CEF. |
->
-> None of them needs a CEF of my own: my [magnetite-cef fork](https://github.com/TheZedrem/magnetite-cef) has no patches upstream lacks.
->
-> **Already upstream:** synced windows as in Zen ([#93](https://github.com/magnetite-browser/magnetite/pull/93)), the Wayland client by default ([#68](https://github.com/magnetite-browser/magnetite/pull/68)), the peek's buttons beside it ([#271](https://github.com/magnetite-browser/magnetite/pull/271)), and the Linux fixes [#78](https://github.com/magnetite-browser/magnetite/pull/78), [#79](https://github.com/magnetite-browser/magnetite/pull/79), [#80](https://github.com/magnetite-browser/magnetite/pull/80), [#267](https://github.com/magnetite-browser/magnetite/pull/267) and [#270](https://github.com/magnetite-browser/magnetite/pull/270).
+> **Already upstream:** synced windows as in Zen ([#93](https://github.com/magnetite-browser/magnetite/pull/93)), the Wayland client by default ([#68](https://github.com/magnetite-browser/magnetite/pull/68)), the peek's buttons beside it ([#271](https://github.com/magnetite-browser/magnetite/pull/271)), rounded page corners on Linux ([#283](https://github.com/magnetite-browser/magnetite/pull/283)), pinned tabs loading at start ([#284](https://github.com/magnetite-browser/magnetite/pull/284)), Ctrl+Tab while Ctrl is held ([#290](https://github.com/magnetite-browser/magnetite/pull/290)) and past closed folders ([#289](https://github.com/magnetite-browser/magnetite/pull/289)), and the Linux fixes [#78](https://github.com/magnetite-browser/magnetite/pull/78), [#79](https://github.com/magnetite-browser/magnetite/pull/79), [#80](https://github.com/magnetite-browser/magnetite/pull/80), [#267](https://github.com/magnetite-browser/magnetite/pull/267), [#270](https://github.com/magnetite-browser/magnetite/pull/270) and [#287](https://github.com/magnetite-browser/magnetite/pull/287).
 
 <p align="center">
   <img src="docs/assets/readme/window.webp" width="860" alt="The Magnetite window: the sidebar with favorites, a space with pinned tabs, a smart folder and today's tabs, next to a web page">
