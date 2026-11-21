@@ -15,8 +15,10 @@
 //! signed and notarized); then it restarts. On Windows a Magnetite put
 //! there by its installer downloads the new installer and runs it without
 //! questions; that one waits for Magnetite to quit, installs and starts
-//! it again (`fetch_installer`, `run_installer`). Otherwise, and on
-//! Linux, the release page opens for a manual download.
+//! it again (`fetch_installer`, `run_installer`). On Linux an AppImage in
+//! a folder Magnetite may write to is replaced by the release's AppImage
+//! (`install_appimage`), then it restarts. Otherwise, and for the Linux
+//! tarball, the release page opens for a manual download.
 //!
 //! The Linux rpm and deb packages are updated by the system's package
 //! manager from Magnetite's package repository (ADR-0011). Magnetite then
@@ -87,7 +89,8 @@ pub enum Status {
     Available {
         version: String,
         notes_url: String,
-        /// Magnetite can replace itself (macOS, writable location).
+        /// Magnetite can replace itself (`can_install`), or the package
+        /// manager already did.
         installable: bool,
     },
     Installing {
@@ -132,9 +135,20 @@ impl Source {
     }
 }
 
-/// This platform's key in the manifest: `macos-aarch64`, `linux-x86_64`, …
+/// This package's key in the manifest: `macos-aarch64`, `linux-x86_64`, …
+/// An AppImage has its own (`linux-x86_64-appimage`): it is replaced by an
+/// AppImage, not by the tarball.
 pub fn platform() -> String {
-    format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
+    let package = if appimage().is_some() {
+        "-appimage"
+    } else {
+        ""
+    };
+    format!(
+        "{}-{}{package}",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    )
 }
 
 /// The manifest in `body`, if `signature` (base64) signs it with `key`.
@@ -280,20 +294,76 @@ impl SystemBinary {
     /// Start the binary again with this run's arguments once Magnetite has
     /// quit.
     pub fn restart_after_exit(&self) -> std::io::Result<()> {
-        let script =
-            r#"pid=$1; shift; while kill -0 "$pid" 2>/dev/null; do sleep 0.2; done; exec "$@""#;
-        let mut cmd = std::process::Command::new("/bin/sh");
-        cmd.args(["-c", script, "sh", &std::process::id().to_string()])
-            .arg(&self.path)
-            .args(std::env::args_os().skip(1))
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
-        // Its own process group: it must outlive Magnetite's.
-        #[cfg(unix)]
-        std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
-        cmd.spawn().map(drop)
+        restart_after_exit(&self.path)
     }
+}
+
+/// Start `program` with this run's arguments once Magnetite has quit.
+fn restart_after_exit(program: &Path) -> std::io::Result<()> {
+    let script =
+        r#"pid=$1; shift; while kill -0 "$pid" 2>/dev/null; do sleep 0.2; done; exec "$@""#;
+    let mut cmd = std::process::Command::new("/bin/sh");
+    cmd.args(["-c", script, "sh", &std::process::id().to_string()])
+        .arg(program)
+        .args(std::env::args_os().skip(1))
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    // Its own process group: it must outlive Magnetite's.
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
+    cmd.spawn().map(drop)
+}
+
+/// The AppImage Magnetite runs from, if it may replace it: Linux, started
+/// by AppImage's runtime (which names the file in `APPIMAGE` and where it
+/// mounted it in `APPDIR`), in a folder Magnetite can write to. Another
+/// AppImage that started a Magnetite of its own leaves the same variables:
+/// only a binary inside the mount counts.
+pub fn appimage() -> Option<PathBuf> {
+    if !cfg!(target_os = "linux") {
+        return None;
+    }
+    let image = PathBuf::from(std::env::var_os("APPIMAGE")?);
+    let mount = PathBuf::from(std::env::var_os("APPDIR")?)
+        .canonicalize()
+        .ok()?;
+    let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
+    let writable = tempfile_in(image.parent()?).is_some();
+    (exe.starts_with(mount) && image.is_file() && writable).then_some(image)
+}
+
+/// Linux: download the AppImage `asset` names, check it against the signed
+/// manifest and put it in place of `image`, then wait to start it once
+/// Magnetite has quit (blocking). The running Magnetite keeps the old file
+/// open, so it carries on until then.
+#[cfg(target_os = "linux")]
+pub fn install_appimage(asset: &Asset, image: &Path) -> Result<(), String> {
+    let data = download(asset)?;
+    replace_executable(image, &data)?;
+    restart_after_exit(image).map_err(|e| format!("Cannot restart: {e}"))
+}
+
+/// Put `data` in place of the executable `file` in one step: written next
+/// to it, so the swap is a rename on the same volume and `file` is never
+/// half written.
+#[cfg(target_os = "linux")]
+fn replace_executable(file: &Path, data: &[u8]) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let name = file.file_name().ok_or("No file for the update.")?;
+    let new = file.with_file_name(format!(
+        ".{}.update-{}",
+        name.to_string_lossy(),
+        std::process::id()
+    ));
+    let result = std::fs::write(&new, data)
+        .and_then(|()| std::fs::set_permissions(&new, std::fs::Permissions::from_mode(0o755)))
+        .and_then(|()| std::fs::rename(&new, file));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&new);
+    }
+    result.map_err(|e| format!("Cannot put the update in place: {e}"))
 }
 
 fn modified(path: &Path) -> Option<SystemTime> {
@@ -354,7 +424,7 @@ pub fn installed_by_setup() -> bool {
 
 /// Whether Magnetite can install an update by itself here.
 pub fn can_install() -> bool {
-    replaceable_bundle().is_some() || installed_by_setup()
+    replaceable_bundle().is_some() || installed_by_setup() || appimage().is_some()
 }
 
 /// Windows: download the installer `asset` names, check it against the
@@ -768,5 +838,29 @@ mod tests {
             );
         }
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_replaced_executable_holds_the_new_data_and_nothing_is_left_beside_it() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = crate::files::test_dir("replace-executable");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("Magnetite.AppImage");
+        // Longer than the new data, and not executable.
+        std::fs::write(&file, b"the old image, longer than the new one").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        replace_executable(&file, b"new image").unwrap();
+
+        assert_eq!(std::fs::read(&file).unwrap(), b"new image");
+        let mode = std::fs::metadata(&file).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o755);
+        let left: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(left, ["Magnetite.AppImage"]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

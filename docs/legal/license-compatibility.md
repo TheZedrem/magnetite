@@ -274,7 +274,19 @@ would be Microsoft "Distributable Code" with its own terms.
 **Linux packaging.** CEF ships no LGPL system libraries. Chromium loads GTK,
 NSS and similar from the user's system. Keep it that way: use `.deb`, `.rpm`
 or Flatpak with declared dependencies or a runtime. An AppImage that bundles
-system libraries would take on each library's notice and source duties.
+system libraries would take on each library's notice and source duties, so
+ours holds the tarball's files and nothing more.
+
+**AppImage runtime.** Every AppImage starts with AppImage's runtime
+(`AppImage/type2-runtime`, MIT), a separate program that mounts the rest of
+the file. We ship its release binary unchanged, pinned by SHA-256 in
+`scripts/linux-appimage.sh`. It is statically linked with a patched libfuse
+(LGPL-2.1) and with squashfuse, zstd, zlib, mimalloc and musl (BSD, Zlib,
+MIT). It is not linked with Magnetite, so the LGPL reaches the runtime
+alone. Its duties are met by `APPIMAGE_RUNTIME.md` in the AppImage
+(`packaging/linux/appimage-runtime.md`): the notices, the source at the
+pinned tag with the libfuse patch, and how to replace the runtime. The
+LGPL's text is in `CREDITS.html`. Check that file when the pin changes.
 
 ## Sync server
 
@@ -399,6 +411,8 @@ Source files for packaging:
 - [ ] `.deb`/`.rpm`: the four files in `/usr/share/doc/magnetite/`. For
       `.deb`, also a `copyright` file there that names EUPL-1.2 and points to
       the notices.
+- [ ] AppImage: the four files and `scriptlets` at the top level, as in the
+      tarball, plus `APPIMAGE_RUNTIME.md` for its runtime
 - [ ] Flatpak: the four files in `/app/share/licenses/<app-id>/`
 - [ ] No bundled system libraries (GTK, NSS, …). If any are bundled, add
       their notices and sources.

@@ -92,8 +92,17 @@ Later steps, each on its own:
   the Stackforge host, built into one release that is still published on
   GitHub, so that every installed copy follows. The Homebrew cask URL moves
   with it.
-- **Flatpak and AppImage** (phase 2) need their own update paths: Flathub,
-  or AppImage's zsync files on the same host.
+- **Flatpak** (phase 2) needs its own update path: Flathub.
+- **AppImage.** Releases carry one since 2026-11
+  (`scripts/linux-appimage.sh`): the tarball's files in one file, for
+  systems without rpm or deb. It bundles no system libraries, has no setuid
+  sandbox (Chromium's needs user namespaces). It updates itself as the
+  macOS app does: the signed `latest.json` names the release's AppImage
+  (`linux-<arch>-appimage`), the app downloads it, checks it and puts it in
+  place of its own file, then restarts (`update::install_appimage`). In a
+  folder it may not write to, the release page opens instead. AppImage's
+  own zsync updates are not used: their integrity rests on the host alone,
+  not on the release key.
 
 ## Consequences
 
