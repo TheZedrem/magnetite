@@ -31,7 +31,7 @@
 > | --- | --- | --- |
 > | Linux: an extension's pop-up window stays a window. | [#287](https://github.com/magnetite-browser/magnetite/pull/287) | Any CEF. |
 > | Pinned tabs load at start, three at a time. | [#284](https://github.com/magnetite-browser/magnetite/pull/284) | Any CEF. |
-> | Linux: Ctrl+Tab by last use goes on while Ctrl is held, with the list of tabs, as on macOS. | Not yet | Any CEF. |
+> | Linux: Ctrl+Tab by last use goes on while Ctrl is held, with the list of tabs, as on macOS. | [#290](https://github.com/magnetite-browser/magnetite/pull/290) | Any CEF. |
 > | Ctrl+Tab in sidebar order skips the tabs of closed folders. | [#289](https://github.com/magnetite-browser/magnetite/pull/289) | Any CEF. |
 >
 > None of them needs a CEF of my own: my [magnetite-cef fork](https://github.com/TheZedrem/magnetite-cef) has no patches upstream lacks.
