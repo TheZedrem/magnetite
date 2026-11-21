@@ -325,9 +325,6 @@ not opened.
 
 - Changing the home page of a pinned tab or favorite without pinning it
   again, and a "back to home page" control for favorites.
-- Outside macOS, the round with Ctrl held and its list: there the system
-  does not say whether the key is still down, so every `Ctrl+Tab` switches
-  at once to the tab used before.
 
 Code: `crates/core/src/{model,sidebar}.rs`, `crates/app/src/app/tabs.rs`,
 `crates/app/src/state/{tabs,folders,profiles}.rs`,

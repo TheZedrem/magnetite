@@ -63,22 +63,22 @@ impl Engine {
 
     /// Whether the modifiers of the keys for the next tab (`Ctrl+Tab` until
     /// the user changes them; those for the previous tab if these have
-    /// none) are held right now. `None` where that cannot be said: outside
-    /// macOS, and for keys without Cmd, Ctrl or Option. Chromium hands on
-    /// no key-up after a shortcut it took, so this is how the end of a
-    /// round with the keys held (the tab switcher) is seen.
+    /// none) are held right now. `None` for keys without Cmd, Ctrl or
+    /// Option. Chromium hands on no key-up of the key a shortcut took, so
+    /// this is how the end of a round with the keys held (the tab
+    /// switcher) is seen: macOS is asked, elsewhere the modifiers of the
+    /// last key event count (`keys::note_modifiers`).
     #[allow(clippy::unused_self)] // an Engine method like its siblings
     pub fn tab_switch_keys_held(&self) -> Option<bool> {
-        #[cfg(target_os = "macos")]
-        {
-            use crate::keymap::Action;
-            let keys = crate::keys::combo_of(Action::NextTab)
-                .or_else(|| crate::keys::combo_of(Action::PrevTab))?;
-            (keys.primary || keys.ctrl || keys.alt)
-                .then(|| crate::mac::modifiers_held(keys.primary, keys.ctrl, keys.alt))
-        }
+        use crate::keymap::Action;
+        let keys = crate::keys::combo_of(Action::NextTab)
+            .or_else(|| crate::keys::combo_of(Action::PrevTab))?;
         #[cfg(not(target_os = "macos"))]
-        None
+        use crate::keys::modifiers_held;
+        #[cfg(target_os = "macos")]
+        use crate::mac::modifiers_held;
+        (keys.primary || keys.ctrl || keys.alt)
+            .then(|| modifiers_held(keys.primary, keys.ctrl, keys.alt))
     }
 
     /// Open `url` as the quick search: a floating palette of its own, near
