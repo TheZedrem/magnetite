@@ -137,13 +137,11 @@ impl Source {
 
 /// This package's key in the manifest: `macos-aarch64`, `linux-x86_64`, …
 /// An AppImage has its own (`linux-x86_64-appimage`): it is replaced by an
-/// AppImage, not by the tarball.
-pub fn platform() -> String {
-    let package = if appimage().is_some() {
-        "-appimage"
-    } else {
-        ""
-    };
+/// AppImage, not by the tarball. `appimage`: whether `appimage()` found
+/// one, asked once by the caller, so that the package it then installs is
+/// the one this names.
+pub fn platform(appimage: bool) -> String {
+    let package = if appimage { "-appimage" } else { "" };
     format!(
         "{}-{}{package}",
         std::env::consts::OS,
@@ -346,34 +344,48 @@ pub fn install_appimage(asset: &Asset, image: &Path) -> Result<(), String> {
 
 /// Put `data` in place of the executable `file` in one step: written next
 /// to it, so the swap is a rename on the same volume and `file` is never
-/// half written.
+/// half written. The new file is one this call creates: a file or link
+/// someone else put under its name is neither written to nor removed.
 #[cfg(target_os = "linux")]
 fn replace_executable(file: &Path, data: &[u8]) -> Result<(), String> {
+    use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
 
+    let failed = |e: std::io::Error| format!("Cannot put the update in place: {e}");
     let name = file.file_name().ok_or("No file for the update.")?;
     let new = file.with_file_name(format!(
         ".{}.update-{}",
         name.to_string_lossy(),
         std::process::id()
     ));
-    let result = std::fs::write(&new, data)
-        .and_then(|()| std::fs::set_permissions(&new, std::fs::Permissions::from_mode(0o755)))
+    let mut staged = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&new)
+        .map_err(failed)?;
+    let result = staged
+        .write_all(data)
+        .and_then(|()| staged.set_permissions(std::fs::Permissions::from_mode(0o755)))
         .and_then(|()| std::fs::rename(&new, file));
     if result.is_err() {
         let _ = std::fs::remove_file(&new);
     }
-    result.map_err(|e| format!("Cannot put the update in place: {e}"))
+    result.map_err(failed)
 }
 
 fn modified(path: &Path) -> Option<SystemTime> {
     std::fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
-/// Probe that `dir` takes new files.
+/// Probe that `dir` takes new files. The probe is a file this call creates:
+/// a file or link already under its name is left alone.
 fn tempfile_in(dir: &Path) -> Option<()> {
     let probe = dir.join(format!(".magnetite-write-test-{}", std::process::id()));
-    std::fs::write(&probe, b"").ok()?;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+        .ok()?;
     std::fs::remove_file(&probe).ok()
 }
 
@@ -861,6 +873,27 @@ mod tests {
             .map(|entry| entry.unwrap().file_name())
             .collect();
         assert_eq!(left, ["Magnetite.AppImage"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_link_planted_under_the_staging_name_fails_the_update_and_is_not_followed() {
+        let dir = crate::files::test_dir("replace-executable-planted-link");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("Magnetite.AppImage");
+        std::fs::write(&file, b"old image").unwrap();
+        let victim = dir.join("victim");
+        std::fs::write(&victim, b"someone else's file").unwrap();
+        // Where the update is staged, pointing at the file to overwrite.
+        let planted = dir.join(format!(".Magnetite.AppImage.update-{}", std::process::id()));
+        std::os::unix::fs::symlink(&victim, &planted).unwrap();
+
+        assert!(replace_executable(&file, b"new image").is_err());
+
+        assert_eq!(std::fs::read(&victim).unwrap(), b"someone else's file");
+        assert_eq!(std::fs::read(&file).unwrap(), b"old image");
+        assert_eq!(std::fs::read_link(&planted).unwrap(), victim);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
