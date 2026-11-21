@@ -89,7 +89,9 @@ Settings.
 - "Options" opens the extension's options page as a tab, in the profile of
   the page in front, where the extension is installed.
 - Pages an extension opens itself (a welcome page, `chrome.tabs.create`, a
-  normal window) open as Magnetite tabs in the profile they came from. A
+  normal window) open as Magnetite tabs in the profile they came from (on
+  Linux, a normal window showing the extension's own page stays a window,
+  see Limits). A
   tab from `chrome.tabs.create` is the tab the extension got back: its id
   stays good for `chrome.tabs.get`, `update` and `remove`, and
   `active: false` opens it in the background, marked unread. A
@@ -139,7 +141,10 @@ Settings.
   window): it is shown with the keyboard, as in other browsers, because
   the extension waits for it and gives up when it closes. On macOS a
   pop-up window is told apart by its window lacking a tab strip (no
-  full-size content view).
+  full-size content view). On Linux, where CEF does not say what kind of
+  window Chromium made, every such window showing an extension's own page
+  (`chrome-extension://`) stays a window; a pop-up window showing a web
+  page still becomes a tab.
 
 ## Data
 
@@ -164,7 +169,9 @@ Settings.
   the keyboard, for at most five seconds.
 - A normal window an extension opens with `chrome.windows.create` becomes
   a new Magnetite tab that loads the address again. The id Chromium
-  returned to the extension belongs to the closed window.
+  returned to the extension belongs to the closed window. On Linux a normal
+  window showing the extension's own page (`chrome-extension://`) stays a
+  window, and its id stays good.
 - With no page open, `chrome.tabs.create` fails ("No current window") and
   opens nothing.
 - `chrome.tabs.create` ignores `index` and `pinned`: the tab goes where
@@ -174,8 +181,9 @@ Settings.
   without its page, as a tab does whose page closed itself; it loads again
   when chosen.
 - An extension's pop-up window is a plain Chromium window outside
-  Magnetite's layout. On Linux it still becomes a tab, so an extension
-  that waits for its window (Bitwarden's passkeys) gives up there.
+  Magnetite's layout. On Linux an extension's own page in a normal window
+  stays a window too: an options page meant to open in a tab,
+  `chrome.windows.create({type: "normal"})`.
 - Without the DevTools pipe (file descriptors 3 and 4 taken at start, or on
   Windows) the buttons and menu entries open nothing.
 
