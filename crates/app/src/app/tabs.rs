@@ -720,9 +720,14 @@ impl MagnetiteApp {
     }
 
     /// Start the next tabs waiting to load at start, until
-    /// `START_LOADS_AT_ONCE` are loading. A tab that is gone, got its page
-    /// meanwhile (opened by hand) or no longer `loads_at_start` is skipped.
+    /// `START_LOADS_AT_ONCE` are loading. A tab that got its page meanwhile
+    /// (opened by hand) or is no longer one to load is skipped. Quitting
+    /// ends the queue.
     fn load_next_pinned(&self, engine: &Engine) {
+        if engine.is_quitting() {
+            lock(&self.start_loads).waiting.clear();
+            return;
+        }
         let mut started = false;
         loop {
             let next = {
@@ -735,12 +740,10 @@ impl MagnetiteApp {
                 };
                 id
             };
-            // Still there and still one to load: it may have become a web
-            // panel meanwhile.
-            let due = self.with_state(|s| {
-                s.find_tab(&next)
-                    .is_some_and(|(_, t)| AppState::loads_at_start(t))
-            }) && self.content_of(&next).is_none();
+            // Still one to load: it may have been unpinned, closed or made a
+            // web panel meanwhile.
+            let due = self.with_state(|s| s.tabs_to_load_at_start().contains(&next))
+                && self.content_of(&next).is_none();
             if due {
                 let page = self.page_of(engine, &next);
                 lock(&self.start_loads).loading.push(page);

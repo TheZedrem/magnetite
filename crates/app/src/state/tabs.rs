@@ -432,7 +432,7 @@ impl AppState {
     /// over the page in front, not as a tab. Only a web address: one the
     /// policy takes from stored data (no files, no pages of ours), as
     /// nobody chose to open it this time.
-    pub fn loads_at_start(tab: &TabItem) -> bool {
+    fn loads_at_start(tab: &TabItem) -> bool {
         !tab.panel && crate::url_policy::allowed(&tab.url, crate::url_policy::Source::Stored)
     }
 
