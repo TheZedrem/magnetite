@@ -223,6 +223,7 @@ impl AppState {
             unsynced_spaces,
             first_start,
             recent_tabs: Vec::new(),
+            closed_folders: std::collections::HashSet::new(),
             switcher: None,
             synced_sidebar: None,
             device_tabs: Vec::new(),

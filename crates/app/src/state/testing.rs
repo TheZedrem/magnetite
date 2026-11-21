@@ -49,6 +49,7 @@ pub(crate) fn state() -> AppState {
         unsynced_spaces: std::collections::BTreeSet::new(),
         first_start: false,
         recent_tabs: Vec::new(),
+        closed_folders: std::collections::HashSet::new(),
         switcher: None,
         synced_sidebar: None,
         device_tabs: Vec::new(),

@@ -2,7 +2,7 @@
 //! its persistence. Pure data and logic; no engine calls here.
 
 use std::borrow::Cow;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use magnetite_core::split::SplitNode;
@@ -229,6 +229,9 @@ pub struct AppState {
     pub recent_tabs: Vec<Id>,
     /// The round `Ctrl+Tab` is on while Ctrl is held (`TabSwitch`).
     pub switcher: Option<TabSwitch>,
+    /// Folders the sidebar shows closed: it keeps that itself and reports
+    /// it (`set_folder_open`). `Ctrl+Tab` skips their tabs. In memory only.
+    pub closed_folders: HashSet<Id>,
     pub sidebar_visible: bool,
     /// Smart folder accounts of this device (tokens on disk, owner-only).
     pub accounts: crate::smart::Accounts,
