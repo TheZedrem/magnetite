@@ -423,6 +423,32 @@ impl AppState {
             .collect()
     }
 
+    /// The tabs to load at start (Settings: `load_pinned_at_start`), in
+    /// sidebar order.
+    pub fn tabs_to_load_at_start(&self) -> Vec<Id> {
+        self.start_loads().map(|t| t.id.clone()).collect()
+    }
+
+    /// Whether tab `id` is (still) one to load at start.
+    pub fn loads_at_start(&self, id: &str) -> bool {
+        self.start_loads().any(|t| t.id == id)
+    }
+
+    /// The favorites and the pinned tabs of every space, if Settings asks
+    /// to load them at start. Not web panels: they open over the page in
+    /// front, not as tabs. Only web addresses: those the policy takes from
+    /// stored data (no files, no pages of ours), as nobody chose to open
+    /// them this time.
+    fn start_loads(&self) -> impl Iterator<Item = &TabItem> {
+        let on = self.settings.load_pinned_at_start;
+        let favorites = (self.sidebar.favorites.iter()).flat_map(|f| f.items.iter());
+        let pinned = (self.sidebar.spaces.iter())
+            .flat_map(|space| space.pinned.iter().flat_map(SidebarNode::tabs));
+        favorites.chain(pinned).filter(move |t| {
+            on && !t.panel && crate::url_policy::allowed(&t.url, crate::url_policy::Source::Stored)
+        })
+    }
+
     /// The tabs whose page is to be unloaded now: out of sight for longer
     /// than the unload time of the settings (0: never). Only Today tabs, and
     /// the same ones are spared as in `stale_today_tabs`: favorites and
@@ -633,6 +659,27 @@ fn tabs_in_closed_folders<'a>(
 mod tests {
     use super::*;
     use crate::state::testing::{state, tab};
+
+    #[test]
+    fn favorites_and_pinned_tabs_load_at_start_when_asked_but_not_panels_or_files() {
+        let mut s = state();
+        let profile = s.sidebar.spaces[0].profile_id.clone();
+        s.sidebar.favorites = vec![magnetite_core::FavoriteSet {
+            profile_id: profile,
+            items: vec![
+                tab("f"),
+                TabItem {
+                    panel: true,
+                    ..tab("w")
+                },
+                TabItem::new("l", "file:///home/me/notes.html", "l"),
+            ],
+        }];
+        assert_eq!(s.tabs_to_load_at_start(), Vec::<Id>::new());
+        s.settings.load_pinned_at_start = true;
+        assert_eq!(s.tabs_to_load_at_start(), ["f", "p"]);
+        assert!(s.loads_at_start("p") && !s.loads_at_start("w") && !s.loads_at_start("a"));
+    }
 
     #[test]
     fn tab_cycling_wraps_and_starts_at_the_ends_from_a_favorite() {

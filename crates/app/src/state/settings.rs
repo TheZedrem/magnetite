@@ -85,6 +85,9 @@ pub struct Settings {
     /// A web panel closes by itself when a page behind it is used
     /// (`web-panels.md`); off: it stays until it is closed.
     pub panel_autoclose: bool,
+    /// Favorites and pinned tabs load their pages at start, in the
+    /// background, rather than on their first click.
+    pub load_pinned_at_start: bool,
     /// Where DevTools open: right of or below the page, or a separate window.
     pub devtools_dock: magnetite_engine::DevToolsDock,
     /// The size docked DevTools were dragged to, per side. This device's
@@ -892,6 +895,7 @@ impl Default for Settings {
             several_windows: false,
             strip_trackers: true,
             panel_autoclose: false,
+            load_pinned_at_start: false,
             devtools_dock: magnetite_engine::DevToolsDock::Right,
             devtools_size: magnetite_engine::DevToolsSize::default(),
             sync: SyncSettings::default(),

@@ -277,6 +277,7 @@ export function SettingsPage() {
               {UNLOAD_AFTER.map((t) => <option key={t.minutes} value={t.minutes}>{t.label}</option>)}
             </select>
           </Field>
+          <Toggle label="Load pinned tabs at start" hint="Favorites and pinned tabs of every space load when Magnetite starts, so they are ready on the first click. Off: each one loads when you first open it." checked={settings.load_pinned_at_start} onChange={(v) => update({ load_pinned_at_start: v })} />
           <Field side label="Archived tabs" hint={`${info.archive_count} so far. Search them from the command bar or the archive view in the sidebar.`}>
             <button className="btn" onClick={() => send({ cmd: "reopen_closed" })}>Reopen last archived tab</button>
           </Field>
