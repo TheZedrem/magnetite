@@ -139,7 +139,10 @@ Settings.
   window): it is shown with the keyboard, as in other browsers, because
   the extension waits for it and gives up when it closes. On macOS a
   pop-up window is told apart by its window lacking a tab strip (no
-  full-size content view).
+  full-size content view). On Linux, where CEF does not say what kind of
+  window Chromium made, every such window showing an extension's own page
+  (`chrome-extension://`) stays a window; a pop-up window showing a web
+  page still becomes a tab.
 
 ## Data
 
@@ -174,8 +177,9 @@ Settings.
   without its page, as a tab does whose page closed itself; it loads again
   when chosen.
 - An extension's pop-up window is a plain Chromium window outside
-  Magnetite's layout. On Linux it still becomes a tab, so an extension
-  that waits for its window (Bitwarden's passkeys) gives up there.
+  Magnetite's layout. On Linux an extension's own page in a normal window
+  stays a window too: an options page meant to open in a tab,
+  `chrome.windows.create({type: "normal"})`.
 - Without the DevTools pipe (file descriptors 3 and 4 taken at start, or on
   Windows) the buttons and menu entries open nothing.
 
