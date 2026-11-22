@@ -157,8 +157,8 @@ impl MagnetiteApp {
             u.found = None;
             u.status = match result {
                 Ok(m) if update::newer(&m.version, env!("CARGO_PKG_VERSION")) => {
-                    let installable =
-                        update::can_install() && m.assets.contains_key(&update::platform());
+                    let package = update::platform(update::appimage().is_some());
+                    let installable = update::can_install() && m.assets.contains_key(&package);
                     let status = update::Status::Available {
                         version: m.version.clone(),
                         notes_url: m.notes_url.clone(),
@@ -196,7 +196,8 @@ impl MagnetiteApp {
     /// Replace the app with the release found and restart (macOS), run the
     /// release's installer (Windows, a copy its installer put there),
     /// restart into what the package manager installed (Linux packages),
-    /// else open the release page.
+    /// replace the AppImage and restart (Linux), else open the release
+    /// page.
     pub(super) fn install_update(&self, engine: &Engine) {
         let restarted = self.with_updater(|u| {
             let system = u.system.as_ref().filter(|_| u.found.is_some())?;
@@ -224,7 +225,9 @@ impl MagnetiteApp {
         }
         let found = self.with_updater(|u| u.found.clone());
         let Some(m) = found else { return };
-        let asset = m.assets.get(&update::platform()).cloned();
+        // Asked once: the package picked is the one for what gets replaced.
+        let image = update::appimage();
+        let asset = (m.assets.get(&update::platform(image.is_some()))).cloned();
         let installing = |app: &Self| {
             app.with_updater(|u| {
                 u.status = update::Status::Installing {
@@ -240,6 +243,15 @@ impl MagnetiteApp {
             std::thread::spawn(move || {
                 let result = update::fetch_installer(&asset)
                     .and_then(|installer| update::run_installer(&installer));
+                Engine::post(Box::new(move || Self::update_installed(result)));
+            });
+            return;
+        }
+        #[cfg(target_os = "linux")]
+        if let (Some(asset), Some(image)) = (asset.clone(), image) {
+            installing(self);
+            std::thread::spawn(move || {
+                let result = update::install_appimage(&asset, &image);
                 Engine::post(Box::new(move || Self::update_installed(result)));
             });
             return;

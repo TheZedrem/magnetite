@@ -318,7 +318,8 @@ tap stays for those who installed from it.
 ## Before publishing the draft
 
 - The draft has four packages (zip and tarball), the two macOS disk images,
-  an rpm and a deb with its signature (`.deb.asc`) for each Linux CPU,
+  an rpm, a deb with its signature (`.deb.asc`) and an AppImage for each
+  Linux CPU,
   `latest.json`, `latest.json.sig`, `magnetite.rb`, `SHA256SUMS` and
   `linux-repository.tar`.
 - The signature checks out with the app's key:
@@ -341,7 +342,9 @@ tap stays for those who installed from it.
 - Linux: unpack, set up the sandbox as its `README.md` says, start it, open a
   page. Install the rpm (Fedora) and the deb (Ubuntu) and start
   `magnetite`; `rpm -K` on the rpm says "signatures OK" once the key is
-  imported.
+  imported. Make the AppImage executable, start it, open a page. After
+  publishing, the previous version's AppImage offers "Restart to update",
+  and its file is then this version.
 - After publishing: the "Linux repository" run is green, and a computer with
   the previous package gets this version from `sudo dnf upgrade` or
   `sudo apt update && sudo apt upgrade`. The running Magnetite then offers

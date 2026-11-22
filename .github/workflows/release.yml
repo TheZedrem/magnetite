@@ -112,13 +112,14 @@ jobs:
         if: runner.os == 'Windows'
         run: test -f "dist/Magnetite-$VERSION-${{ matrix.target }}-setup.exe"
 
-      # rpm and deb next to the tarball; signed in the publish job, which
-      # alone holds the repository key.
+      # rpm, deb and AppImage next to the tarball; rpm and deb are signed in
+      # the publish job, which alone holds the repository key.
       - name: Linux packages
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get install -y -q --no-install-recommends -o Acquire::Retries=5 rpm
+          sudo apt-get install -y -q --no-install-recommends -o Acquire::Retries=5 rpm squashfs-tools
           scripts/linux-packages.sh "dist/magnetite-$VERSION"
+          scripts/linux-appimage.sh "dist/magnetite-$VERSION"
 
       - name: Notarize
         if: runner.os == 'macOS'
@@ -192,7 +193,7 @@ jobs:
 
       - name: Checksums
         working-directory: dist
-        run: sha256sum -- *.zip *.dmg *.tar.gz *.rpm *.deb *.exe >SHA256SUMS
+        run: sha256sum -- *.zip *.dmg *.tar.gz *.rpm *.deb *.AppImage *.exe >SHA256SUMS
 
       # The notes: GitHub's list of the pull requests since the last
       # release, for a maintainer to rewrite, then the install table.
@@ -206,5 +207,5 @@ jobs:
           scripts/release/release-notes.sh "$VERSION" dist >>"$RUNNER_TEMP/notes.md"
           gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
             --title "Magnetite $VERSION" --notes-file "$RUNNER_TEMP/notes.md" \
-            dist/*.zip dist/*.dmg dist/*.tar.gz dist/*.rpm dist/*.deb dist/*.deb.asc dist/*.exe dist/latest.json dist/latest.json.sig dist/magnetite.rb dist/SHA256SUMS \
+            dist/*.zip dist/*.dmg dist/*.tar.gz dist/*.rpm dist/*.deb dist/*.deb.asc dist/*.AppImage dist/*.exe dist/latest.json dist/latest.json.sig dist/magnetite.rb dist/SHA256SUMS \
             "$RUNNER_TEMP/linux-repository.tar"

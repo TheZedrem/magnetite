@@ -87,6 +87,8 @@ scripts/build.sh
 `scripts/linux-packages.sh dist/magnetite-<version>` turns the build into
 the rpm and deb packages a release ships (needs `rpm-build` and `dpkg` on
 Fedora, `rpm` on Debian/Ubuntu, and `packaging/linux/repo-key.asc`).
+`scripts/linux-appimage.sh dist/magnetite-<version>` makes the AppImage
+(needs `squashfs-tools`).
 
 Chromium's sandbox needs unprivileged user namespaces or a setuid
 `chrome-sandbox`; see `packaging/linux/README.md`, which ships in the package.
