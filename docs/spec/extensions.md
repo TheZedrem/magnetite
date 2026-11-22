@@ -84,7 +84,9 @@ Settings.
   the tab in front (the active tab of the window focused last): to
   Chromium every page is a window of its own, and the page is made the one
   focused last as its action runs. Between two actions an extension that
-  asks in the background is told the page clicked into last.
+  asks in the background is told the page of the last action; on macOS a
+  click into a page or choosing a tab makes it the one focused last too, on
+  Linux it does not.
 - With no page open, a notice asks to open one first.
 - "Options" opens the extension's options page as a tab, in the profile of
   the page in front, where the extension is installed.
@@ -127,7 +129,11 @@ Settings.
   ([ADR-0007](../adr/0007-private-devtools-pipe.md)), for the tab target of
   the page. Every page window is a browser window of its own, so the tab is
   the one in the page's window (`Browser.getWindowForTarget`). It is looked
-  up once per page.
+  up once per page. `Target.activateTarget` on that tab goes first: it
+  activates the page through Chromium's own window code
+  (`BrowserView::Activate`), which moves it to the front of Chromium's
+  order of activation at once. Chromium learns that from the system's
+  window activation otherwise, which never reaches a page window on Linux.
 - **Anchor:** every page window carries Chromium's toolbar in its own
   views, out of sight: a row one point tall above the page holds a 400 pt
   box that shifts the toolbar up past its top edge. Chromium anchors popups
@@ -184,6 +190,16 @@ Settings.
   Magnetite's layout. On Linux an extension's own page in a normal window
   stays a window too: an options page meant to open in a tab,
   `chrome.windows.create({type: "normal"})`.
+- The page in front is the window focused last only with Magnetite's CEF
+  (`extension-last-active.patch` in magnetite-cef). Without it Chromium
+  counts every page as active whenever the main window is: on macOS all
+  pages turn active one after the other as a popup opens, on Linux each
+  page only once, and an extension is given another page than the one in
+  front, or an internal page, which Dark Reader shows as `about:`.
+- With the official CEF (macOS on Intel, Linux on arm64) Chromium calls
+  every page's window a pop-up window, so an extension that looks for the
+  tab in front among normal windows (Dark Reader) finds none and takes the
+  page for `about:blank`.
 - Without the DevTools pipe (file descriptors 3 and 4 taken at start, or on
   Windows) the buttons and menu entries open nothing.
 
