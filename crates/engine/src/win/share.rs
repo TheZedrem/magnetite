@@ -1,5 +1,5 @@
-//! Clipboard, save dialog, pointer and keys on Windows (what `mac/share.rs` does
-//! with `AppKit`).
+//! Clipboard, save dialog, Recycle Bin, pointer and keys on Windows (what
+//! `mac/share.rs` and `mac/drag.rs` do with `AppKit`).
 
 use std::ffi::c_void;
 use std::path::PathBuf;
@@ -204,6 +204,36 @@ pub fn save_png(owner: cef::sys::cef_window_handle_t, png: &[u8], name: &str) ->
     let path = PathBuf::from(String::from_utf16(&file[..end]).ok()?);
     std::fs::write(&path, png).ok()?;
     Some(path)
+}
+
+/// Move the file at `path` to the Recycle Bin, without a question or a
+/// progress window: the list asked already. A file the Recycle Bin cannot
+/// take (another drive, a share, too large) would be deleted for good, so
+/// Windows asks first then; a "No" fails the move.
+pub fn trash(path: &std::path::Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::UI::Shell::{
+        FO_DELETE, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT,
+        FOF_WANTNUKEWARNING, SHFILEOPSTRUCTW, SHFileOperationW,
+    };
+    // A list of paths: each ends with a nul, the list with one more.
+    let from: Vec<u16> = path.as_os_str().encode_wide().chain([0, 0]).collect();
+    let flags =
+        FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_WANTNUKEWARNING | FOF_NOERRORUI | FOF_SILENT;
+    let mut operation = SHFILEOPSTRUCTW {
+        wFunc: FO_DELETE,
+        pFrom: windows::core::PCWSTR(from.as_ptr()),
+        fFlags: u16::try_from(flags.0).unwrap_or_default(),
+        ..Default::default()
+    };
+    // SAFETY: `from` is a double-nul-ended list that outlives the call.
+    let failed = unsafe { SHFileOperationW(&raw mut operation) };
+    if failed != 0 || operation.fAnyOperationsAborted.as_bool() {
+        return Err(std::io::Error::other(format!(
+            "SHFileOperationW: {failed:#x}"
+        )));
+    }
+    Ok(())
 }
 
 /// Where the pointer is, in screen pixels.
