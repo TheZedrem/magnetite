@@ -6,6 +6,7 @@ use std::collections::HashSet;
 use magnetite_core::{Color, Id, SidebarNode, Space, TabItem, UnixSeconds};
 use magnetite_engine::{ContentId, MemoryPressure};
 
+use super::history::page_of;
 use super::settings::{MAX_ARCHIVE_DAYS, NEVER_ARCHIVE};
 use super::{AppState, ArchivedTab, Peek, TabRuntime, new_id, now};
 
@@ -554,6 +555,30 @@ impl AppState {
         self.forget_tab(id)
     }
 
+    /// Archive pinned tab `id` (`remove_pinned`) at the page it was pinned
+    /// for, not at the one it was left on. Its own title names that page only
+    /// while it is loaded there: closing a pinned tab takes it home and keeps
+    /// the last page's title. Otherwise it takes the page's title from the
+    /// history, or none. A title the user gave stays.
+    pub fn archive_pinned(&mut self, id: &str) -> Option<ContentId> {
+        let home = self.find_tab(id).and_then(|(_, t)| t.home_url.clone());
+        if let Some(home) = home {
+            let page = page_of(&home);
+            let loaded = self.runtime.get(id).is_some_and(|r| r.loaded);
+            let known = (self.history.newest())
+                .find(|v| page_of(&v.url) == page && !v.title.is_empty())
+                .map(|v| v.title.clone());
+            if let Some(t) = self.find_tab_mut(id) {
+                let own = loaded && page_of(&t.url) == page;
+                t.url = home;
+                if !t.custom_title && !own {
+                    t.title = known.unwrap_or_default();
+                }
+            }
+        }
+        self.archive_tab(id)
+    }
+
     /// Take the archive record at `pos` back into Today of its space (the
     /// active space if that one is gone, the space beside the private one if
     /// that is the active one). Returns the tab's id. A tab that
@@ -1047,6 +1072,55 @@ mod tests {
         assert!(s.find_tab("b").is_none());
         assert!(s.active_tab_id().is_none());
         assert_eq!(s.visible_tab_ids(), vec!["p", "a", "c"]);
+    }
+
+    #[test]
+    fn a_removed_pinned_tab_is_archived_at_its_pinned_page_with_that_pages_title() {
+        /// `p` of a fresh state at `url` titled `title`, loaded or not,
+        /// archived after a visit of its pinned page titled `visit`.
+        fn archived(url: &str, title: &str, loaded: bool, visit: Option<&str>) -> TabItem {
+            let mut s = state();
+            if let Some(title) = visit {
+                s.history.record("https://example.org/p", title, now());
+            }
+            if loaded {
+                let rt = TabRuntime {
+                    loaded,
+                    ..TabRuntime::default()
+                };
+                s.runtime.insert("p".into(), rt);
+            }
+            let p = s.find_tab_mut("p").unwrap();
+            (p.url, p.title) = (url.into(), title.into());
+            s.archive_pinned("p");
+            assert!(s.find_tab("p").is_none());
+            s.archive.pop().unwrap().tab
+        }
+        let (home, issue) = ("https://example.org/p", "https://example.org/p/issues/42");
+        // Left on another page: archived at home, under the history's title.
+        let t = archived(issue, "Bug #42", true, Some("Project P"));
+        assert_eq!((t.url.as_str(), t.title.as_str()), (home, "Project P"));
+        // Closed first (home again, the last title kept), with or without history.
+        assert_eq!(
+            archived(home, "Bug #42", false, Some("Project P")).title,
+            "Project P"
+        );
+        assert_eq!(archived(home, "Bug #42", false, None).title, "");
+        // Loaded on its page, only the place in it changed: its own title is
+        // right, and better than the history's (another profile's, maybe).
+        let t = archived("https://example.org/p#inbox", "Inbox", true, Some("Old"));
+        assert_eq!(t.title, "Inbox");
+    }
+
+    #[test]
+    fn a_title_the_user_gave_a_removed_pinned_tab_stays() {
+        let mut s = state();
+        s.history
+            .record("https://example.org/p", "Project P", now());
+        let p = s.find_tab_mut("p").unwrap();
+        (p.url, p.title, p.custom_title) = ("https://example.org/p/x".into(), "Work".into(), true);
+        s.archive_pinned("p");
+        assert_eq!(s.archive.pop().unwrap().tab.title, "Work");
     }
 
     #[test]
