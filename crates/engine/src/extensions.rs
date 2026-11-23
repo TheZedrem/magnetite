@@ -4,7 +4,8 @@
 //! (`extensions.settings`): where each one lives and whether it is enabled.
 //! Name, icon and options page come from its manifest; names may be
 //! localised through `_locales`. Only extensions with a toolbar action are
-//! listed: the others have nothing to click.
+//! listed (`action`; in Manifest V2 `browser_action` or `page_action`): the
+//! others have nothing to click.
 //!
 //! Opening: an extension's action (its popup, or its click handler) runs
 //! through Chromium's `Extensions.triggerAction` on the private `DevTools` pipe
@@ -125,12 +126,20 @@ fn live_on(ctx: &RequestContext, id: &str) -> Option<bool> {
 /// Locations Chromium uses for its own built-in extensions (PDF viewer, …).
 const COMPONENT: u64 = 5;
 const EXTERNAL_COMPONENT: u64 = 10;
+/// Location of an extension loaded with `--load-extension`. Chromium keeps
+/// its entry after a run without the switch but does not load it. Opening
+/// an extension Chromium has not loaded ends the whole program with the
+/// official CEF (`Extensions.triggerAction` does not check the id);
+/// Magnetite's CEF answers an error (`extension-trigger-action.patch`).
+const COMMAND_LINE: u64 = 8;
 /// Icon size we look for (the sidebar shows them at 16 pt, 2× on Retina).
 const ICON_SIZE: u64 = 32;
 
 /// Enabled extensions with a toolbar action in the Chromium profile at
-/// `profile_dir`, sorted by name. Unreadable entries are skipped.
-pub fn installed(profile_dir: &Path) -> Vec<ExtensionInfo> {
+/// `profile_dir`, sorted by name. Unreadable entries are skipped, and so are
+/// those loaded with `--load-extension` from a folder that is not in
+/// `command_line`, this run's list of such folders.
+pub fn installed(profile_dir: &Path, command_line: &[PathBuf]) -> Vec<ExtensionInfo> {
     let mut settings = serde_json::Map::new();
     let mut pinned = Vec::new();
     // Older or unsigned builds keep some entries in plain Preferences, which
@@ -151,7 +160,7 @@ pub fn installed(profile_dir: &Path) -> Vec<ExtensionInfo> {
     }
     let mut list: Vec<ExtensionInfo> = settings
         .iter()
-        .filter_map(|(id, entry)| extension(profile_dir, id, entry))
+        .filter_map(|(id, entry)| extension(profile_dir, command_line, id, entry))
         .map(|e| ExtensionInfo {
             chromium_pinned: pinned.contains(&e.id),
             ..e
@@ -161,7 +170,12 @@ pub fn installed(profile_dir: &Path) -> Vec<ExtensionInfo> {
     list
 }
 
-fn extension(profile_dir: &Path, id: &str, entry: &Value) -> Option<ExtensionInfo> {
+fn extension(
+    profile_dir: &Path,
+    command_line: &[PathBuf],
+    id: &str,
+    entry: &Value,
+) -> Option<ExtensionInfo> {
     if !is_extension_id(id) {
         return None;
     }
@@ -184,11 +198,28 @@ fn extension(profile_dir: &Path, id: &str, entry: &Value) -> Option<ExtensionInf
     };
     // Everything below is read through the real folder: no file outside it.
     let dir = dir.canonicalize().ok()?;
+    if location == COMMAND_LINE
+        && !command_line
+            .iter()
+            .any(|p| p.canonicalize().is_ok_and(|p| p == dir))
+    {
+        return None;
+    }
     let manifest: Value =
         serde_json::from_slice(&read_small(&inside(&dir, "manifest.json")?, MAX_FILE)?).ok()?;
-    let action = manifest
-        .get("action")
-        .or_else(|| manifest.get("browser_action"))?;
+    // Chromium reads `action` from Manifest V3 on, and Manifest V2's two
+    // forms below it; each ignores the other's.
+    let v3 = manifest
+        .get("manifest_version")
+        .and_then(Value::as_u64)
+        .is_some_and(|v| v >= 3);
+    let action = if v3 {
+        manifest.get("action")
+    } else {
+        manifest
+            .get("browser_action")
+            .or_else(|| manifest.get("page_action"))
+    }?;
     let name = localised(
         &dir,
         &manifest,
@@ -332,7 +363,7 @@ impl Engine {
             .filter(|(seen, _)| *seen == stamp)
             .map(|(_, list)| list.clone());
         let mut list = cached.unwrap_or_else(|| {
-            let list = installed(&dir);
+            let list = installed(&dir, &self.config.load_extensions);
             (self.lock().extensions.by_profile).insert(dir, (stamp, list.clone()));
             list
         });
@@ -377,6 +408,20 @@ impl Engine {
     /// Run extension `extension`'s action (open its popup) for page `id`.
     pub fn open_extension(&self, id: ContentId, extension: &str) {
         if !is_extension_id(extension) || !crate::devpipe::is_open() {
+            return;
+        }
+        // Only an extension listed for the page's profile: with the official
+        // CEF, Chromium ends the whole program for one it has not loaded
+        // there (a stale button, a leftover from `--load-extension`).
+        let profile = self.content_profile(id);
+        if !self
+            .extensions(profile.as_ref())
+            .iter()
+            .any(|e| e.id == extension)
+        {
+            crate::trace(&format!(
+                "extension action {extension}: not listed for the page's profile"
+            ));
             return;
         }
         // A system page made a moment ago, whose shadow Chromium is still
@@ -562,10 +607,12 @@ mod tests {
         let disabled = "cccccccccccccccccccccccccccccccc";
         let no_action = "dddddddddddddddddddddddddddddddd";
         let component = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+        let page_action = "ffffffffffffffffffffffffffffffff";
+        let leftover = "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii";
         let dev = tmp.join("dev");
         write(
             &tmp.join(format!("Extensions/{store}/1.0/manifest.json")),
-            r#"{"name":"__MSG_extName__","default_locale":"en","action":{"default_icon":{"16":"i16.png","38":"i38.png","19":"i19.png"}},"options_ui":{"page":"options.html"}}"#,
+            r#"{"name":"__MSG_extName__","default_locale":"en","manifest_version":3,"action":{"default_icon":{"16":"i16.png","38":"i38.png","19":"i19.png"}},"options_ui":{"page":"options.html"}}"#,
         );
         write(
             &tmp.join(format!("Extensions/{store}/1.0/_locales/en/messages.json")),
@@ -583,23 +630,38 @@ mod tests {
             &tmp.join(format!("Extensions/{no_action}/1.0/manifest.json")),
             r#"{"name":"Background only"}"#,
         );
+        write(
+            &tmp.join(format!("Extensions/{leftover}/1.0/manifest.json")),
+            // Manifest V3 ignores a leftover Manifest V2 action.
+            r#"{"name":"Leftover key","manifest_version":3,"browser_action":{}}"#,
+        );
+        write(
+            &tmp.join(format!("Extensions/{page_action}/1.0/manifest.json")),
+            r#"{"name":"Feeds","manifest_version":2,"page_action":{"default_icon":"feed.png"}}"#,
+        );
         let prefs = json!({ "extensions": { "settings": {
             store: { "location": 1, "path": format!("{store}/1.0"), "disable_reasons": [] },
             unpacked: { "location": 4, "path": dev.to_string_lossy() },
             disabled: { "location": 1, "path": format!("{disabled}/1.0"), "disable_reasons": [1] },
             no_action: { "location": 1, "path": format!("{no_action}/1.0") },
             component: { "location": 5, "path": "/somewhere/pdf" },
+            page_action: { "location": 1, "path": format!("{page_action}/1.0") },
+            leftover: { "location": 1, "path": format!("{leftover}/1.0") },
         }}});
         write(&tmp.join(format!("Extensions/{store}/1.0/i38.png")), "png");
+        write(
+            &tmp.join(format!("Extensions/{page_action}/1.0/feed.png")),
+            "png",
+        );
         write(&dev.join("big.png"), "png");
         write(&tmp.join("Secure Preferences"), &prefs.to_string());
         let pins = json!({ "extensions": { "pinned_extensions": [store] } });
         write(&tmp.join("Preferences"), &pins.to_string());
 
-        let list = installed(&tmp);
+        let list = installed(&tmp, &[]);
         let names: Vec<&str> = list.iter().map(|e| e.name.as_str()).collect();
-        assert_eq!(names, ["Ad Blocker", "Vault"]);
-        let vault = &list[1];
+        assert_eq!(names, ["Ad Blocker", "Feeds", "Vault"]);
+        let vault = &list[2];
         assert!(vault.chromium_pinned && !list[0].chromium_pinned);
         let real = |p: PathBuf| p.canonicalize().unwrap();
         assert_eq!(
@@ -611,6 +673,38 @@ mod tests {
             Some(format!("chrome-extension://{store}/options.html").as_str())
         );
         assert_eq!(list[0].icon, Some(real(dev.join("big.png"))));
+        assert_eq!(
+            list[1].icon,
+            Some(real(
+                tmp.join(format!("Extensions/{page_action}/1.0/feed.png"))
+            ))
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn command_line_extensions_are_listed_only_while_loaded() {
+        let tmp = std::env::temp_dir().join(format!("magnetite-ext-cli-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let given = "gggggggggggggggggggggggggggggggg";
+        let earlier = "hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh";
+        for (dir, name) in [("given", "Given"), ("earlier", "Earlier")] {
+            write(
+                &tmp.join(dir).join("manifest.json"),
+                &format!(r#"{{"name":"{name}","browser_action":{{}}}}"#),
+            );
+        }
+        let prefs = json!({ "extensions": { "settings": {
+            given: { "location": 8, "path": tmp.join("given").to_string_lossy() },
+            earlier: { "location": 8, "path": tmp.join("earlier").to_string_lossy() },
+        }}});
+        write(&tmp.join("Secure Preferences"), &prefs.to_string());
+
+        // The folder as the command line gave it, not as Chromium wrote it.
+        let list = installed(&tmp, &[tmp.join("given").join(".")]);
+        let names: Vec<&str> = list.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, ["Given"]);
+        assert_eq!(installed(&tmp, &[]), []);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

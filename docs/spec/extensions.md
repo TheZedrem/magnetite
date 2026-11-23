@@ -14,7 +14,7 @@ Settings.
 | Sidebar, extension bar | With Settings → Appearance → "Extension bar" on: the same icons in a row of their own below the address, not in the top row. A button at its right edge lists the extensions without an icon |
 | Top bar | The same icons, after the address. A button after them lists the extensions without an icon |
 | Menu bar → Extensions (macOS) | Every extension (click opens it), "Show in Sidebar" to pin or unpin each, "Manage Extensions…", "Chrome Web Store…" |
-| Settings → Extensions | With more than one lasting profile, the profile the page is about; its extensions with a switch for the sidebar; what only other profiles have, with "Add to <profile>"; "Chrome Web Store", "Manage extensions", "Show the Chrome toolbar inside pages" |
+| Settings → Extensions | With more than one lasting profile, the profile the page is about; its extensions with a switch for the sidebar; what only other profiles have, with "Add to <profile>"; "Chrome Web Store", "Manage extensions", "Show the Chrome toolbar inside pages", "Keep unpacked extensions on when Developer mode is off" |
 
 - The lists hold enabled extensions that have a toolbar action, sorted by
   name. Chromium's built-in extensions are left out. An extension that was
@@ -66,6 +66,23 @@ Settings.
 - Installing happens on the Chrome Web Store page; removing, turning off
   and site access on Chromium's own page, `chrome://extensions`. Both open
   as tabs. `--load-extension <dir>` (repeatable) loads an unpacked one.
+- Manifest V2 extensions install and run as Manifest V3 ones do. Chromium
+  switches them off; Magnetite's CEF leaves them on
+  (`extension-manifest-v2.patch` in magnetite-cef). The Chrome Web Store
+  no longer offers them, so one is loaded unpacked: "Developer mode" and
+  "Load unpacked" on Manage extensions, or `--load-extension`. Both of
+  Manifest V2's toolbar actions, `browser_action` and `page_action`, put
+  it in the lists; a manifest of version 3 has only `action`. Chromium
+  still lists a note that Manifest V2 is deprecated under the extension's
+  errors.
+- Chromium switches every unpacked extension off while "Developer mode"
+  is off, so a Manifest V2 one needs it left on. "Keep unpacked extensions
+  on when Developer mode is off" (Settings → Extensions, off by default,
+  this device's own) lifts that from the next start: Magnetite starts
+  Chromium with `--magnetite-keep-unpacked-extensions`, which only
+  Magnetite's CEF knows. The risk the switch accepts: an unpacked
+  extension another program put into the profile stays on too; Manage
+  extensions lists it for review.
 - "Show the Chrome toolbar inside pages" (off by default) adds Chromium's
   own toolbar row, with its extension buttons, above every page. It applies
   to tabs loaded from then on. `--chrome-toolbar` turns it on for one run.
@@ -122,9 +139,14 @@ Settings.
   `Preferences` and `Secure Preferences` for each extension's location and
   state, then its `manifest.json` for the name (localised through
   `_locales`), icon and options page. It reads again when Chromium rewrites
-  either file. The sidebar gets the list with every state update and checks
-  once a minute; the menu reads it each time it opens. Icons are served as
-  `magnetite://ui/ext-icons/<id>`.
+  either file. An extension loaded with `--load-extension` is listed only
+  in a run whose command line names its folder: Chromium keeps its entry
+  afterwards but does not load it. An extension opens only if it is listed
+  for the profile of the page it acts on: with the official CEF, opening
+  one Chromium has not loaded there ends the whole program; Magnetite's CEF
+  answers an error instead (`extension-trigger-action.patch`). The sidebar gets the list with
+  every state update and checks once a minute; the menu reads it each time
+  it opens. Icons are served as `magnetite://ui/ext-icons/<id>`.
 - **Opening:** `Extensions.triggerAction` on the private DevTools pipe
   ([ADR-0007](../adr/0007-private-devtools-pipe.md)), for the tab target of
   the page. Every page window is a browser window of its own, so the tab is
@@ -201,6 +223,13 @@ Settings.
   pages turn active one after the other as a popup opens, on Linux each
   page only once, and an extension is given another page than the one in
   front, or an internal page, which Dark Reader shows as `about:`.
+- With the official CEF (macOS on Intel, Linux on arm64) Chromium refuses
+  Manifest V2 extensions and switches off the ones installed, and "Keep
+  unpacked extensions on when Developer mode is off" has no effect.
+- Manifest V2 extensions were tried on macOS on Apple silicon only.
+- A `page_action` is off on a page until its extension shows it there.
+  Opening such an extension then shows Chromium's menu for it instead of
+  a popup, as Chrome does.
 - With the official CEF (macOS on Intel, Linux on arm64) Chromium calls
   every page's window a pop-up window, so an extension that looks for the
   tab in front among normal windows (Dark Reader) finds none and takes the
