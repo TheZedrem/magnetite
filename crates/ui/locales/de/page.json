@@ -1,0 +1,176 @@
+{
+  "top_bar": {
+    "hide_sidebar": "Seitenleiste ausblenden",
+    "show_sidebar": "Seitenleiste einblenden",
+    "back": "Zurück ({keys})",
+    "forward": "Vorwärts ({keys})",
+    "reload": "Neu laden ({keys})",
+    "peek": "<muted>Vorschau · </muted>{title}",
+    "keep": "Behalten",
+    "keep_title": "Als Tab behalten ({keys})",
+    "open_split": "In Split View öffnen",
+    "close_peek": "Schließen (Esc)",
+    "minimize": "Minimieren",
+    "maximize": "Maximieren"
+  },
+  "site_state": {
+    "camera_and_microphone": "Verwendet Kamera und Mikrofon",
+    "camera": "Verwendet die Kamera",
+    "microphone": "Verwendet das Mikrofon",
+    "shared": "Dieser Tab wird geteilt",
+    "cert_problem": "Zertifikatsproblem",
+    "not_encrypted": "Nicht verschlüsselt",
+    "zoom": "Zoom {percent} %",
+    "muted": "Stummgeschaltet"
+  },
+  "address": {
+    "empty": "Suchen oder Adresse eingeben",
+    "site_controls": "Website-Einstellungen",
+    "site_controls_with": "Website-Einstellungen: {states}",
+    "label": "Adresse: {url}. Bearbeiten{keys}",
+    "copy_link_label": "Link kopieren{keys}. Weitere Optionen mit Rechtsklick.",
+    "copy_original_short": "Original kopieren"
+  },
+  "copy_menu": {
+    "link": "Link kopieren",
+    "original": "Originallink kopieren",
+    "markdown": "Als Markdown kopieren"
+  },
+  "copy_status": {
+    "failed": "Kopieren fehlgeschlagen",
+    "original": "Originallink kopiert",
+    "markdown": "Als Markdown kopiert",
+    "removed_one": "Kopiert · {count} Tracker entfernt",
+    "removed_other": "Kopiert · {count} Tracker entfernt"
+  },
+  "site_panel": {
+    "label": "Website-Einstellungen für {host}",
+    "profile": "Profil: {name}",
+    "connection": {
+      "magnetite_page": "Magnetite-Seite",
+      "local_file": "Lokale Datei",
+      "encrypted": "Verschlüsselte Verbindung",
+      "unavailable": "Nicht verfügbar"
+    },
+    "tools": {
+      "capture": "Bildschirmfoto",
+      "share": "Teilen",
+      "user_code": "Eigene Skripte und Stile",
+      "user_code_hint": "Eigenes CSS und JavaScript für {host}",
+      "devtools": "Entwicklerwerkzeuge"
+    },
+    "system_engine": {
+      "note": "Diese Seite wird von der Web-Engine des Systems angezeigt. Erweiterungen können sie weder lesen noch ausfüllen. Werbeblocker, Global Privacy Control und Entwicklerwerkzeuge funktionieren hier nicht, und bei der Website meldest du dich getrennt von deinen anderen Seiten an.",
+      "note_named": "{engine}, {about}, zeigt diese Seite an. Erweiterungen können sie weder lesen noch ausfüllen. Werbeblocker, Global Privacy Control und Entwicklerwerkzeuge funktionieren hier nicht, und bei der Website meldest du dich getrennt von deinen anderen Seiten an.",
+      "open_in": "In {engine} öffnen",
+      "open_switch": "Diese Website in {engine} öffnen",
+      "open_hint": "Gilt für ganz {site}: {engine}, {about}, zeigt dann ihre Seiten an und spielt geschützte Videos ab. Erweiterungen können diese Seiten weder lesen noch ausfüllen, Werbung wird nicht blockiert, und du musst dich bei der Website erneut anmelden. Die Seite wird dabei neu geladen.",
+      "always": "Immer, wegen der Videos"
+    },
+    "permissions": {
+      "title": "Berechtigungen",
+      "none": "Diese Website hat keine Berechtigungen angefordert.",
+      "via": "über {host}",
+      "allow": "Erlauben",
+      "ask": "Fragen",
+      "block": "Blockieren",
+      "kinds": {
+        "camera": "Kamera",
+        "microphone": "Mikrofon",
+        "location": "Standort",
+        "notifications": "Mitteilungen",
+        "popups": "Pop-ups und Weiterleitungen",
+        "clipboard": "Zwischenablage"
+      }
+    },
+    "this_site": "Diese Website",
+    "zoom": "Zoom",
+    "zoom_out": "Verkleinern",
+    "zoom_in": "Vergrößern",
+    "zoom_reset_label": "Zoom auf {percent} % zurücksetzen",
+    "zoom_reset_title": "Auf {percent} % zurücksetzen",
+    "mute": "Tab stummschalten",
+    "unmute": "Stummschaltung aufheben",
+    "block_ads": {
+      "label": "Werbung blockieren",
+      "switch": "Werbung auf dieser Website blockieren",
+      "hint": "Gilt für ganz {site}. Die Seite wird neu geladen."
+    },
+    "site_shortcuts": {
+      "label": "Vorrang für Website-Kurzbefehle",
+      "switch": "Tasten von Kurzbefehlen gehen zuerst an diese Website",
+      "hint": "Gilt für ganz {site}: Die Website darf die Tasten von Magnetite-Kurzbefehlen selbst belegen. Ein Kurzbefehl greift dann nur, wenn die Website seine Tasten nicht nutzt. Die Ziffern, mit denen du einen Tab oder Space auswählst, bleiben Magnetite vorbehalten."
+    },
+    "dev_mode": {
+      "label": "Entwicklermodus",
+      "hint": "Zeigt für diese Website die Entwicklerleiste, einen Warnrahmen am Tab und die Zahl der Konsolenfehler",
+      "always_local": "Immer, auf diesem Computer",
+      "on_for_domain": "Für die Domain an"
+    },
+    "clear_data": {
+      "button": "Cookies und Websitespeicher löschen …",
+      "working": "Wird gelöscht …",
+      "confirm": "Die Cookies von <b>{domain}</b> und ihren Subdomains werden entfernt, ebenso der Websitespeicher von:",
+      "confirm_profile": "Die Cookies von <b>{domain}</b> und ihren Subdomains im Profil <b>{profile}</b> werden entfernt, ebenso der Websitespeicher von:",
+      "signed_out": "Du wirst dabei abgemeldet. Gespeicherte Daten von Bereichen der Website, die du in dieser Sitzung nicht geöffnet hast, bleiben eventuell erhalten.",
+      "clear": "Löschen",
+      "nothing": "Hier gibt es nichts zu löschen: Das funktioniert nur bei Websites.",
+      "moved": "Es wurde nichts entfernt: Die Seite ist nicht mehr auf {domain}.",
+      "cookies": "Cookies: {removed} entfernt",
+      "cookies_failed": "Cookies konnten nicht entfernt werden",
+      "storage_one": "Speicher: {done} von {count} Ursprung",
+      "storage_other": "Speicher: {done} von {count} Ursprüngen",
+      "retry": "Erneut versuchen"
+    }
+  },
+  "capture": {
+    "window_title": "Bildschirmfoto",
+    "click_element": "Element anklicken",
+    "element_off": "Elementauswahl nicht verfügbar",
+    "element_off_hint": "Die Seite hat sich beim Einfrieren bewegt, daher ist die Elementauswahl für dieses Bildschirmfoto ausgeschaltet",
+    "drag_region": "Bereich aufziehen",
+    "visible": "Sichtbar",
+    "full_page": "Ganze Seite",
+    "padding_on": "Rand an",
+    "padding_off": "Rand aus",
+    "context_on": "Kontext an",
+    "context_off": "Kontext aus",
+    "context_hint": "Neben der Bilddatei auch Selektor, Markup und Stile des Elements als Text kopieren – für ein Issue oder einen Coding-Agenten"
+  },
+  "capture_toast": {
+    "busy": "Wird aufgenommen: {what} …",
+    "failed": "Bildschirmfoto fehlgeschlagen: {error}",
+    "dismiss": "Ausblenden",
+    "dismiss_capture": "Bildschirmfoto ausblenden",
+    "label": "Bildschirmfoto, {width} × {height} Pixel",
+    "cut_at": "Seite bei {px} px abgeschnitten (Größenlimit)",
+    "save": "Speichern …",
+    "share": "Teilen …",
+    "retake": "Neu aufnehmen",
+    "context_copied": "Element als Text kopiert, zusammen mit der Bilddatei",
+    "copy_failed": "Kopieren fehlgeschlagen",
+    "saved_as": "Als {name} gespeichert",
+    "recording_saved": "Aufnahme in Downloads gespeichert",
+    "copy_file": "Datei kopieren"
+  },
+  "empty": {
+    "hint": "Drücke {keys}, um einen Tab zu öffnen",
+    "close_panel": "Panel schließen",
+    "panel_width": "Breite des Web-Panels",
+    "panel_resize_hint": "Ziehen ändert die Breite · Doppelklick setzt sie zurück"
+  },
+  "shared": {
+    "title": "Geteilter Ordner",
+    "add": "Zur Seitenleiste hinzufügen",
+    "added": "Hinzugefügt",
+    "summary_one": "{count} Tab. Geöffnet wird nur, was du selbst öffnest.",
+    "summary_other": "{count} Tabs. Geöffnet wird nur, was du selbst öffnest.",
+    "unreadable": "Dieser Link konnte nicht gelesen werden",
+    "unreadable_hint": "Möglicherweise wurde er unterwegs abgeschnitten. Lass ihn dir am besten noch einmal schicken."
+  },
+  "licenses": {
+    "title": "Lizenzen",
+    "notices": "Open-Source-Lizenzen",
+    "chromium": "Chromium-Lizenzen"
+  }
+}

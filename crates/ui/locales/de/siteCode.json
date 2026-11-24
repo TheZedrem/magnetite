@@ -1,0 +1,18 @@
+{
+  "problem": {
+    "host": "Gib die Website als Hostnamen an, etwa example.org.",
+    "listed": "Diese Website steht schon in der Liste.",
+    "too_much": "Das ist zu viel Code für eine Website (höchstens 256 KiB CSS und 256 KiB JavaScript)."
+  },
+  "site": "Website",
+  "code_for": "{kind} für {site}",
+  "code_for_this": "{kind} für diese Website",
+  "use_on": "Auf {site} verwenden",
+  "use_on_this": "Auf dieser Website verwenden",
+  "remove": "Code für {site} entfernen",
+  "remove_this": "Code für diese Website entfernen",
+  "not_saved": "Nicht gespeichert: {reason}",
+  "intro": "CSS wirkt sofort nach dem Speichern auf offene Seiten der Website; JavaScript läuft jedes Mal, nachdem eine ihrer Seiten geladen wurde. Eine Website umfasst auch ihre Subdomains. Der Code läuft als Teil der Seite und kann alles darauf lesen und ändern. Füge daher nur Code hinzu, den du verstehst. Er bleibt auf diesem Computer.",
+  "full": "Es werden höchstens {max} Websites gespeichert.",
+  "add": "Website hinzufügen"
+}

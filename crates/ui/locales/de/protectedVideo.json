@@ -1,0 +1,31 @@
+{
+  "unavailable": "Magnetite kann die Web-Engine des Systems bisher nur ab macOS 14 und unter Windows mit aktuellem WebView2 nutzen. Auf diesem Computer zeigt Chromium alle Seiten an, und Videos von Diensten, die einen verifizierten Browser verlangen, werden nicht abgespielt.",
+  "known": {
+    "label": "Streamingdienste in {engine} öffnen",
+    "hint": "{services}. Diese Dienste spielen geschützte Videos nur in einem von Google verifizierten Browser ab. Das Chromium von Magnetite ist noch nicht verifiziert, Gespräche dazu laufen. Bis dahin übernimmt {engine}, {about}, die Wiedergabe."
+  },
+  "auto": {
+    "label": "Bei Fehlern mit geschützten Videos zu {engine} wechseln",
+    "hint": "Verweigert ein Dienst in Chromium die Wiedergabe geschützter Videos, öffnet sich seine Website von da an in {engine}, und die Seite wird dort neu geladen. Dienste, deren Videos in Chromium laufen, bleiben dort. Um eine Website in Chromium zu behalten, deaktiviere den Schalter im Website-Panel wieder."
+  },
+  "other": {
+    "label": "Weitere Websites",
+    "hint": "Weitere Websites, die in {engine} geöffnet werden, eine pro Zeile. Der Name einer Website gilt auch für ihre Subdomains. Websites, die von selbst gewechselt sind, werden hier aufgeführt. Denselben Schalter für die aktuelle Seite findest du im Website-Panel (über die Taste links neben der Adresse)."
+  },
+  "chromium": {
+    "label": "In Chromium behalten",
+    "hint": "Websites, die nie von selbst wechseln, eine pro Zeile: solche, die du mit dem Schalter im Website-Panel zurückgeholt hast, und alle, die du hinzufügst."
+  },
+  "different": {
+    "title": "Was auf einer Seite in {engine} anders ist",
+    "hint": "Die Seite ist ein Tab wie jeder andere: in der Seitenleiste, in ihrem Space, in einer Split View oder in einer Vorschau. Erweiterungen können sie weder lesen noch ausfüllen. Werbung wird nicht blockiert, Entwicklerwerkzeuge fehlen, und es wird kein Global-Privacy-Control-Signal gesendet. Die Anmeldung ist getrennt: Eine Website, bei der du in Chromium angemeldet bist, fordert dich erneut zur Anmeldung auf. Offene Seiten behalten ihre Engine, bis sie eine andere Adresse laden."
+  },
+  "data": {
+    "label": "Websitedaten von {engine}",
+    "hint": "Cookies, Websitespeicher und Cache aller Seiten, die {engine} angezeigt hat, in allen Profilen. Die Daten von Chromium löschst du unter „Daten und Datenschutz“.",
+    "failed": "Die Daten konnten nicht gelöscht werden. Versuche es erneut.",
+    "done": "Gelöscht. Auf diesen Websites musst du dich erneut anmelden.",
+    "working": "Wird gelöscht …",
+    "delete": "Löschen …"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "show": {
+    "pull_requests": "Meine + Review-Anfragen",
+    "review_requests": "Review-Anfragen",
+    "my_pull_requests": "Meine",
+    "assigned_issues": "Mir zugewiesene Issues"
+  },
+  "folders": {
+    "label": "Ordner",
+    "hint": "Klicke in der Seitenleiste mit der rechten Maustaste auf einen Ordner, um ihn in einen smarten Ordner umzuwandeln.",
+    "empty": "Noch keine smarten Ordner.",
+    "updated": "aktualisiert {when}",
+    "refresh": "Jetzt aktualisieren",
+    "new": "Neuer smarter Ordner"
+  },
+  "accounts": {
+    "label": "Konten",
+    "hint": "Ein Konto ist ein Zugriffstoken für einen Server. Beim Trennen wird das Token hier gelöscht. Wenn du es nicht mehr brauchst, widerrufe es auch auf dem Server.",
+    "empty": "Keine Konten verbunden.",
+    "disconnect": "Trennen",
+    "disconnect_confirm": "Zum Trennen erneut klicken",
+    "connect": "Konto verbinden"
+  }
+}

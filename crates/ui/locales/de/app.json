@@ -1,0 +1,251 @@
+{
+  "mini": {
+    "back": "Zurück",
+    "forward": "Vorwärts",
+    "reload": "Neu laden",
+    "address": "Adresse",
+    "address_placeholder": "Suchen oder URL eingeben",
+    "copy_link": "Link kopieren",
+    "open_as_tab": "Als Tab öffnen",
+    "open_as_tab_tip": "Als Tab öffnen (⌘O)",
+    "open_in": "In {space} öffnen",
+    "other_space": "In einem anderen Space öffnen",
+    "close": "Schließen (⌘W)"
+  },
+  "peek": {
+    "close": "Schließen (Esc)",
+    "open_as_tab": "Als Tab öffnen (Strg+O)",
+    "open_as_tab_mac": "Als Tab öffnen (⌘O)",
+    "split": "In Split View öffnen",
+    "open_link": "Link in Vorschau öffnen"
+  },
+  "panel": {
+    "close": "Panel schließen"
+  },
+  "window_buttons": {
+    "minimize": "Minimieren",
+    "maximize": "Maximieren oder wiederherstellen"
+  },
+  "pip": {
+    "back_to_tab": "Zurück zum Tab",
+    "minimize": "Minimieren",
+    "back": "15 Sekunden zurück",
+    "play": "Wiedergeben",
+    "pause": "Pause",
+    "forward": "15 Sekunden vorwärts"
+  },
+  "quit_hint": "Zum Beenden erneut ⌘Q drücken",
+  "devtools": {
+    "dock_side": "Andockposition",
+    "separate": "Eigenes Fenster",
+    "dock_bottom": "Unten andocken",
+    "dock_right": "Rechts andocken",
+    "close": "DevTools schließen",
+    "device_toolbar": "Gerätesymbolleiste ein-/ausblenden"
+  },
+  "shortcuts": {
+    "not_keys": "keine Tastenkombination: {keys}",
+    "needs_modifier": "Ein Kurzbefehl muss Strg oder Alt enthalten oder eine Funktionstaste sein.",
+    "needs_modifier_mac": "Ein Kurzbefehl muss ⌘, ⌃ oder ⌥ enthalten oder eine Funktionstaste sein.",
+    "fixed": "Diese Tasten sind fest belegt: {what}.",
+    "taken": {
+      "keep_peek": "Vorschau als Tab behalten",
+      "quit": "Beenden",
+      "quick_search": "Schnellsuche von überall aus",
+      "app_switcher": "App-Umschalter des Systems",
+      "system_search": "Systemsuche",
+      "close_window": "Fenster schließen",
+      "tab_by_place": "Tab nach Position auswählen",
+      "space_by_place": "Space nach Position auswählen"
+    }
+  },
+  "system_engine": {
+    "webkit_about": "die eingebaute Web-Engine des Mac",
+    "webview2_about": "die in Windows enthaltene Engine von Microsoft Edge",
+    "stores_unreadable": "Die Liste der Datenspeicher von {engine} konnte nicht gelesen werden.",
+    "moved": "Auf {site} ließ sich ein geschütztes Video nicht abspielen. Magnetite öffnet die Website ab jetzt in {engine}.",
+    "set_in_settings": "Unter Einstellungen → Geschützte Videos ist festgelegt, dass diese Website in {engine} geöffnet wird. Dort kannst du das ändern.",
+    "list_full": "Die Liste enthält bereits {max} Websites. Entferne zuerst eine unter Einstellungen → Geschützte Videos."
+  },
+  "screen_share": {
+    "tab_hint": "Es werden nur geladene Tabs dieses Profils angezeigt."
+  },
+  "names": {
+    "first_space": "Persönlich",
+    "default_profile": "Standard",
+    "private": "Privat",
+    "private_profile": "{name} (privat)",
+    "new_space": "Neuer Space",
+    "new_folder": "Neuer Ordner",
+    "new_profile": "Neues Profil",
+    "shared_folder": "Geteilter Ordner",
+    "favorites": "Favoriten",
+    "pull_requests": "Pull-Requests",
+    "merge_requests": "Merge-Requests",
+    "issues": "Issues"
+  },
+  "pages": {
+    "welcome": "Willkommen",
+    "downloads": "Downloads"
+  },
+  "files": {
+    "capture": "Magnetite-Bildschirmfoto {date} um {time}",
+    "recording": "Magnetite-Aufnahme {date} um {time}"
+  },
+  "capture": {
+    "full_page": "ganze Seite",
+    "set": "hell und dunkel in drei Größen",
+    "not_visible": "die Seite ist nicht sichtbar",
+    "too_large": "die Seite ist zu groß für eine Aufnahme",
+    "video_cut": "das Video konnte nicht vollständig geschrieben werden ({name})",
+    "nothing_recorded": "auf der Seite gab es nichts aufzunehmen"
+  },
+  "notices": {
+    "folder_link_copied": "Link zum Ordner kopiert",
+    "copy_failed": "Kopieren nicht möglich",
+    "added": "„{title}“ hinzugefügt",
+    "link_copied": "Link kopiert",
+    "file_copied": "Datei kopiert",
+    "path_copied": "Pfad kopiert",
+    "file_gone": "Diese Datei wurde verschoben oder gelöscht.",
+    "show_file_failed": "Die Datei konnte nicht angezeigt werden",
+    "copy_file_failed": "Die Datei konnte nicht kopiert werden",
+    "trash_failed": "Die Datei konnte nicht in den Papierkorb gelegt werden.",
+    "retry_failed": "Der Download konnte nicht erneut gestartet werden.",
+    "bookmark_saved": "In den Lesezeichen von {space} gespeichert",
+    "bookmark_not_saved": "Nicht gespeichert: Die Seite ist schon ein Lesezeichen, oder es gibt keine Seite zum Speichern",
+    "capture_copied": "Bildschirmfoto kopiert",
+    "no_capture": "Kein Bildschirmfoto zum Kopieren",
+    "split_full": "In einer Split View haben höchstens vier Seiten Platz",
+    "extension_needs_page": "Öffne zuerst eine Seite. Erweiterungen wirken auf die Seite im Vordergrund."
+  },
+  "errors": {
+    "profile_gone": "Dieses Profil gibt es nicht mehr.",
+    "space_gone": "Diesen Space gibt es nicht mehr.",
+    "spaces_gone": "Diese Spaces gibt es nicht mehr.",
+    "folder_gone": "Diesen Ordner gibt es nicht mehr.",
+    "no_extension": "Das ist keine Erweiterung.",
+    "no_web_address": "Das ist keine Webadresse.",
+    "no_website": "Das ist keine Website-Adresse.",
+    "dialog_failed": "Der Dialog konnte nicht geöffnet werden.",
+    "closing": "Magnetite wird beendet.",
+    "folder_unusable": "Dieser Ordner kann nicht verwendet werden.",
+    "browser_missing": "Dieser Browser ist auf diesem Computer nicht installiert.",
+    "not_on_computer": "auf diesem Computer nicht installiert",
+    "nothing_to_import": "In {name} gibt es nichts zu importieren",
+    "file_nothing_to_import": "In der Datei gibt es nichts zu importieren",
+    "bookmarks_file_too_large": "Diese Datei ist zu groß für eine Lesezeichendatei.",
+    "download_broke_off": "Der Download ist abgebrochen: {error}",
+    "data_dir_open": "Der Datenordner konnte nicht geöffnet werden."
+  },
+  "share": {
+    "empty": "In diesem Ordner gibt es keine Tabs zum Teilen",
+    "too_much": "Zu viel für einen Link",
+    "unreadable": "Dieser Link konnte nicht gelesen werden",
+    "private": "Der private Space speichert keine Ordner"
+  },
+  "downloads": {
+    "choose_folder": "Downloads speichern in"
+  },
+  "adblock": {
+    "about": {
+      "easylist": "Werbung auf den meisten internationalen Websites.",
+      "easyprivacy": "Tracker und Analysedienste.",
+      "easylist_germany": "Werbung auf deutschsprachigen Websites. Zusammen mit EasyList verwenden.",
+      "peter_lowe": "Server von Werbe- und Tracking-Firmen.",
+      "ublock": "Werbung, Tracker und Sperren wie „Schalte deinen Werbeblocker aus“, dazu Korrekturen für Websites, die durch die anderen Listen nicht mehr funktionieren."
+    },
+    "unreachable": "Die Liste konnte nicht heruntergeladen werden: {error}",
+    "too_large": "Die Liste ist größer als erwartet.",
+    "not_a_list": "Die heruntergeladene Datei ist keine Filterliste."
+  },
+  "smart": {
+    "store_failed": "Das Konto konnte nicht gespeichert werden: {error}",
+    "remove_failed": "Das Konto konnte nicht entfernt werden: {error}",
+    "connect_first": "Verbinde zuerst ein {service}-Konto.",
+    "connect_to_fill": "Verbinde ein {service}-Konto, um diesen Ordner zu füllen.",
+    "other_device": "Dieser Ordner wurde auf einem anderen Gerät hinzugefügt oder geändert. Schalte ihn hier ein, um ihn mit den Konten dieses Geräts zu füllen.",
+    "no_login": "Der Server hat nicht mitgeteilt, wem der Token gehört.",
+    "enter_server": "Gib die Serveradresse ein.",
+    "bad_server": "Das ist keine Serveradresse.",
+    "no_user_name": "Lass den Benutzernamen in der Adresse weg.",
+    "https_only": "Verwende eine https://-Adresse.",
+    "unreachable": "{host} ist nicht erreichbar: {error}",
+    "unexpected": "Unerwartete Antwort: {error}",
+    "too_much": "Die Antwort des Servers ist zu groß für eine Liste von Einträgen.",
+    "token_rejected": "Der Token wurde abgelehnt. Erstelle einen neuen und verbinde dich erneut.",
+    "denied": "Zugriff verweigert oder zu viele Anfragen. Versuche es später erneut oder prüfe die Berechtigungen des Tokens.",
+    "not_found": "Nicht gefunden. Prüfe die Serveradresse.",
+    "status": "Der Server hat mit {code} geantwortet."
+  },
+  "sync": {
+    "still_connecting": "Die Verbindung zum Sync-Server wird noch hergestellt.",
+    "in_a_chain": "Dieses Gerät ist bereits in einer Sync-Kette. Verlasse sie zuerst.",
+    "ignored_empty": "Eine synchronisierte Seitenleiste ohne Spaces wurde ignoriert. Magnetite wartet auf eine verwendbare.",
+    "bad_address": "keine Sync-Server-Adresse: {url}",
+    "user_name": "die Adresse des Sync-Servers darf keinen Benutzernamen enthalten",
+    "https_only": "der Sync-Server braucht eine https://-Adresse (einfaches http nur für diesen Computer): {url}",
+    "remember_deletion": "die Löschung konnte nicht vorgemerkt werden: {error}",
+    "unreadable_answer": "der Sync-Server hat eine Antwort gesendet, die diese Version nicht lesen kann",
+    "status_400": "der Sync-Server hat die Anfrage nicht verstanden",
+    "status_401": "der Sync-Server hat die Signatur dieses Geräts nicht akzeptiert (stimmt die Uhrzeit?)",
+    "status_403": "der Sync-Server hat die Anfrage abgelehnt: Er nimmt keine neuen Sync-Ketten an, der Einladungscode ist falsch oder die Kette ist voll",
+    "status_404": "der Sync-Server kennt diese Sync-Kette nicht",
+    "status_408": "die Anfrage hat den Sync-Server nicht rechtzeitig erreicht",
+    "status_409": "ein anderes Gerät hat zuerst geschrieben; Magnetite versucht es erneut",
+    "status_410": "diese Sync-Kette wurde gerade gelöscht",
+    "status_413": "diese Sync-Kette hat ihren Speicher auf dem Server aufgebraucht",
+    "busy": "der Sync-Server ist ausgelastet; Magnetite versucht es später erneut",
+    "server_error": "beim Sync-Server ist ein Fehler aufgetreten; Magnetite versucht es später erneut",
+    "status": "der Sync-Server hat mit {status} geantwortet",
+    "unreachable": "der Sync-Server ist nicht erreichbar: {error}",
+    "too_much": "der Sync-Server hat mehr Daten gesendet, als eine Sammlung fassen kann",
+    "store_code": "der Sync-Code konnte nicht gespeichert werden: {error}",
+    "already_in_chain": "dieses Gerät ist bereits in einer Sync-Kette; verlasse sie zuerst",
+    "no_chain": "Auf {server} gibt es keine Sync-Kette mit diesem Code",
+    "not_in_chain": "dieses Gerät ist in keiner Sync-Kette",
+    "going_back": "{name}: Der Server hat Version {remote}, dieses Gerät aber schon {seen}; Magnetite übernimmt keinen älteren Stand",
+    "unreadable": "nicht lesbar; ist Magnetite auf dem neuesten Stand?",
+    "no_spaces": "sie hat keine Spaces",
+    "version_failed": "{name}, Version {version}: {error}",
+    "no_data_yet": "{name}: Diese Sync-Kette enthält noch keine Daten; synchronisiere zuerst das Gerät, mit dem sie gestartet wurde",
+    "overflow": "{name}: Versionsüberlauf",
+    "wrong_version": "{name}: Der Server hat Version {acked} für das Schreiben von Version {next} bestätigt; wird ignoriert",
+    "wrote_first": "{name}: Ein anderes Gerät hat zuerst geschrieben; Magnetite versucht es erneut",
+    "devices_unreadable": "devices: nicht lesbar; ist Magnetite auf dem neuesten Stand?",
+    "devices_going_back": "devices: Der Server hat Version {remote}, dieses Gerät aber schon Version {seen}; Magnetite übernimmt keinen älteren Stand",
+    "devices_gone": "devices: Auf dem Server gibt es keine, dieses Gerät hat aber Version {seen}; Magnetite übernimmt keinen älteren Stand",
+    "devices_busy": "devices: Andere Geräte haben immer wieder zuerst geschrieben; Magnetite versucht es später erneut",
+    "delete_pending": "Dieses Gerät hat die Sync-Kette verlassen, aber der Server hat sie noch nicht gelöscht ({error}). Magnetite versucht es beim nächsten Start erneut."
+  },
+  "update": {
+    "bad_signature": "Die Signatur des Updates ist fehlerhaft.",
+    "not_release_key": "Das Update ist nicht mit dem Release-Schlüssel von Magnetite signiert.",
+    "bad_description": "Die Beschreibung des Updates ist fehlerhaft.",
+    "unreachable": "Der Update-Server ist nicht erreichbar: {error}",
+    "too_much": "Der Update-Server hat mehr Daten gesendet als erwartet.",
+    "restart_failed": "Magnetite konnte nicht neu gestartet werden: {error}",
+    "place_failed": "Das Update konnte nicht eingesetzt werden: {error}",
+    "no_file": "Keine Datei für das Update.",
+    "no_folder": "Kein Ordner für das Update.",
+    "stranded": "Magnetite liegt noch unter {path}. Lege es vor dem Update von Hand an seinen alten Ort zurück.",
+    "prepare_failed": "Das Update konnte nicht vorbereitet werden: {error}",
+    "mismatch": "Die heruntergeladene Datei passt nicht zum signierten Update.",
+    "save_failed": "Das Update konnte nicht gespeichert werden: {error}",
+    "start_failed": "Das Update konnte nicht gestartet werden: {error}",
+    "not_installed": "Das Update wurde nicht installiert. Versuche es erneut und erlaube dem Installationsprogramm, Änderungen vorzunehmen, wenn Windows nachfragt.",
+    "did_not_start": "Das Update ist nicht gestartet.",
+    "no_app": "Das Update enthält keine App.",
+    "other_app": "Das Update enthält eine andere App.",
+    "no_team": "Diese Magnetite-App ist nicht von einem Entwicklerteam signiert. Lade das Update von der Release-Seite herunter.",
+    "not_ours": "Das Update ist nicht von den Magnetite-Entwicklern signiert.",
+    "not_notarized": "macOS akzeptiert dieses Update nicht, weil es nicht notarisiert ist. Lade es von der Release-Seite herunter.",
+    "move_aside_failed": "Die alte App konnte nicht beiseitegelegt werden: {error}",
+    "swap_failed": "Die neue App konnte nicht eingesetzt werden: {error}",
+    "swap_failed_stranded": "Die neue App konnte nicht eingesetzt werden: {error}. Magnetite liegt jetzt unter {path}. Lege es von Hand an seinen alten Ort zurück.",
+    "still_marked": "Das Update konnte nicht vorbereitet werden (es ist weiterhin als Download markiert). Lade es von der Release-Seite herunter.",
+    "no_identifier": "Die App im Update hat keine Kennung.",
+    "no_software_centre": "Kein Softwarecenter gefunden.",
+    "open_failed": "{name} konnte nicht geöffnet werden: {error}"
+  }
+}

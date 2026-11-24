@@ -1,0 +1,34 @@
+{
+  "kind": {
+    "camera": "Kamera",
+    "microphone": "Mikrofon",
+    "location": "Standort",
+    "notifications": "Mitteilungen",
+    "popups": "Pop-ups und Weiterleitungen",
+    "clipboard": "Zwischenablage"
+  },
+  "profile": {
+    "label": "Profil",
+    "hint": "Jedes Profil merkt sich eigene Entscheidungen."
+  },
+  "unread": {
+    "label": "Die Berechtigungen konnten nicht gelesen werden",
+    "hint": "Die Angaben unten sind möglicherweise nicht aktuell."
+  },
+  "unchanged": {
+    "label": "{permission} für {site} konnte nicht geändert werden",
+    "hint": "Es wurde nichts geändert."
+  },
+  "empty": {
+    "label": "Keine Website hat eine eigene Einstellung",
+    "hint": "Websites, die die Kamera, das Mikrofon, deinen Standort oder Mitteilungen nutzen möchten, fragen zuerst nach. Deine Antworten erscheinen hier, wo du sie ändern oder zurücknehmen kannst."
+  },
+  "for_site": "{permission} für {site}",
+  "allow": "Erlauben",
+  "block": "Blockieren",
+  "reset": {
+    "popups": "Wieder blockiert, wie bei jeder Website",
+    "ask": "Die Website fragt erneut",
+    "label": "{permission} für {site} zurücksetzen"
+  }
+}
