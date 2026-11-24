@@ -183,7 +183,7 @@ pub(super) enum UiCommand {
         #[serde(default)]
         id: Option<String>,
     },
-    /// System share menu for a tab's page at a point of the sidebar.
+    /// System share menu for a tab's page at (`x`, `y`) on the screen.
     Share {
         id: String,
         x: f64,
@@ -687,6 +687,7 @@ pub(super) enum UiCommand {
         notify: bool,
     },
     CaptureSave,
+    /// System share menu for the last capture at (`x`, `y`) on the screen.
     CaptureShare {
         x: f64,
         y: f64,
@@ -1077,6 +1078,21 @@ impl MagnetiteApp {
                 Err("That profile is gone.".into())
             }
         })
+    }
+
+    /// Show the top bar and dock the sidebar as `appearance` has them. The
+    /// side changes before the bar goes and after it comes, so no window is
+    /// laid out with the sidebar on the right and no bar for the window's
+    /// buttons.
+    pub(super) fn apply_layout(engine: &Engine, appearance: &crate::state::Appearance) {
+        let side = appearance.docked_side();
+        if appearance.top_bar {
+            engine.set_top_bar_visible(true);
+            engine.set_sidebar_side(side);
+        } else {
+            engine.set_sidebar_side(side);
+            engine.set_top_bar_visible(false);
+        }
     }
 
     pub(super) fn handle_command(&self, engine: &Engine, cmd: UiCommand) -> Result<Value, String> {
@@ -2111,7 +2127,7 @@ impl MagnetiteApp {
                     Ok::<_, String>((settings, code_changed))
                 })?;
                 engine.set_sidebar_width(settings.appearance.sidebar_width);
-                engine.set_top_bar_visible(settings.appearance.top_bar);
+                Self::apply_layout(engine, &settings.appearance);
                 engine.set_page_frame(settings.appearance.page_frame);
                 engine
                     .set_chrome_toolbar(settings.chrome_toolbar || engine.config().chrome_toolbar);
@@ -2187,12 +2203,13 @@ impl MagnetiteApp {
             }
             UiCommand::ToggleSidebar => self.handle_shortcut(engine, Shortcut::ToggleSidebar),
             UiCommand::ToggleTopBar => {
-                let on = self.with_state(|s| {
+                // A sidebar on the right goes left with the bar, and back.
+                let appearance = self.with_state(|s| {
                     let a = &mut s.settings.appearance;
                     a.top_bar = !a.top_bar;
-                    a.top_bar
+                    a.clone()
                 });
-                engine.set_top_bar_visible(on);
+                Self::apply_layout(engine, &appearance);
                 self.push_state(engine);
             }
             UiCommand::WindowMinimize => engine.minimize_frame(),

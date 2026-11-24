@@ -446,6 +446,8 @@ export interface Appearance {
   sidebar_width: number;
   /** Navigation, address and window buttons in a bar across the top. */
   top_bar: boolean;
+  /** The side the sidebar is docked on; the right counts only with the top bar (`dockedSide`). */
+  sidebar_side: SidebarSide;
   /** A row of extension icons below the sidebar's address, in place of the icons in its title band. */
   extension_bar: boolean;
   /** When the frame shows around the pages (`windowed`: not in full screen); without it they reach the window's edges. */
@@ -453,6 +455,31 @@ export interface Appearance {
   /** How each space looks beyond its colour, by space id; a space without an entry has `DEFAULT_LOOK`. Kept on this device. */
   looks: Record<Id, SpaceLook>;
 }
+
+/** A side of the window the sidebar can be docked on. */
+export type SidebarSide = "left" | "right";
+
+/**
+ * The side the sidebar is docked on now: the chosen one with the top bar on,
+ * the left without it, where the window's buttons need the sidebar's top
+ * band (`Appearance::docked_side`).
+ */
+export const dockedSide = (a: Pick<Appearance, "top_bar" | "sidebar_side">): SidebarSide => (a.top_bar ? a.sidebar_side : "left");
+
+/**
+ * The layouts Settings and the first start offer: where back, forward and
+ * the address sit, and with the top bar the side of the sidebar.
+ */
+export const LAYOUTS = {
+  sidebar: { top_bar: false, sidebar_side: "left" },
+  top_bar: { top_bar: true, sidebar_side: "left" },
+  top_bar_right: { top_bar: true, sidebar_side: "right" },
+} as const satisfies Record<string, Pick<Appearance, "top_bar" | "sidebar_side">>;
+export type Layout = keyof typeof LAYOUTS;
+
+/** Which of the `LAYOUTS` appearance `a` has. */
+export const layoutOf = (a: Pick<Appearance, "top_bar" | "sidebar_side">): Layout =>
+  !a.top_bar ? "sidebar" : dockedSide(a) === "right" ? "top_bar_right" : "top_bar";
 
 /** One space's look beyond its colour. */
 export interface SpaceLook {
@@ -507,6 +534,7 @@ export type Command =
   | { cmd: "extension_options"; id: string }
   | { cmd: "go_forward" }
   | { cmd: "reload"; id?: Id }
+  /** The system's share menu at (`x`, `y`) on the screen (`screenX`, `screenY`). */
   | { cmd: "share"; id: Id; x: number; y: number }
   /** `notify`: the sidebar shows the result too (for a sender that closes at once). */
   | { cmd: "copy_link"; variant: LinkVariant; notify?: boolean }
@@ -519,6 +547,7 @@ export type Command =
   | { cmd: "capture_cancel" }
   | { cmd: "capture_copy"; notify?: boolean }
   | { cmd: "capture_save" }
+  /** As `share`, for the last capture. */
   | { cmd: "capture_share"; x: number; y: number }
   | { cmd: "capture_dismiss" }
   | { cmd: "site_permissions" }
@@ -1077,6 +1106,27 @@ const captures = signal<CaptureEvent>();
 const swipes = signal();
 const records = signal();
 const pageCards = cached<PageCards>();
+
+/**
+ * Where this page's top left corner lies on the screen, as the last pointer
+ * event over it showed. `window.screenX` and `screenY` give the corner of the
+ * whole window, where a page docked inside the frame (the sidebar on the
+ * right or below the top bar) does not begin.
+ */
+let pageOrigin: { x: number; y: number } | null = null;
+addEventListener("pointermove", (e) => (pageOrigin = { x: e.screenX - e.clientX, y: e.screenY - e.clientY }), { capture: true, passive: true });
+
+/**
+ * The point on the screen where what click `e` opens belongs (the share
+ * menu): the pointer's, or for a click made with the keyboard, which has no
+ * pointer (`detail` 0), the middle of the clicked element's bottom edge.
+ */
+export function screenPoint(e: { detail: number; screenX: number; screenY: number; currentTarget: Element }) {
+  if (e.detail > 0) return { x: e.screenX, y: e.screenY };
+  const r = e.currentTarget.getBoundingClientRect();
+  const origin = pageOrigin ?? { x: window.screenX, y: window.screenY };
+  return { x: origin.x + r.left + r.width / 2, y: origin.y + r.bottom };
+}
 
 /**
  * Keep the window's size where the styles read it (`--win-w`, `--win-h`):

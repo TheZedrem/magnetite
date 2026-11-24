@@ -76,8 +76,8 @@ function snoozeMenu(tab: TabItem, onCustom: () => void): MenuItem[] {
 const SNOOZE_HOVER_MS = 400;
 
 /**
- * Right-click menu of a tab; `at` is the click point (the share menu opens
- * there). `smart`: an item its smart folder got from its source.
+ * Right-click menu of a tab; `at` is the click point on the screen (the share
+ * menu opens there). `smart`: an item its smart folder got from its source.
  */
 export function tabMenu(ctx: RowContext, tab: TabItem, section: Section, at: { x: number; y: number }, smart = false): MenuItem[] {
   const items: MenuItem[] = [];
@@ -325,7 +325,7 @@ function Favorites({ ctx, list, title }: { ctx: RowContext; list: FavoriteList; 
                 "data-unloaded": !rt?.loaded || undefined,
                 "data-shared": rt?.shared || undefined,
                 onClick: () => send(t.panel ? { cmd: "toggle_web_panel", id: t.id } : { cmd: "activate_tab", id: t.id }),
-                onContextMenu: (e: React.MouseEvent) => { e.preventDefault(); ctx.openMenu(e.clientX, e.clientY, tabMenu(ctx, t, "favorites", { x: e.clientX, y: e.clientY })); },
+                onContextMenu: (e: React.MouseEvent) => { e.preventDefault(); ctx.openMenu(e.clientX, e.clientY, tabMenu(ctx, t, "favorites", { x: e.screenX, y: e.screenY })); },
                 title: [t.title, title, t.panel && "panel", rt?.shared && "being shared"].filter(Boolean).join(" · "),
                 children: <Favicon url={t.url} src={rt?.favicon} loading={rt?.loading} />,
               };
@@ -526,7 +526,7 @@ const TabRowInner = memo(
         onMouseLeave={() => setJustClosed(false)}
         onContextMenu={(e) => {
           e.preventDefault();
-          ctx.openMenu(e.clientX, e.clientY, tabMenu(ctx, tab, section, { x: e.clientX, y: e.clientY }, snoozable));
+          ctx.openMenu(e.clientX, e.clientY, tabMenu(ctx, tab, section, { x: e.screenX, y: e.screenY }, snoozable));
         }}
         title={tab.url}
         data-folder={folderId}
