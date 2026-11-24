@@ -297,12 +297,7 @@ impl EngineDelegate for MagnetiteApp {
                         {
                             self.activate_space(engine, space);
                         }
-                        let tab = self.open_url_from(engine, &url, background, source, context);
-                        if opens == NewTabLinks::Load
-                            && let Some(tab) = &tab
-                        {
-                            self.load_out_of_sight(engine, tab);
-                        }
+                        let tab = self.open_new_tab(engine, &url, opens, source, context);
                         // Asked for in front is not always shown: a tab of
                         // the hidden private space stays behind.
                         tab.is_some_and(|t| self.with_state(|s| s.active_tab_id() == Some(&t)))

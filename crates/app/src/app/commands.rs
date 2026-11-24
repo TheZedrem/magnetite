@@ -161,6 +161,11 @@ pub(super) enum UiCommand {
     },
     GoBack,
     GoForward,
+    /// Middle click on back (`-1`), reload (`0`) or forward (`1`): that page
+    /// of the history of the page in front opens in a new tab.
+    OpenHistoryTab {
+        step: i32,
+    },
     /// Open an extension (its popup) for the page in front.
     OpenExtension {
         id: String,
@@ -1194,6 +1199,7 @@ impl MagnetiteApp {
             // The page in front, a peek included, like the menu bar's items.
             UiCommand::GoBack => self.page_command(engine, Shortcut::Back),
             UiCommand::GoForward => self.page_command(engine, Shortcut::Forward),
+            UiCommand::OpenHistoryTab { step } => self.open_history_tab(engine, step),
             UiCommand::Reload { id: None } => self.page_command(engine, Shortcut::Reload),
             UiCommand::Reload { id: Some(id) } => {
                 if let Some(c) = self.content_of(&id) {

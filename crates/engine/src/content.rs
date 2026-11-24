@@ -1,6 +1,8 @@
 //! Content windows: one frameless child window per loaded tab, and the
 //! top-level windows of mini windows (`mini.rs`).
 
+use std::sync::{Arc, Mutex};
+
 use cef::*;
 
 use magnetite_core::split::{Bounds, SplitNode};
@@ -1246,6 +1248,25 @@ impl Engine {
             b.go_forward();
         }
     }
+    /// The address `step` entries away from the current one in page `id`'s
+    /// history: `-1` the page back would go to, `1` forward, `0` the page
+    /// itself. `None` past either end, and where the engine does not tell
+    /// (back and forward of a system page on Windows).
+    pub fn content_history_url(&self, id: ContentId, step: i32) -> Option<String> {
+        if self.is_system_page(id) {
+            return crate::system::backend::history_url(id, step);
+        }
+        let host = self.content_browser(id)?.host()?;
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        // CEF visits the entries before it returns: on the UI thread, where
+        // this runs, it does not post the visit.
+        let mut visitor = HistoryVisitor::new(seen.clone());
+        host.navigation_entries(Some(&mut visitor), 0);
+        let entries = std::mem::take(&mut *seen.lock().ok()?);
+        let current = entries.iter().position(|(_, current)| *current)?;
+        let at = current.checked_add_signed(isize::try_from(step).ok()?)?;
+        entries.into_iter().nth(at).map(|(url, _)| url)
+    }
     pub fn content_reload(&self, id: ContentId) {
         if self.is_system_page(id) {
             crate::system::backend::reload(id);
@@ -1994,6 +2015,24 @@ wrap_panel_delegate! {
         }
     }
     impl PanelDelegate {}
+}
+
+wrap_navigation_entry_visitor! {
+    // Collects a page's history, in order: each entry's address and
+    // whether it is the current one (`content_history_url`).
+    struct HistoryVisitor {
+        seen: Arc<Mutex<Vec<(String, bool)>>>,
+    }
+    impl NavigationEntryVisitor {
+        fn visit(&self, entry: Option<&mut NavigationEntry>, current: ::std::os::raw::c_int, _index: ::std::os::raw::c_int, _total: ::std::os::raw::c_int) -> ::std::os::raw::c_int {
+            let Some(entry) = entry else { return 1 };
+            let url = CefString::from(&entry.url()).to_string();
+            if let Ok(mut seen) = self.seen.lock() {
+                seen.push((url, current != 0));
+            }
+            1
+        }
+    }
 }
 
 #[cfg(test)]
