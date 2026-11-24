@@ -1,10 +1,10 @@
 // Settings → About: version and updates, project links, licences.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 // `?url`: the file's address as a string in every bundler (the website's
 // live demo runs a copy of this code and builds it with Astro).
 import appIcon from "../assets/icon.png?url";
 import { BugIcon, CodeIcon, ExternalIcon, GlobeIcon, NotesIcon, PrivacyIcon, type IconComponent } from "../Icons";
-import { onUpdate, send, type UpdateInfo } from "../bridge";
+import { onUpdate, send, type SystemPackage, type UpdateInfo } from "../bridge";
 import { Field, Group, Toggle } from "./fields";
 import type { Info, SettingsPatch } from "./types";
 
@@ -63,14 +63,25 @@ export function About({ info, update }: { info: Info; update: (patch: SettingsPa
   );
 }
 
-/** Update status with "Check now", and the automatic check switch. */
+/**
+ * Update status with "Check now", and the automatic check switch. An rpm or
+ * deb install checks only on "Check now", and shows how its system installs
+ * a newer version (`SystemUpdateDialog`).
+ */
 function Updates({ checkUpdates, update }: { checkUpdates: boolean; update: (patch: SettingsPatch) => void }) {
   const [u, setU] = useState<UpdateInfo | null>(null);
+  const [guide, setGuide] = useState(false);
+  // Where focus goes when the dialog closes: "Check now" is gone by then.
+  const howTo = useRef<HTMLButtonElement>(null);
   useEffect(() => onUpdate(setU), []);
   const st = u?.status;
   const checkNow = () => {
     setU((x) => x && { ...x, status: { state: "checking" } });
-    send({ cmd: "check_updates" }).then((r) => r.status && window.__magnetite.update(r));
+    send({ cmd: "check_updates" }).then((r) => {
+      if (!r.status) return;
+      window.__magnetite.update(r);
+      if (r.status.state === "system_update") setGuide(true);
+    });
   };
   const line =
     !st || st.state === "idle" ? "Not checked yet."
@@ -79,9 +90,12 @@ function Updates({ checkUpdates, update }: { checkUpdates: boolean; update: (pat
     : st.state === "checking" ? "Checking…"
     : st.state === "up_to_date" ? `Magnetite is up to date. Last checked ${new Date(st.checked_at * 1000).toLocaleString()}.`
     : st.state === "available" ? `Magnetite ${st.version} is available.`
+    : st.state === "system_update" ? `Magnetite ${st.version} is available. Your system's updates install it.`
     : st.state === "installing" ? `Installing Magnetite ${st.version}… Magnetite restarts when it is ready.`
+    : st.state === "check_failed" ? `The last check failed: ${st.error}`
+    // A system package's only failure is its restart, which says so.
     : u?.system ? st.error
-    : `The last check failed: ${st.error}`;
+    : `The update was not installed: ${st.error}`;
   return (
     <Group>
       <div className="set-row" data-search-row>
@@ -95,12 +109,27 @@ function Updates({ checkUpdates, update }: { checkUpdates: boolean; update: (pat
               <button className="btn ghost" onClick={() => send({ cmd: "open_update_page" })}>What's new</button>
               <button className="btn primary" onClick={() => send({ cmd: "install_update" })}>{st.installable ? "Restart to update" : "Download"}</button>
             </div>
+          ) : st?.state === "system_update" ? (
+            <div className="flex shrink-0 gap-2">
+              <button className="btn ghost" onClick={() => send({ cmd: "open_update_page" })}>What's new</button>
+              <button ref={howTo} className="btn primary" onClick={() => setGuide(true)}>How to update</button>
+            </div>
           ) : (
-            <button className="btn shrink-0" disabled={st?.state === "checking" || st?.state === "installing" || st?.state === "unavailable" || u?.system} onClick={checkNow}>Check now</button>
+            <button className="btn shrink-0" disabled={st?.state === "checking" || st?.state === "installing" || st?.state === "unavailable"} onClick={checkNow}>Check now</button>
           )}
         </div>
       </div>
-      {/* A system package never asks GitHub: the switch would do nothing. */}
+      {guide && st?.state === "system_update" && u?.system && (
+        <SystemUpdateDialog
+          version={st.version}
+          system={u.system}
+          onClose={() => {
+            setGuide(false);
+            howTo.current?.focus();
+          }}
+        />
+      )}
+      {/* A system package asks only on "Check now": the switch would do nothing. */}
       {!u?.system && <Toggle
         label="Check for updates automatically"
         hint="At start and once a day Magnetite asks the project's release page on GitHub for a new version: no identifiers, no usage data. Before it installs an update, Magnetite checks it against the release manifest the project's key signed."
@@ -108,5 +137,91 @@ function Updates({ checkUpdates, update }: { checkUpdates: boolean; update: (pat
         onChange={(v) => update({ check_updates: v })}
       />}
     </Group>
+  );
+}
+
+/**
+ * How to install an update that the system's package manager brings: in
+ * its software centre, or with the command for a terminal. Esc, Close or a
+ * click beside it closes it; it opens with Close focused. It stays open
+ * once the software centre is started: that one may not come to the front
+ * (GNOME then only says it is ready), and the command stays at hand.
+ */
+function SystemUpdateDialog({ version, system, onClose }: { version: string; system: SystemPackage; onClose: () => void }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
+  // Pressed beside the dialog: a drag that only starts or ends there
+  // (selecting the command) does not close it.
+  const pressedBeside = useRef(false);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    ref.current?.showModal();
+    // showModal focuses the first button; Enter should not start a program.
+    closeButton.current?.focus();
+  }, []);
+  const close = () => ref.current?.close();
+  const { centre, command } = system;
+  const openCentre = () => send({ cmd: "open_software_centre" }).then(() => setError(null), (e: Error) => setError(e.message));
+  // The backdrop is the dialog element itself, outside its box.
+  const beside = (e: MouseEvent<HTMLDialogElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+  };
+  const copy = () => {
+    if (!command) return;
+    const copying = navigator.clipboard?.writeText(command) ?? Promise.reject(new Error("no clipboard"));
+    copying.then(
+      () => {
+        setError(null);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      },
+      () => setError("Could not copy the command. Select it and copy it by hand."),
+    );
+  };
+  return (
+    <dialog
+      ref={ref}
+      className="set-dialog"
+      aria-labelledby="system-update-title"
+      onClose={onClose}
+      onMouseDown={(e) => (pressedBeside.current = beside(e))}
+      onClick={(e) => {
+        // Reset each time: a key's click has no position of its own.
+        const pressed = pressedBeside.current;
+        pressedBeside.current = false;
+        if (pressed && beside(e)) close();
+      }}
+    >
+      <div className="set-dialog-body">
+        <div>
+          <div className="set-label" id="system-update-title">Magnetite {version} is available</div>
+          <p className="set-hint">
+            {centre ? `${centre} installs it with your system's other updates.` : "Your system installs it with its other updates."} If it is not listed yet, let it look for updates again.
+          </p>
+        </div>
+        {centre && (
+          <div>
+            <button className="btn primary" onClick={openCentre}>Open {centre}</button>
+          </div>
+        )}
+        {command && (
+          <div>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="set-hint">{centre ? "Or in a terminal:" : "In a terminal:"}</p>
+              <button className="btn sm ghost" onClick={copy}>{copied ? "Copied" : "Copy"}</button>
+            </div>
+            <code className="set-command">{command}</code>
+          </div>
+        )}
+        {error && <p className="set-hint" role="alert">{error}</p>}
+        <p className="set-hint">Once it is installed, Magnetite offers a restart.</p>
+        <div className="flex justify-end gap-2">
+          <button className="btn ghost" onClick={() => send({ cmd: "open_update_page" })}>What's new</button>
+          <button ref={closeButton} className="btn" onClick={close}>Close</button>
+        </div>
+      </div>
+    </dialog>
   );
 }

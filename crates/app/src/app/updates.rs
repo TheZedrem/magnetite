@@ -23,11 +23,15 @@ pub(super) struct Updater {
     waiting: Vec<ReplyTicket>,
     /// Installed from an rpm or deb: the package manager updates it.
     system: Option<update::SystemBinary>,
+    /// Where a system package's user installs its updates, if Magnetite
+    /// knows the desktop's software centre.
+    centre: Option<update::SoftwareCentre>,
 }
 
 impl Updater {
     pub(super) fn new() -> Self {
         let system = update::SystemBinary::detect();
+        let centre = system.as_ref().and_then(|_| update::SoftwareCentre::find());
         Self {
             status: if system.is_some() {
                 update::Status::System
@@ -40,7 +44,31 @@ impl Updater {
             announced: None,
             waiting: Vec::new(),
             system,
+            centre,
         }
+    }
+
+    /// A check must not change the status: an install is under way, or the
+    /// package manager installed the update and its restart is offered.
+    fn keeps_status(&self) -> bool {
+        matches!(self.status, update::Status::Installing { .. })
+            || (self.system.is_some() && self.found.is_some())
+    }
+
+    /// Offer a system package's restart again after it failed (the version
+    /// the package manager installed is still there); true if it did.
+    fn offer_restart_again(&mut self) -> bool {
+        let (Some(_), Some(m), update::Status::Failed { .. }) =
+            (&self.system, &self.found, &self.status)
+        else {
+            return false;
+        };
+        self.status = update::Status::Available {
+            version: m.version.clone(),
+            notes_url: m.notes_url.clone(),
+            installable: true,
+        };
+        true
     }
 }
 
@@ -78,12 +106,10 @@ impl MagnetiteApp {
     }
 
     /// Offer a restart once the package manager put a newer version in
-    /// place of the running one.
+    /// place of the running one, and name the newest one if it does so
+    /// again before the restart.
     fn system_update_tick(&self, engine: &Engine) {
         let version = self.with_updater(|u| {
-            if u.found.is_some() {
-                return None;
-            }
             let version = u.system.as_mut()?.replaced()?;
             let notes_url = format!("{}/releases/tag/v{version}", env!("CARGO_PKG_REPOSITORY"));
             u.status = update::Status::Available {
@@ -106,19 +132,31 @@ impl MagnetiteApp {
     }
 
     /// Look for a new release; `ticket` gets the status when done. A system
-    /// package never asks: its status stays.
+    /// package asks only through here ("Check now"): its package manager
+    /// installs what the check finds.
     pub(super) fn check_updates(&self, engine: &Engine, ticket: Option<ReplyTicket>) {
-        // An install under way keeps its status (and the release it found).
-        if self.with_updater(|u| {
-            u.system.is_some() || matches!(u.status, update::Status::Installing { .. })
-        }) {
+        // The package manager may have installed it already, also before a
+        // restart that failed.
+        if self.with_updater(|u| u.system.is_some()) {
+            self.system_update_tick(engine);
+            if self.with_updater(Updater::offer_restart_again) {
+                self.show_update(engine);
+            }
+        }
+        // An install under way keeps its status (and the release it found),
+        // as does a system package waiting for its restart.
+        if self.with_updater(|u| u.keeps_status()) {
             if let Some(t) = ticket {
                 engine.finish_reply(t, Ok(self.update_json().to_string()));
             }
             return;
         }
-        let Some(source) = update::Source::configured() else {
-            self.with_updater(|u| u.status = update::Status::Unavailable);
+        let system = self.with_updater(|u| u.system.is_some());
+        let Some(source) = update::Source::configured(system) else {
+            // A system package is still updated, by its package manager.
+            if !system {
+                self.with_updater(|u| u.status = update::Status::Unavailable);
+            }
             if let Some(t) = ticket {
                 engine.finish_reply(t, Ok(self.update_json().to_string()));
             }
@@ -149,13 +187,25 @@ impl MagnetiteApp {
     fn update_checked(&self, engine: &Engine, result: Result<update::Manifest, String>) {
         let (announce, waiting) = self.with_updater(|u| {
             // A check that ends during an install must not offer the update
-            // again: a second install would run over the first.
-            if matches!(u.status, update::Status::Installing { .. }) {
+            // again: a second install would run over the first. Nor may it
+            // take back the restart a system package offers.
+            if u.keeps_status() {
                 return (false, std::mem::take(&mut u.waiting));
             }
             u.last_check = now();
             u.found = None;
             u.status = match result {
+                // Its package manager installs it. `found` stays empty: it
+                // means the restart once that is done (`system_update_tick`).
+                Ok(m)
+                    if u.system.is_some()
+                        && update::newer(&m.version, env!("CARGO_PKG_VERSION")) =>
+                {
+                    update::Status::SystemUpdate {
+                        version: m.version,
+                        notes_url: m.notes_url,
+                    }
+                }
                 Ok(m) if update::newer(&m.version, env!("CARGO_PKG_VERSION")) => {
                     let package = update::platform(update::appimage().is_some());
                     let installable = update::can_install() && m.assets.contains_key(&package);
@@ -170,7 +220,7 @@ impl MagnetiteApp {
                 Ok(_) => update::Status::UpToDate {
                     checked_at: u.last_check,
                 },
-                Err(error) => update::Status::Failed { error },
+                Err(error) => update::Status::CheckFailed { error },
             };
             let announce = match &u.status {
                 update::Status::Available { version, .. }
@@ -288,15 +338,36 @@ impl MagnetiteApp {
 
     /// The release notes of the update found, in a new tab.
     pub(super) fn open_update_page(&self, engine: &Engine) {
-        let url = self.with_updater(|u| u.found.as_ref().map(|m| m.notes_url.clone()));
+        let url = self.with_updater(|u| match (&u.found, &u.status) {
+            (Some(m), _) => Some(m.notes_url.clone()),
+            (None, update::Status::SystemUpdate { notes_url, .. }) => Some(notes_url.clone()),
+            _ => None,
+        });
         if let Some(url) = url {
             self.open_url_from(engine, &url, false, url_policy::Source::Stored, None);
         }
     }
 
+    /// A system package's software centre, on its list of updates.
+    pub(super) fn open_software_centre(&self) -> Result<(), String> {
+        let centre = self.with_updater(|u| u.centre.clone());
+        let centre = centre.ok_or("No software centre found.")?;
+        centre
+            .open()
+            .map_err(|e| format!("Cannot open {}: {e}", centre.name))
+    }
+
     pub(super) fn update_json(&self) -> Value {
-        let (status, system) = self.with_updater(|u| (u.status.clone(), u.system.is_some()));
-        json!({ "status": status, "system": system, "version": env!("CARGO_PKG_VERSION") })
+        self.with_updater(|u| {
+            // How a system package gets its updates, for Settings.
+            let system = u.system.as_ref().map(|s| {
+                json!({
+                    "command": s.package.map(update::Package::command),
+                    "centre": u.centre.as_ref().map(|c| c.name),
+                })
+            });
+            json!({ "status": u.status, "system": system, "version": env!("CARGO_PKG_VERSION") })
+        })
     }
 
     /// Send the update status to the notification panel and to open
