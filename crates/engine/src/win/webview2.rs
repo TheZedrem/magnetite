@@ -1766,6 +1766,13 @@ pub(crate) fn address_of(id: ContentId) -> Option<String> {
     get(|u| unsafe { view.Source(u) }).filter(|u| is_web_address(u))
 }
 
+/// The address `step` entries away from the current one in page `id`'s
+/// history: only the page itself (`0`). WebView2 lists a page's history to
+/// no one, so back and forward (`-1`, `1`) are `None`.
+pub(crate) fn history_url(id: ContentId, step: i32) -> Option<String> {
+    (step == 0).then(|| address_of(id)).flatten()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

@@ -94,7 +94,9 @@ A tab like any other: in the sidebar with its title and icon, in its
 space, pinned or a favorite, in a split, a peek or a web panel, unloaded
 and archived as the others. Back, forward, reload and stop work, as do
 zoom (Settings' default zoom does not apply: it starts at 100 percent) and
-the page's own full screen.
+the page's own full screen. A middle click on back, forward or reload
+opens that page in a new tab (`sidebar.md`, "Layout"); on Windows only
+reload's does, since WebView2 tells no one but the page its history.
 
 - **Links.** A link that asks for a new tab or window opens one, in the
   engine its address belongs in, if the address is an `http://` or

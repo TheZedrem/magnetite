@@ -67,6 +67,9 @@ pub(crate) mod backend {
     pub(crate) fn address_of(_: ContentId) -> Option<String> {
         None
     }
+    pub(crate) fn history_url(_: ContentId, _: i32) -> Option<String> {
+        None
+    }
     // The signature of the backends, which keep the path.
     #[allow(clippy::needless_pass_by_value)]
     pub(crate) fn fetch_icon(_: &str, _: std::path::PathBuf) {}

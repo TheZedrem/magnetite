@@ -1214,6 +1214,27 @@ pub(crate) fn address_of(id: ContentId) -> Option<String> {
         .filter(|url| !url.is_empty())
 }
 
+/// The address `step` entries away from the current one in page `id`'s
+/// history (`-1` back, `0` the page itself, `1` forward); `None` past
+/// either end. The page itself is the address that failed while it shows
+/// the note about that, as reload loads it.
+pub(crate) fn history_url(id: ContentId, step: i32) -> Option<String> {
+    if step == 0 {
+        let failed = PAGES.with_borrow(|p| {
+            (p.get(&id)).and_then(|page| page.delegate.ivars().failed.borrow().clone())
+        });
+        return failed.or_else(|| address_of(id));
+    }
+    let view = view_of(id)?;
+    let index = isize::try_from(step).ok()?;
+    // SAFETY: a live view, on the main thread.
+    let item = unsafe { view.backForwardList().itemAtIndex(index) }?;
+    // SAFETY: as above.
+    (unsafe { item.URL() }.absoluteString())
+        .map(|s| s.to_string())
+        .filter(|url| is_web_address(url))
+}
+
 /// Seconds a load past the cache may wait: `NSURLRequest`'s default.
 const LOAD_TIMEOUT: f64 = 60.0;
 

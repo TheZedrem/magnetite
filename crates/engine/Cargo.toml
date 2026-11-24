@@ -57,7 +57,7 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
 # (`system.rs`, `mac/webkit.rs`).
 objc2-web-kit = { version = "0.3", default-features = false, features = [
     "std", "block2", "objc2-app-kit", "objc2-core-foundation",
-    "WKFrameInfo", "WKHTTPCookieStore", "WKNavigation", "WKNavigationAction", "WKNavigationDelegate", "WKPreferences", "WKUIDelegate",
+    "WKBackForwardList", "WKBackForwardListItem", "WKFrameInfo", "WKHTTPCookieStore", "WKNavigation", "WKNavigationAction", "WKNavigationDelegate", "WKPreferences", "WKUIDelegate",
     "WKWebView", "WKWebViewConfiguration", "WKWebsiteDataRecord", "WKWebsiteDataStore", "WKWindowFeatures",
 ] }
 

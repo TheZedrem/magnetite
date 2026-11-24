@@ -1250,8 +1250,12 @@ impl Engine {
     }
     /// The address `step` entries away from the current one in page `id`'s
     /// history: `-1` the page back would go to, `1` forward, `0` the page
-    /// itself. `None` past either end, and for a system page.
+    /// itself. `None` past either end, and where the engine does not tell
+    /// (back and forward of a system page on Windows).
     pub fn content_history_url(&self, id: ContentId, step: i32) -> Option<String> {
+        if self.is_system_page(id) {
+            return crate::system::backend::history_url(id, step);
+        }
         let host = self.content_browser(id)?.host()?;
         let seen = Arc::new(Mutex::new(Vec::new()));
         // CEF visits the entries before it returns: on the UI thread, where
