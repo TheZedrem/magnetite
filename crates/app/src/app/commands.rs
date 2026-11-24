@@ -13,7 +13,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::state::import::{SpaceChoice, choose_spaces, preview};
-use crate::state::{AppState, ArcImport, SidebarEffect, SpaceProfile, icon_image_ok, new_id, now};
+use crate::state::{AppState, ArcImport, ChosenProfile, SidebarEffect, icon_image_ok, new_id};
 use crate::sync::{self, Job};
 use crate::{capture, downloads, lock, url_policy};
 
@@ -252,7 +252,7 @@ pub(super) enum UiCommand {
         #[serde(default)]
         stay: bool,
         #[serde(default)]
-        profile: Option<SpaceProfile>,
+        profile: Option<ChosenProfile>,
     },
     /// Give space `id` another name (an empty one keeps its name), another
     /// glyph, or both. A glyph takes the place of the space's own picture
@@ -796,10 +796,18 @@ pub(super) enum UiCommand {
         id: String,
         index: usize,
     },
-    /// A new favorite for address `url`, last in the main profile's list.
+    /// A new favorite for address `url`, last in the list of `profile`
+    /// (none: the main profile). Answers with its id and its profile's.
     AddFavorite {
         url: String,
+        #[serde(default)]
+        profile: Option<ChosenProfile>,
     },
+    /// Put the path of the data folder on the clipboard (Settings → Data
+    /// and privacy shows it).
+    CopyDataDir,
+    /// Show the data folder in the system's file manager.
+    OpenDataDir,
     /// The pinned tabs of space `space` as bookmarks of that space; with
     /// `remove` they then leave Pinned (closed, into the archive).
     PinnedToBookmarks {
@@ -1840,7 +1848,7 @@ impl MagnetiteApp {
                 self.push_state(engine);
                 self.tell_settings_pages(engine);
             }
-            UiCommand::AddFavorite { url } => {
+            UiCommand::AddFavorite { url, profile } => {
                 let url = self.normalise_url(&url);
                 if url.starts_with("magnetite://")
                     || !url_policy::allowed(&url, url_policy::Source::User)
@@ -1850,25 +1858,21 @@ impl MagnetiteApp {
                 // Named by its site until its page says what it is called.
                 let site = url.split_once("://").map_or(url.as_str(), |(_, rest)| rest);
                 let host = site.split(['/', '?', '#']).next().unwrap_or(site);
-                self.with_state(|s| {
-                    let profile_id = s.default_profile_id();
-                    let favorite = TabItem {
-                        home_url: Some(url.clone()),
-                        created_at: Some(now()),
-                        ..TabItem::new(new_id(), &url, host)
-                    };
-                    let lists = &mut s.sidebar.favorites;
-                    match lists.iter_mut().find(|f| f.profile_id == profile_id) {
-                        Some(list) => list.items.push(favorite),
-                        None => lists.push(magnetite_core::FavoriteSet {
-                            profile_id,
-                            items: vec![favorite],
-                        }),
-                    }
-                    s.normalise_favorites();
-                });
+                let (id, profile) = self.with_state(|s| s.add_favorite(&url, host, profile))?;
                 self.push_state(engine);
                 self.tell_settings_pages(engine);
+                return Ok(json!({ "id": id, "profile": profile }));
+            }
+            UiCommand::CopyDataDir => {
+                let copied = engine.copy_text(&self.data_dir.to_string_lossy());
+                return Ok(json!({ "ok": copied }));
+            }
+            UiCommand::OpenDataDir => {
+                // A folder given relative to where Magnetite was started.
+                let folder = std::path::absolute(&self.data_dir)
+                    .map_err(|_| "The data folder could not be opened.".to_string())?;
+                downloads::open(&folder, false)
+                    .map_err(|_| "The data folder could not be opened.".to_string())?;
             }
             UiCommand::PinnedToBookmarks { space, remove } => {
                 if self.with_state(|s| s.space(&space).is_none() || s.is_private_space(&space)) {
