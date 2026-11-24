@@ -321,13 +321,16 @@ impl AppState {
     pub(super) fn saved_form(&self) -> Persisted {
         let sidebar = self.lasting_sidebar();
         // Only of the tabs that are saved: a private tab's icon would tell
-        // which site it had open.
+        // which site it had open. A `data:` icon is a private page's own
+        // (`cache_favicon`): a saved pinned tab of a private profile keeps
+        // its home page only.
         let saved: HashSet<&Id> = sidebar.all_tabs().map(|t| &t.id).collect();
         let favicons = self
             .runtime
             .iter()
             .filter(|(id, _)| saved.contains(id))
             .filter_map(|(id, r)| r.favicon.clone().map(|f| (id.clone(), f)))
+            .filter(|(_, f)| !f.starts_with("data:"))
             .collect();
         let (first, windows) = self.lasting_windows();
         Persisted {
@@ -688,6 +691,25 @@ mod tests {
         assert_eq!(loaded.active_tab_id(), Some("b"));
         assert_eq!(loaded.reopen, vec![]);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_saved_tab_keeps_its_site_icon_but_never_a_data_url_one() {
+        let mut s = state();
+        let icon = |url: &str| TabRuntime {
+            favicon: Some(url.into()),
+            ..Default::default()
+        };
+        s.runtime
+            .insert("p".into(), icon("https://example.org/favicon.ico"));
+        // What a private page's icon is: the picture itself, in memory only.
+        s.runtime
+            .insert("a".into(), icon("data:image/png;base64,iVBORw0KGgo="));
+        let saved = s.saved_form();
+        assert_eq!(
+            saved.favicons,
+            HashMap::from([("p".into(), "https://example.org/favicon.ico".into())])
+        );
     }
 
     #[test]

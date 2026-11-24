@@ -2,14 +2,18 @@
 //! it (the page already did) and we keep a PNG under
 //! `<data_dir>/favicons/<host>.png`. The sidebar shows it through
 //! `magnetite://ui/favicons/<host>.png`, so unloaded tabs and favorites get real
-//! icons without the sidebar ever contacting a site.
+//! icons without the sidebar ever contacting a site. Private pages keep
+//! nothing on disk: their icon goes to the sidebar as a `data:` URL instead.
 
 use std::path::{Path, PathBuf};
 
 use cef::*;
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as B64;
+
 use crate::engine::Engine;
-use crate::events::ContentId;
+use crate::events::{ContentId, EngineEvent};
 
 /// Cache key for a page URL: lowercase host without `www.`, restricted to
 /// characters that are safe in a file name. Matches `hostOf` in the UI.
@@ -32,10 +36,21 @@ pub fn cache_dir(data_dir: &Path) -> PathBuf {
 }
 
 impl Engine {
-    /// Download `icon_url` for content `id` and store it under the page's host.
+    /// Download `icon_url` for content `id` and store it under the page's
+    /// host; for a private page, hand it to the sidebar as a `data:` URL
+    /// (`FaviconChanged`) instead.
     pub(crate) fn cache_favicon(&self, id: ContentId, icon_url: &str) {
-        // Private pages leave nothing on disk.
-        if (self.lock().contents.get(&id)).is_none_or(|c| c.ephemeral) {
+        let Some(ephemeral) = self.lock().contents.get(&id).map(|c| c.ephemeral) else {
+            return;
+        };
+        if ephemeral {
+            // Private pages leave nothing on disk, and the sidebar must not
+            // fetch the icon itself (that would be the default profile's
+            // request): the page's own browser fetches it, in memory.
+            if let Some(host) = self.content_browser(id).and_then(|b| b.host()) {
+                let mut cb = SaveFavicon::new(Keep::Show(id));
+                host.download_image(Some(&CefString::from(icon_url)), 1, 64, 0, Some(&mut cb));
+            }
             return;
         }
         // A system page has no Chromium browser to fetch with.
@@ -62,14 +77,23 @@ impl Engine {
         let Some(key) = cache_key(&page) else { return };
         let Some(host) = browser.host() else { return };
         let path = cache_dir(&self.config().data_dir).join(format!("{key}.png"));
-        let mut cb = SaveFavicon::new(path);
+        let mut cb = SaveFavicon::new(Keep::Store(path));
         host.download_image(Some(&CefString::from(icon_url)), 1, 64, 0, Some(&mut cb));
     }
 }
 
+/// What a downloaded icon is for.
+#[derive(Clone)]
+enum Keep {
+    /// The disk cache, at this path (`cache_dir`).
+    Store(PathBuf),
+    /// The sidebar only, for the page with this id.
+    Show(ContentId),
+}
+
 wrap_download_image_callback! {
     struct SaveFavicon {
-        path: PathBuf,
+        keep: Keep,
     }
     impl DownloadImageCallback {
         fn on_download_image_finished(&self, _url: Option<&CefString>, status: ::std::os::raw::c_int, image: Option<&mut Image>) {
@@ -83,7 +107,13 @@ wrap_download_image_callback! {
             if bytes.is_empty() || png.data(Some(&mut bytes), 0) != bytes.len() {
                 return;
             }
-            store_icon(&self.path, &bytes);
+            match &self.keep {
+                Keep::Store(path) => store_icon(path, &bytes),
+                Keep::Show(id) => Engine::global().emit(EngineEvent::FaviconChanged {
+                    id: *id,
+                    url: Some(format!("data:image/png;base64,{}", B64.encode(&bytes))),
+                }),
+            }
         }
     }
 }

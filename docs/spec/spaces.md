@@ -171,7 +171,8 @@ favorites use keeps their logins apart from every space's.
 A private profile keeps its browsing off the disk: its Today tabs are not
 saved, synced or archived, its pinned tabs and favorites are saved with
 their home page only, its pages leave no history (`history.md`), and its
-icons are not cached (`docs/design/security.md`).
+icons are not cached or saved, only shown while its pages are open
+(`docs/design/security.md`).
 
 Persistent profiles can be renamed in Settings → Profiles, and deleted there
 once nothing uses them: no space, no favorite, no mini window, and no tab
