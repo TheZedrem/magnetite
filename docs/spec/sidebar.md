@@ -11,7 +11,10 @@ the rest.
 From top to bottom:
 
 1. **Title band**: window buttons, the sidebar button, pinned extensions
-   (`extensions.md`), back, forward and reload.
+   (`extensions.md`), back, forward and reload. A middle click on back or
+   forward opens the page it would go to in a new tab, and on reload the
+   page itself; such a tab opens as a page's link opened in a new tab does
+   ("Tab rows"), in the page's profile. The top bar's buttons do the same.
 2. **Address row**: site controls, the host of the current page and a
    copy-link button. A click on the host opens the command bar with the
    address (`command-bar.md`). An open peek shows its controls here instead.

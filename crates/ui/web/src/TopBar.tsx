@@ -62,9 +62,9 @@ export function TopBar() {
     >
       <div className={`flex shrink-0 items-center gap-0.5 ${IS_MAC ? "pl-[86px]" : "pl-2"}`}>
         <button className="ib no-drag" onClick={() => send({ cmd: "toggle_sidebar" })} title={`${state.sidebar_visible ? "Hide sidebar" : "Show sidebar"}${keysHint(state.keys, "toggle_sidebar")}`}><SidebarIcon /></button>
-        <button className="ib no-drag" disabled={!frontRt?.can_go_back} onClick={() => send({ cmd: "go_back" })} title={`Back (${keyLabel("⌘[", "Alt+←")})`}><Back /></button>
-        <button className="ib no-drag" disabled={!frontRt?.can_go_forward} onClick={() => send({ cmd: "go_forward" })} title={`Forward (${keyLabel("⌘]", "Alt+→")})`}><Forward /></button>
-        <button className="ib no-drag" disabled={!activeItem && !state.peek} onClick={() => send({ cmd: "reload" })} title={`Reload (${keyLabel("⌘R")})`}><Reload /></button>
+        <button className="ib no-drag" disabled={!frontRt?.can_go_back} onClick={() => send({ cmd: "go_back" })} onAuxClick={(e) => e.button === 1 && send({ cmd: "open_history_tab", step: -1 })} title={`Back (${keyLabel("⌘[", "Alt+←")})`}><Back /></button>
+        <button className="ib no-drag" disabled={!frontRt?.can_go_forward} onClick={() => send({ cmd: "go_forward" })} onAuxClick={(e) => e.button === 1 && send({ cmd: "open_history_tab", step: 1 })} title={`Forward (${keyLabel("⌘]", "Alt+→")})`}><Forward /></button>
+        <button className="ib no-drag" disabled={!activeItem && !state.peek} onClick={() => send({ cmd: "reload" })} onAuxClick={(e) => e.button === 1 && send({ cmd: "open_history_tab", step: 0 })} title={`Reload (${keyLabel("⌘R")})`}><Reload /></button>
       </div>
 
       {/* The address, or the peek's controls in the same place so nothing moves. */}

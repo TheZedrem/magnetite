@@ -537,6 +537,8 @@ export type Command =
   | { cmd: "pin_extension"; id: string; pinned: boolean; profile?: Id }
   | { cmd: "extension_options"; id: string }
   | { cmd: "go_forward" }
+  /** Middle click on back (-1), reload (0) or forward (1): that page of the front page's history in a new tab. */
+  | { cmd: "open_history_tab"; step: -1 | 0 | 1 }
   | { cmd: "reload"; id?: Id }
   /** The system's share menu at (`x`, `y`) on the screen (`screenX`, `screenY`). */
   | { cmd: "share"; id: Id; x: number; y: number }

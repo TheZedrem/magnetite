@@ -4,7 +4,7 @@
 use magnetite_core::sidebar::Section;
 use magnetite_engine::{ContentId, Engine, MemoryPressure, host_of};
 
-use crate::state::{AppState, ShowIn, TabOrder, folder_in_tree_mut, now};
+use crate::state::{AppState, NewTabLinks, ShowIn, TabOrder, folder_in_tree_mut, now};
 use crate::{lock, trace, url_policy};
 
 use super::{DOWNLOADS_URL, MagnetiteApp, WELCOME_URL, global};
@@ -753,6 +753,47 @@ impl MagnetiteApp {
         } else {
             self.activate_tab(engine, &tab);
         }
+    }
+
+    /// Open `url` as a new Today tab the way `opens` says: in front
+    /// (`Switch`), or behind the current tab, its page loading at once with
+    /// `Load`. The rest as `open_url_from`.
+    pub(super) fn open_new_tab(
+        &self,
+        engine: &Engine,
+        url: &str,
+        opens: NewTabLinks,
+        source: url_policy::Source,
+        context: Option<&str>,
+    ) -> Option<String> {
+        let background = opens != NewTabLinks::Switch;
+        let tab = self.open_url_from(engine, url, background, source, context)?;
+        if opens == NewTabLinks::Load {
+            self.load_out_of_sight(engine, &tab);
+        }
+        Some(tab)
+    }
+
+    /// Middle click on back, reload or forward: the page `step` entries
+    /// away in the history of the page in front (`-1` back, `0` the page
+    /// itself, `1` forward) opens in a new tab of its profile, as a page's
+    /// link opened in a new tab does (Settings → Links).
+    pub(super) fn open_history_tab(&self, engine: &Engine, step: i32) {
+        let Some(c) = self.focused_content(None) else {
+            return;
+        };
+        let Some(url) = engine.content_history_url(c, step) else {
+            return;
+        };
+        let context = engine.content_context(c);
+        let opens = self.with_state(|s| s.settings.new_tab_links);
+        self.open_new_tab(
+            engine,
+            &url,
+            opens,
+            url_policy::Source::Page,
+            context.as_deref(),
+        );
     }
 
     /// Give tab `id`, opened in the background, its page now, out of sight
