@@ -385,7 +385,9 @@ only.
 Icons: for a page in the default profile the sidebar shows the icon the page
 reported (its address is kept per tab in `state.json`). Otherwise it uses
 the local cache, `<data-dir>/favicons/<host>.png`, written when a page loads
-(never for a private profile). Without an icon the row shows the first
+(never for a private profile). A page of a private profile fetches its icon
+itself, in its own context, and the sidebar shows it from memory; it is
+not saved. Without an icon the row shows the first
 letter of the host. The sidebar never fetches the icon of a site that was
 not opened.
 

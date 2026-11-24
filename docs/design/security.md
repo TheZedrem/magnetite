@@ -101,8 +101,10 @@ from a context Magnetite did not make is not opened.
   (`adopt_sidebar`).
 - They leave no history: their pages are not recorded (`history.rs`,
   `record_visit`), in a tab or a peek.
-- Their favicons are not cached on disk, and the icon address of a tab
-  that is not saved is not saved either (`saved_form`).
+- Their favicons are not cached on disk. The page fetches its icon in its
+  own context and the sidebar gets it as a `data:` URL, in memory
+  (`cache_favicon`); such an icon is never saved, and neither is the icon
+  address of a tab that is not saved (`saved_form`).
 - The private space (`state/private.rs`) goes further: the space and its
   profiles are never saved or synced, and each tab the user opens there has
   an in-memory profile of its own; a page opened from such a tab runs in
