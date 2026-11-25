@@ -127,6 +127,10 @@ the row turns the icon into a back arrow that takes the page back.
   except an item a smart folder got from its source, which the next
   refresh would bring back. "Duplicate tab" opens the tab's
   address as a new Today tab; a favorite has "Duplicate favorite" instead.
+- With one other space, the row names it ("Move to Work"). With more,
+  "Move to another space" shows them as a list in the menu's place, below a
+  row back to the menu; past ten spaces the list scrolls. A menu taller
+  than the window starts at the window's top and scrolls.
 
 ## Shared tabs
 
@@ -206,7 +210,9 @@ Code: `crates/engine/src/tabshare.rs`, `tabshare_hook.js`;
   another page on screen, else the space's first tab). With none left, no
   tab is in front; a closed pinned tab does not load again by itself.
 - "Remove from favorites" and "Move to …" put the tab at the top of Today,
-  in the current space or the chosen one.
+  in the current space or the chosen one. Where the spaces use more than
+  one profile, each space to move to shows its profile in a small box
+  after its name, so two spaces of the same name can be told apart.
 - Moving does not reload the page, unless the tab lands in another
   profile: then it loads again there. A tab that enters Pinned or the favorites
   takes its current address as home page if it has none; a tab that enters
