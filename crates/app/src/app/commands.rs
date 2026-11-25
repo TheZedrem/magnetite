@@ -616,6 +616,12 @@ pub(super) enum UiCommand {
         id: String,
         name: String,
     },
+    /// Reorder the profiles: put `id` at place `index` of the lasting ones,
+    /// counted without it (Settings → Profiles).
+    MoveProfile {
+        id: String,
+        index: usize,
+    },
     /// Only unused, non-default profiles; their data is deleted at next start.
     DeleteProfile {
         id: String,
@@ -827,6 +833,12 @@ pub(super) enum UiCommand {
         url: String,
         #[serde(default)]
         profile: Option<ChosenProfile>,
+    },
+    /// Favorite `id` goes to address `url` from now on, and shows it
+    /// (Settings → Favorites, the favorite's page).
+    SetFavoriteAddress {
+        id: String,
+        url: String,
     },
     /// Put the path of the data folder on the clipboard (Settings → Data
     /// and privacy shows it).
@@ -1794,6 +1806,11 @@ impl MagnetiteApp {
                 });
                 self.push_state(engine);
             }
+            UiCommand::MoveProfile { id, index } => {
+                self.with_state(|s| s.move_profile(&id, index));
+                self.push_state(engine);
+                self.tell_settings_pages(engine);
+            }
             UiCommand::DeleteProfile { id } => {
                 if !self.with_state(|s| s.delete_profile(&id)) {
                     return Err("profile is in use or the default".into());
@@ -1880,9 +1897,9 @@ impl MagnetiteApp {
             }
             UiCommand::AddFavorite { url, profile } => {
                 let url = self.normalise_url(&url);
-                if url.starts_with("magnetite://")
-                    || !url_policy::allowed(&url, url_policy::Source::User)
-                {
+                // Stricter than what may be typed into the palette: no
+                // internal or local page.
+                if !url_policy::is_website(&url) {
                     return Err(t!("app.errors.no_web_address").into());
                 }
                 // Named by its site until its page says what it is called.
@@ -1892,6 +1909,32 @@ impl MagnetiteApp {
                 self.push_state(engine);
                 self.tell_settings_pages(engine);
                 return Ok(json!({ "id": id, "profile": profile }));
+            }
+            UiCommand::SetFavoriteAddress { id, url } => {
+                let url = self.normalise_url(&url);
+                if !url_policy::is_website(&url) {
+                    return Err(t!("app.errors.no_web_address").into());
+                }
+                let site = url.split_once("://").map_or(url.as_str(), |(_, rest)| rest);
+                let host = site.split(['/', '?', '#']).next().unwrap_or(site);
+                let loaded = self.with_state(|s| {
+                    if !s.set_favorite_address(&id, &url, host) {
+                        return None;
+                    }
+                    let loaded = s.runtime.get(&id).is_some_and(|r| r.content.is_some());
+                    // Not loaded: it opens at its new address when shown next.
+                    if !loaded && let Some(t) = s.find_tab_mut(&id) {
+                        t.url.clone_from(&url);
+                    }
+                    Some(loaded)
+                });
+                match loaded {
+                    None => return Err(t!("app.errors.favorite_gone").into()),
+                    Some(true) => self.load_in_tab(engine, &id, &url),
+                    Some(false) => {}
+                }
+                self.push_state(engine);
+                self.tell_settings_pages(engine);
             }
             UiCommand::CopyDataDir => {
                 let copied = engine.copy_text(&self.data_dir.to_string_lossy());
@@ -2061,7 +2104,7 @@ impl MagnetiteApp {
                         }).collect::<Vec<_>>(),
                         "spaces": s.sidebar.spaces.iter().filter(|sp| !s.is_private_space(&sp.id)).map(|sp| json!({"id": sp.id, "title": sp.title, "icon": sp.icon, "icon_image": sp.icon_image, "accent": sp.accent, "profile_id": sp.profile_id, "bookmarks": sp.bookmarks.iter().flat_map(SidebarNode::tabs).count(), "bookmark_tree": !sp.bookmarks.is_empty(), "pinned": s.plain_pinned(&sp.id).len(), "synced": !s.unsynced_spaces.contains(&sp.id), "keys": space_keys.iter().find_map(|(own, keys)| (own.id == sp.id).then(|| keys.to_string())), "shortcut": sp.shortcut})).collect::<Vec<_>>(),
                         "active_space": s.active_space,
-                        "favorites": s.sidebar.favorites.iter().flat_map(|f| f.items.iter()).map(|t| json!({"id": t.id, "title": t.title, "url": t.url, "profile_id": s.profile_for_tab(&t.id), "only_in": t.only_in.iter().filter(|sp| s.space(sp).is_some()).collect::<Vec<_>>()})).collect::<Vec<_>>(),
+                        "favorites": s.sidebar.favorites.iter().flat_map(|f| f.items.iter()).map(|t| json!({"id": t.id, "title": t.title, "url": t.url, "home": t.home_url, "profile_id": s.profile_for_tab(&t.id), "only_in": t.only_in.iter().filter(|sp| s.space(sp).is_some()).collect::<Vec<_>>()})).collect::<Vec<_>>(),
                         "archive_count": s.archive.len(),
                         "history_count": s.history.len(),
                         "default_browser": default_browser,

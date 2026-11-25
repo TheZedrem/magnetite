@@ -81,6 +81,21 @@ impl AppState {
         Ok((id, profile_id))
     }
 
+    /// Give favorite `id` the address `url` (already checked) to go to and
+    /// to return to. One without a name of its own is named `host` until
+    /// its page says what it is called. False if `id` is no favorite.
+    pub fn set_favorite_address(&mut self, id: &str, url: &str, host: &str) -> bool {
+        let favorites = self.sidebar.favorites.iter_mut();
+        let Some(tab) = (favorites.flat_map(|f| f.items.iter_mut())).find(|t| t.id == id) else {
+            return false;
+        };
+        tab.home_url = Some(url.into());
+        if !tab.custom_title {
+            tab.title = host.strip_prefix("www.").unwrap_or(host).into();
+        }
+        true
+    }
+
     /// Engine context of the page in front: the one the active tab runs in
     /// (a favorite without a profile of its own runs in the default one, as
     /// `present` opens it), else the active space's. Extensions are per
@@ -216,6 +231,26 @@ impl AppState {
             ephemeral,
         });
         id
+    }
+
+    /// Put profile `id` at place `index` of the lasting profiles, counted
+    /// without it (past the end: last of them). Private profiles are not
+    /// sorted: they are on no list. The lists of favorites follow, which
+    /// stand in the order of the profiles.
+    pub fn move_profile(&mut self, id: &str, index: usize) {
+        let profiles = &mut self.sidebar.profiles;
+        let Some(from) = profiles.iter().position(|p| p.id == id && !p.ephemeral) else {
+            return;
+        };
+        let profile = profiles.remove(from);
+        let lasting = |p: &magnetite_core::Profile| !p.ephemeral;
+        let at = (profiles.iter().enumerate())
+            .filter(|(_, p)| lasting(p))
+            .map(|(at, _)| at)
+            .nth(index)
+            .unwrap_or_else(|| profiles.iter().rposition(lasting).map_or(0, |at| at + 1));
+        profiles.insert(at, profile);
+        self.normalise_favorites();
     }
 
     /// Id of the default profile.
@@ -361,6 +396,26 @@ mod tests {
         assert!(s.add_favorite(url, "www.example.org", gone).is_err());
         assert_eq!(s.sidebar.profiles.len(), profiles);
         assert_eq!(s.sidebar.favorites, favorites);
+    }
+
+    #[test]
+    fn a_favorite_takes_a_new_address_and_keeps_a_name_of_its_own() {
+        let mut s = state();
+        let (id, _) = s
+            .add_favorite("https://example.org/", "example.org", None)
+            .unwrap();
+        assert!(s.set_favorite_address(&id, "https://www.example.com/a", "www.example.com"));
+        let tab = s.find_tab(&id).unwrap().1;
+        assert_eq!(tab.home_url.as_deref(), Some("https://www.example.com/a"));
+        assert_eq!(tab.title, "example.com", "named after its new site");
+        let tab = s.find_tab_mut(&id).unwrap();
+        tab.custom_title = true;
+        tab.title = "Mail".into();
+        assert!(s.set_favorite_address(&id, "https://example.net/", "example.net"));
+        assert_eq!(s.find_tab(&id).unwrap().1.title, "Mail");
+        // A tab that is no favorite has no address to set here.
+        assert!(!s.set_favorite_address("a", "https://example.net/", "example.net"));
+        assert_eq!(s.find_tab("a").unwrap().1.home_url, None);
     }
 
     #[test]
@@ -548,6 +603,48 @@ mod tests {
         assert_eq!(s.profile_for_tab("chat").as_deref(), Some("work"));
         assert_eq!(s.find_tab("chat").unwrap().1.profile_id, None);
         assert!(s.profile_in_use("work"));
+    }
+
+    #[test]
+    fn profiles_are_sorted_among_the_lasting_ones_and_the_favorites_follow() {
+        let mut s = state();
+        let default = s.default_profile_id();
+        let profile = |id: &str, ephemeral| Profile {
+            id: id.into(),
+            name: id.into(),
+            is_default: false,
+            ephemeral,
+        };
+        s.sidebar.profiles.push(profile("secret", true));
+        s.sidebar.profiles.push(profile("work", false));
+        s.sidebar.profiles.push(profile("club", false));
+        s.sidebar.favorites[0].items.push(tab("mail"));
+        s.sidebar.favorites[0].items.push(TabItem {
+            profile_id: Some("club".into()),
+            ..tab("chat")
+        });
+        s.normalise_favorites();
+        let lasting = |s: &crate::state::AppState| -> Vec<String> {
+            let profiles = s.sidebar.profiles.iter().filter(|p| !p.ephemeral);
+            profiles.map(|p| p.id.clone()).collect()
+        };
+        // Places count the lasting profiles only, without the one that moves.
+        s.move_profile("club", 0);
+        assert_eq!(lasting(&s), ["club", default.as_str(), "work"]);
+        let lists: Vec<&str> = (s.sidebar.favorites.iter())
+            .map(|f| f.profile_id.as_str())
+            .collect();
+        assert_eq!(lists, ["club", default.as_str()], "the lists follow");
+        s.move_profile(&default, 9);
+        assert_eq!(lasting(&s), ["club", "work", default.as_str()]);
+        assert_eq!(s.default_profile_id(), default, "still the default one");
+        s.move_profile("club", 1);
+        assert_eq!(lasting(&s), ["work", "club", default.as_str()]);
+        // A private profile is on no list, and an unknown one is nothing.
+        let before = s.sidebar.profiles.clone();
+        s.move_profile("secret", 0);
+        s.move_profile("gone", 0);
+        assert_eq!(s.sidebar.profiles, before);
     }
 
     #[test]

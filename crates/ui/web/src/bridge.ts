@@ -669,6 +669,8 @@ export type Command =
   | { cmd: "sync_delete_chain" }
   | { cmd: "new_profile"; name: string; ephemeral?: boolean }
   | { cmd: "rename_profile"; id: Id; name: string }
+  /** Profile `id` to place `index` of the lasting profiles, counted without it. */
+  | { cmd: "move_profile"; id: Id; index: number }
   | { cmd: "delete_profile"; id: Id }
   /** `synced` false keeps the space on this device alone. */
   | { cmd: "set_space_synced"; id: Id; synced: boolean }
@@ -774,6 +776,8 @@ export type Command =
   | { cmd: "move_favorite"; id: Id; index: number }
   /** A new favorite, last in the list of `profile`; without it, of the main profile. */
   | { cmd: "add_favorite"; url: string; profile?: ChosenProfile }
+  /** Favorite `id` goes to `url` from now on; its page loads it. */
+  | { cmd: "set_favorite_address"; id: Id; url: string }
   /** The path of the data folder to the clipboard. */
   | { cmd: "copy_data_dir" }
   /** The data folder in the system's file manager. */

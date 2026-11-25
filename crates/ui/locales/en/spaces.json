@@ -19,7 +19,9 @@
     "title": "Drag to sort, or press the up and down arrow keys",
     "space": "Sort {name}: space {position} of {total}. The up and down arrow keys move it.",
     "favorite": "Sort {name}: favorite {position} of {total}. The up and down arrow keys move it.",
-    "favorite_alone": "The only favorite of its profile: there is nothing to sort"
+    "favorite_alone": "The only favorite of its profile: there is nothing to sort",
+    "profile": "Sort {name}: profile {position} of {total}. The up and down arrow keys move it.",
+    "profile_alone": "The only profile: there is nothing to sort"
   },
   "page": {
     "name_icon": {
@@ -96,7 +98,7 @@
   },
   "profiles": {
     "title": "Profiles",
-    "hint": "A profile is a set of logins of its own: cookies, site data and extensions. What uses the same profile is signed in to the same accounts; a second profile is how to use a second account of one site. A private profile is not listed: it is forgotten when Magnetite quits.",
+    "hint": "A profile is a set of logins of its own: cookies, site data and extensions. What uses the same profile is signed in to the same accounts; a second profile is how to use a second account of one site. A private profile is not listed: it is forgotten when Magnetite quits. The order here is the order of every list of profiles, and of the lists of favorites in the sidebar.",
     "used_by_spaces": "Used by spaces",
     "used_by_favorites": "Used by favorites",
     "used_by_spaces_caption": "Used by spaces:",
@@ -119,15 +121,19 @@
       "label": "Give a favorite a profile",
       "label_hint": "In Favorites, each favorite has a list to choose its profile from.",
       "open": "Open Favorites"
-    }
+    },
+    "more": "Show all {count}",
+    "all_spaces_of": "Show all {count} spaces that use {name}",
+    "all_favorites_of": "Show all {count} favorites that use {name}",
+    "less": "Show fewer"
   },
   "favorites": {
     "title": "Favorites",
-    "hint": "The sites at the top of the sidebar. A favorite shows in every space, or only in the spaces you choose. Each runs in a profile; a copy in another profile (right-click → Duplicate favorite) is a second account of the same site. As in the sidebar, every profile has a list of its own, and a favorite is sorted inside its list.",
+    "hint": "The sites at the top of the sidebar, each with its address. A favorite shows in every space, or only in the spaces you choose, and runs in a profile: its own page has both. A copy in another profile (right-click → Duplicate favorite) is a second account of the same site. As in the sidebar, every profile has a list of its own, and a favorite is sorted inside its list.",
     "name_label": "Name of the favorite {name}",
     "every_space": "Every space",
     "shows_label": "Where {name} shows",
-    "remove_title": "Takes it out of the favorites; its page is in the archive afterwards",
+    "remove_title": "Its page moves to the archive.",
     "remove_confirm": "Click again",
     "new": {
       "label": "A new favorite",
@@ -136,10 +142,26 @@
       "add": "Add favorite",
       "profile_label": "Profile of the new favorite"
     },
+    "only_in": "only in {spaces}",
+    "page": {
+      "name_address": "Name and address",
+      "name": "Name",
+      "name_hint": "Without a name of its own it goes by its site's.",
+      "address": "Address",
+      "where": "Where it shows",
+      "shows": "Shows in",
+      "shows_hint": "Every space, or only the spaces chosen here.",
+      "profile_hint": "Its page uses the logins of this profile, whichever space is in front.",
+      "remove": "Delete this favorite",
+      "address_hint": "Where the favorite goes, and where it returns to. Its page loads a new address at once.",
+      "address_label": "Address of the favorite {name}",
+      "address_discard": "Discard",
+      "address_discard_title": "Puts the saved address back (Esc)",
+      "address_save_title": "Saves the new address (Enter)"
+    },
     "columns": {
       "name": "Name",
-      "shows": "Shows in",
-      "profile": "Profile"
+      "address": "Address"
     }
   }
 }

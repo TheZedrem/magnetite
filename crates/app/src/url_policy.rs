@@ -50,10 +50,49 @@ pub fn allowed(url: &str, source: Source) -> bool {
     }
 }
 
+/// Whether `url` is the address of a website: `http` or `https` with a host,
+/// nothing internal or local and no user name or password in it. What a
+/// favorite may be given as its address in Settings.
+pub fn is_website(url: &str) -> bool {
+    url.split_once(':').is_some_and(|(scheme, rest)| {
+        let authority = rest
+            .strip_prefix("//")
+            .and_then(|r| r.split(['/', '?', '#']).next());
+        (scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https"))
+            && authority.is_some_and(|a| !a.is_empty() && !a.starts_with(':') && !a.contains('@'))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::Source::{Chromium, OtherApp, Page, Stored, User};
-    use super::allowed;
+    use super::{allowed, is_website};
+
+    #[test]
+    fn only_http_and_https_are_websites() {
+        assert!(is_website("https://example.org/a"));
+        assert!(is_website("HTTP://localhost:3000"));
+        assert!(is_website("https://[::1]:3000/"));
+        assert!(is_website("https://example.org/?to=a@b"));
+        for other in [
+            "chrome://settings/passwords",
+            "chrome-extension://abc/popup.html",
+            "file:///etc/passwd",
+            "view-source:https://example.org",
+            "blob:https://example.org/uuid",
+            "magnetite://ui/settings",
+            "about:blank",
+            "javascript:alert(1)//https://example.org",
+            "https:example.org",
+            "https://",
+            "http:///path",
+            "https://:443/",
+            "https://alice:secret@example.org/",
+            "no scheme at all",
+        ] {
+            assert!(!is_website(other), "{other}");
+        }
+    }
 
     #[test]
     fn web_addresses_open_from_anywhere_script_and_data_from_nowhere() {

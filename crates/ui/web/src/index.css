@@ -403,6 +403,12 @@ button.panel-row:disabled { opacity: 0.45; }
 .field { width: 100%; height: 32px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 0 8px; color: var(--fg); font: inherit; outline: none; }
 .field:focus { border-color: var(--accent); }
 .field[aria-invalid="true"] { border-color: var(--danger); }
+/* A field with a button at its end, inside its frame: the frame is the field's, the text field within has none. */
+.set-field-end { display: flex; align-items: center; gap: 4px; width: 100%; height: 32px; padding: 0 3px 0 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+.set-field-end:focus-within { border-color: var(--accent); }
+.set-field-end[data-invalid] { border-color: var(--danger); }
+.set-field-end > input { flex: 1; min-width: 0; height: 100%; background: none; border: 0; padding: 0; color: var(--fg); font: inherit; outline: none; }
+.set-field-end > .btn { flex: none; height: 24px; border-radius: 6px; }
 /* Settings → Isolation rows */
 .iso-list { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
 .iso-row { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); }
@@ -856,21 +862,21 @@ button.wel-space-icon:hover:not(:disabled) { background: color-mix(in srgb, var(
 /* A path to select and copy: it breaks anywhere rather than run out of its card. */
 .set-path { display: block; overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; cursor: text; }
 /* The row being dragged follows the pointer, above the others. */
-.set-space[data-dragged], .set-space[data-dragged]:hover, .set-fav[data-dragged], .set-device[data-dragged] { position: relative; z-index: 2; border-top-color: transparent; background: var(--surface); box-shadow: 0 0 0 1px var(--line), 0 8px 24px rgba(0,0,0,0.35); }
+.set-space[data-dragged], .set-space[data-dragged]:hover, .set-profile[data-dragged], .set-device[data-dragged] { position: relative; z-index: 2; border-top-color: transparent; background: var(--surface); box-shadow: 0 0 0 1px var(--line), 0 8px 24px rgba(0,0,0,0.35); }
 /* The other rows glide aside to make room where it would land. */
 html[data-sorting] [data-sort-row]:not([data-dragged]) { transition: transform 140ms ease; }
 /* While a row is dragged, the hand stays closed wherever the pointer is. */
 html[data-sorting], html[data-sorting] * { cursor: grabbing !important; user-select: none; -webkit-user-select: none; }
-/* A favorite: handle, icon, name and its choices in columns, which their names head. */
-.set-fav { display: grid; grid-template-columns: 14px 16px minmax(120px, 1fr) 170px 170px 88px; align-items: center; gap: 8px 10px; padding-top: 10px; padding-bottom: 10px; }
-.set-fav > .btn { padding: 0 6px; }
-.set-fav-cols { padding-bottom: 2px; font-size: 11.5px; font-weight: 600; color: var(--muted); }
-.set-fav-cols + .set-fav, .set-fav-cols + .set-fav-head { border-top: 0; }
-.set-fav-cols + .set-fav-head { padding-top: 6px; }
 /* The profile a list of favorites belongs to, above its first one. */
 .set-fav-head { padding-top: 12px; padding-bottom: 2px; font-size: 11.5px; font-weight: 600; color: var(--muted); }
-.set-fav-head + .set-fav { border-top: 0; }
-.set-fav:hover .set-grip:not([aria-disabled]) { color: var(--fg); }
+.set-fav-head + .set-space { border-top: 0; }
+/* The names of a favorite's columns, above the list: each over its column (the handle and the icon come first). */
+.set-fav-cols { display: flex; gap: 10px; padding-top: 10px; padding-bottom: 2px; font-size: 11.5px; font-weight: 600; color: var(--muted); }
+.set-fav-cols-lead { flex: none; width: 54px; }
+.set-fav-cols > .set-space-name { padding-left: 9px; }
+.set-fav-cols > :last-child { padding-left: 4px; }
+.set-fav-cols + .set-space, .set-fav-cols + .set-fav-head { border-top: 0; }
+.set-fav-cols + .set-fav-head { padding-top: 6px; }
 /* A choice from a list of Magnetite's own (`Pick`): a button that says what is chosen, the list under it. */
 .set-pick { position: relative; display: inline-block; flex: none; max-width: 100%; vertical-align: top; }
 .set-pick-button { display: flex; align-items: center; gap: 4px; overflow: hidden; white-space: nowrap; text-align: left; background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%); background-position: calc(100% - 14px) 13px, calc(100% - 9px) 13px; background-size: 5px 5px; background-repeat: no-repeat; padding-right: 26px; }
@@ -906,24 +912,32 @@ html[data-sorting], html[data-sorting] * { cursor: grabbing !important; user-sel
 /* The whole row lights up as one: handle and space together. */
 .set-space:hover, .set-space:has(.set-space-go:focus-visible) { background: var(--row-hover); }
 /* Settings → Profiles: a profile, the spaces that use it and the favorites that do, side by side. */
-.set-profile { display: grid; grid-template-columns: 180px minmax(0, 1fr) minmax(0, 1fr) 104px; align-items: center; gap: 8px 14px; padding-top: 10px; padding-bottom: 10px; }
+.set-profile { display: grid; grid-template-columns: 14px 180px minmax(0, 1fr) minmax(0, 1fr) 104px; align-items: start; gap: 8px 14px; padding-top: 10px; padding-bottom: 10px; }
+.set-profile > .set-grip { margin-left: -3px; }
+.set-profile:hover .set-grip:not([aria-disabled]) { color: var(--fg); }
+/* Text beside a field stands on the line of the field's text, however many lines follow. */
+.set-profile-text { padding-top: 6px; }
+/* Two lines of names; the button under them shows the rest. */
+.set-profile-names { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+.set-profile-names[data-open] { display: block; }
+.set-profile-more { display: block; margin-top: 2px; font-size: 12px; font-weight: 500; color: var(--secondary); }
+.set-profile-more:hover, .set-profile-more:focus-visible { color: var(--fg); text-decoration: underline; }
 .set-profile > :last-child { justify-self: end; }
 .set-profile-head { padding-bottom: 6px; font-size: 11.5px; font-weight: 600; color: var(--muted); }
+.set-profile-head > span { padding-top: 0; }
 .set-profile-head + .set-profile { border-top: 0; padding-top: 4px; }
 .set-profile-cap { display: none; }
 .set-profile-link { color: inherit; text-align: left; }
 .set-profile-link:hover { color: var(--fg); text-decoration: underline; }
 @container (max-width: 720px) {
   /* No room for columns: each profile says what its two lines are. */
-  .set-profile { grid-template-columns: minmax(0, 1fr); }
+  .set-profile { grid-template-columns: 14px minmax(0, 1fr); }
+  .set-profile > * { grid-column: 2; }
+  .set-profile > .set-grip { grid-column: 1; grid-row: 1; }
+  .set-profile-text { padding-top: 0; }
   .set-profile-head { display: none; }
   .set-profile-head + .set-profile { border-top: 0; padding-top: 10px; }
   .set-profile-cap { display: inline; font-weight: 600; }
-  /* Nor for the columns of the favorites: a favorite wraps, and its fields say what they are. */
-  .set-fav { display: flex; flex-wrap: wrap; }
-  .set-fav > input.field { flex: 1 1 140px; }
-  .set-fav-cols { display: none; }
-  .set-fav-cols + .set-fav, .set-fav-cols + .set-fav-head { border-top: 0; }
 }
 .set-space-icon { display: grid; place-items: center; width: 30px; height: 30px; flex: none; border-radius: 9px; background: rgba(255,255,255,0.06); }
 /* The icons to choose from for a space. */

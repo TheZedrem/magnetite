@@ -3,7 +3,7 @@
 // icon, look, profile, what stays on this device, keys). Settings →
 // Profiles: the profiles, each with the spaces and the favorites that share
 // its logins. Settings → Favorites: the favorites.
-import { Fragment, useEffect, useState, useRef } from "react";
+import { Fragment, useEffect, useLayoutEffect, useState, useRef, type ReactNode } from "react";
 import { Favicon } from "../Favicon";
 import { iconUrl, storeIcon } from "../backgrounds";
 import { Glyph, GLYPH_NAMES, glyphFor, SpaceIcon } from "../Glyphs";
@@ -339,7 +339,9 @@ function SpaceList({ info, reload, open }: { info: Info; reload: () => Promise<u
 /**
  * Settings → Profiles: every lasting profile with the spaces and the
  * favorites that use it, each in a column of its own (a space and a
- * favorite may have the same name), to add, rename and delete.
+ * favorite may have the same name), to sort, add, rename and delete. Their
+ * order is the order of every list of profiles, and of the lists of
+ * favorites in the sidebar.
  */
 export function ProfilesSection({ info, reload, open }: { info: Info; reload: () => Promise<unknown>; open: (section: string, item?: string) => void }) {
   const { armed, arm } = useArmed();
@@ -362,22 +364,52 @@ export function ProfilesSection({ info, reload, open }: { info: Info; reload: ()
   const spacesOf = (id: string) => info.spaces.filter((s) => s.profile_id === id);
   // A favorite without a profile of its own is in the main one.
   const favoritesOf = (id: string) => info.favorites.filter((f) => (f.profile_id ?? main) === id).map((f) => f.title || hostOf(f.url));
+  const move = (id: string, index: number) => send({ cmd: "move_profile", id, index }).then(reload);
+  // Dragging by the handle sorts: the other profiles make room where it would land.
+  /** Where the dragged profile ends up when dropped on the row of `target`, or null when it would not move. */
+  const landing = (dragged: string, target: string, below: boolean) => {
+    const from = kept.findIndex((p) => p.id === dragged);
+    const i = kept.findIndex((p) => p.id === target);
+    if (from < 0 || i < 0) return null;
+    let to = below ? i + 1 : i;
+    if (from < to) to -= 1;
+    return to === from ? null : to;
+  };
+  const sorting = useSorting(landing, move);
   return (
     <>
       <Group title={t("spaces.profiles.title")} hint={t("spaces.profiles.hint")}>
         <div className="set-row set-profile set-profile-head" aria-hidden="true">
+          <span />
           <span>{t("spaces.profile_label")}</span>
           <span>{t("spaces.profiles.used_by_spaces")}</span>
           <span>{t("spaces.profiles.used_by_favorites")}</span>
           <span />
         </div>
-        {kept.map((p) => {
+        {kept.map((p, i) => {
           const spaces = spacesOf(p.id);
           const favorites = favoritesOf(p.id);
           return (
-            <div key={p.id} className="set-row set-profile" data-search-row>
+            <div key={p.id} className="set-row set-profile" data-search-row {...sorting.row(p.id)}>
+              <span
+                className="set-grip"
+                role="button"
+                tabIndex={kept.length > 1 ? 0 : -1}
+                aria-disabled={kept.length < 2 || undefined}
+                {...sorting.handle(p.id, kept.length > 1)}
+                title={kept.length > 1 ? t("spaces.sort.title") : t("spaces.sort.profile_alone")}
+                aria-label={t("spaces.sort.profile", { name: profileName(p), position: i + 1, total: kept.length })}
+                onKeyDown={(e) => {
+                  const to = e.key === "ArrowUp" ? i - 1 : e.key === "ArrowDown" ? i + 1 : -1;
+                  if (to < 0 || to >= kept.length) return;
+                  e.preventDefault();
+                  void move(p.id, to);
+                }}
+              >
+                <Grip />
+              </span>
               {p.is_default ? (
-                <span className="set-label" data-search-name>{t("spaces.profile_name.main")}</span>
+                <span className="set-label set-profile-text" data-search-name>{t("spaces.profile_name.main")}</span>
               ) : (
                 <span>
                   <span className="sr-only" data-search-name>{t("spaces.profiles.search_name", { name: p.name })}</span>
@@ -394,8 +426,9 @@ export function ProfilesSection({ info, reload, open }: { info: Info; reload: ()
                   />
                 </span>
               )}
-              <span className="set-hint min-w-0" style={{ marginTop: 0 }} data-search-name>
+              <Clamped count={spaces.length} of={t("spaces.profiles.all_spaces_of", { count: spaces.length, name: profileName(p) })}>
                 <span className="set-profile-cap">{t("spaces.profiles.used_by_spaces_caption")} </span>
+                {!p.synced && `${t("spaces.list.only_device")} · `}
                 {spaces.length > 0
                   ? spaces.map((sp, i) => (
                       <span key={sp.id}>
@@ -404,12 +437,11 @@ export function ProfilesSection({ info, reload, open }: { info: Info; reload: ()
                       </span>
                     ))
                   : t("common.none")}
-                {!p.synced && ` · ${t("spaces.list.only_device")}`}
-              </span>
-              <span className="set-hint min-w-0" style={{ marginTop: 0 }} data-search-name>
+              </Clamped>
+              <Clamped count={favorites.length} of={t("spaces.profiles.all_favorites_of", { count: favorites.length, name: profileName(p) })}>
                 <span className="set-profile-cap">{t("spaces.profiles.used_by_favorites_caption")} </span>
                 {favorites.length > 0 ? favorites.join(", ") : t("common.none")}
-              </span>
+              </Clamped>
               <span>
                 {!p.is_default && spaces.length === 0 && favorites.length === 0 && (
                   <button className="btn" data-danger={armed === p.id || undefined} title={t("spaces.profiles.delete_title")} onClick={() => arm(p.id, () => void deleteProfile(p.id))}>
@@ -437,6 +469,41 @@ export function ProfilesSection({ info, reload, open }: { info: Info; reload: ()
   );
 }
 
+/**
+ * The names that use a profile: two lines of them at most, and a button
+ * that shows the rest when there are more (`count` names; `of` names the
+ * button for those who do not see whose row it is in). A profile with many spaces or favorites
+ * stays a row as tall as the others, to read down and to drag.
+ */
+function Clamped({ count, of, children }: { count: number; of: string; children: ReactNode }) {
+  const names = useRef<HTMLSpanElement>(null);
+  const [open, setOpen] = useState(false);
+  // More names than two lines hold, at the width the column has now.
+  const [long, setLong] = useState(false);
+  useLayoutEffect(() => {
+    const el = names.current;
+    if (!el || open) return;
+    const measure = () => setLong(el.scrollHeight > el.clientHeight + 1);
+    measure();
+    const resized = new ResizeObserver(measure);
+    resized.observe(el);
+    return () => resized.disconnect();
+  }, [open, count]);
+  return (
+    <span className="set-hint set-profile-text min-w-0" style={{ marginTop: 0 }} data-search-name>
+      <span ref={names} className="set-profile-names" data-open={open || undefined}>{children}</span>
+      {(long || open) && (
+        <button className="set-profile-more" aria-expanded={open} aria-label={open ? undefined : of} onClick={() => setOpen(!open)}>
+          {open ? t("spaces.profiles.less") : t("spaces.profiles.more", { count })}
+        </button>
+      )}
+    </span>
+  );
+}
+
+/** A favorite's address as its row shows it: without the "https://" every address has, and without the slash of a bare site. */
+const shortAddress = (url: string) => url.replace(/^https:\/\//, "").replace(/^([^/?#]+)\/$/, "$1");
+
 /** The six dots a row is dragged by. */
 export function Grip() {
   return (
@@ -448,22 +515,164 @@ export function Grip() {
 
 type Favorite = Info["favorites"][number];
 
+/** The name a favorite goes by: its own, else its site's. */
+export const favoriteName = (f: Favorite) => f.title || hostOf(f.url);
+/** The address it is a favorite of, not the page it happens to show. */
+const addressOf = (f: Favorite) => f.home || f.url;
+
 /**
- * Settings → Favorites: the favorites, to sort (inside the list of their profile, as in the
- * sidebar), name, show in every space or in some, give a profile, remove,
- * and add by address.
+ * Takes favorite `id` out of the favorites; its page is in the archive
+ * afterwards. It goes there by way of a space: the one in front, but never
+ * the private one (it is not among `info.spaces`), which takes no tab of
+ * another profile.
  */
-export function FavoritesSection({ info, reload }: { info: Info; reload: () => Promise<unknown> }) {
+function removeFavorite(info: Info, id: string) {
+  const leaveTo = (info.spaces.find((sp) => sp.id === info.active_space) ?? info.spaces[0])?.id ?? info.active_space;
+  return send({ cmd: "move_tab", id, space: leaveTo, section: "today", index: 0 }).then(() => send({ cmd: "close_tab", id }));
+}
+
+/** All of one favorite: its name and address, where it shows, its profile, and its removal. */
+function FavoritePage({ info, favorite: f, reload, open }: { info: Info; favorite: Favorite; reload: () => Promise<unknown>; open: (section: string, item?: string) => void }) {
+  const { armed, arm } = useArmed(4000);
+  const main = info.profiles.find((p) => p.is_default)?.id ?? "";
+  const name = favoriteName(f);
+  /** What the field holds becomes the favorite's address; nothing typed, or the same address, changes nothing. */
+  const saveAddress = () => {
+    const to = addressField.current?.value.trim();
+    if (!to || to === addressOf(f)) return discard();
+    // The answer is for what was sent: an address typed since stays as it is, not saved yet.
+    const still = () => addressField.current?.value.trim() === to;
+    send({ cmd: "set_favorite_address", id: f.id, url: to }).then(
+      // The address as the app keeps it may be the one typed, spelled out: nothing is changed then.
+      () => (setRefused(undefined), still() && setChanged(false)),
+      (err: unknown) => still() && setRefused(err instanceof Error ? err.message : String(err)),
+    ).then(reload).catch(() => undefined);
+  };
+  // The spaces just chosen, until their save is done and the page has read
+  // the answer: two quick clicks both count, the second on top of the
+  // first. Each choice has a number, so the answer to an older one does not
+  // end a newer one.
+  // Why the address typed was not taken (it is none of a website).
+  const [refused, setRefused] = useState<string>();
+  // The address field holds another address than the favorite's: not saved yet.
+  const [changed, setChanged] = useState(false);
+  const addressField = useRef<HTMLInputElement>(null);
+  // The field follows the favorite's address, but for one typed and not saved.
+  const address = addressOf(f);
+  useLayoutEffect(() => {
+    if (!changed && addressField.current) addressField.current.value = address;
+    // Only a new address moves the field, not the end of a draft (Discard does that itself).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [address]);
+  /** The favorite's address back in its field, and what was typed forgotten. */
+  const discard = () => {
+    if (addressField.current) addressField.current.value = addressOf(f);
+    setChanged(false);
+    setRefused(undefined);
+  };
+  const [picked, setPicked] = useState<{ spaces: string[]; turn: number }>();
+  const turns = useRef(0);
+  const choose = (spaces: string[]) => {
+    const turn = ++turns.current;
+    setPicked({ spaces, turn });
+    const done = () => setPicked((p) => (p?.turn === turn ? undefined : p));
+    void send({ cmd: "set_favorite_spaces", id: f.id, spaces }).then(reload).then(done, done);
+  };
+  return (
+    <>
+      <Group title={t("spaces.favorites.page.name_address")}>
+        <Field side label={t("spaces.favorites.page.name")} hint={t("spaces.favorites.page.name_hint")}>
+          <input
+            key={f.title}
+            className="field"
+            style={{ width: 240 }}
+            defaultValue={f.title}
+            placeholder={hostOf(addressOf(f))}
+            aria-label={t("spaces.favorites.name_label", { name })}
+            onBlur={(e) => {
+              const to = e.target.value.trim();
+              if (to !== f.title) void send({ cmd: "rename_tab", id: f.id, title: to }).then(reload);
+            }}
+            onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+          />
+        </Field>
+        <Field label={t("spaces.favorites.page.address")} hint={t("spaces.favorites.page.address_hint")}>
+          {/* Whole, in a field as wide as the card. Saved on Enter or on leaving it; Esc puts the old one back. Once it is changed, the field's end has a button for each of the two. */}
+          <span className="set-field-end" data-invalid={refused !== undefined || undefined}>
+          <input
+            ref={addressField}
+            defaultValue={addressOf(f)}
+            spellCheck={false}
+            autoCapitalize="off"
+            autoCorrect="off"
+            aria-label={t("spaces.favorites.page.address_label", { name })}
+            aria-invalid={refused !== undefined || undefined}
+            onChange={(e) => setChanged(e.target.value.trim() !== addressOf(f))}
+            onBlur={(e) => {
+              // Leaving it for one of its two buttons leaves the rest to that button.
+              if (e.relatedTarget && e.relatedTarget !== e.currentTarget && e.currentTarget.parentElement?.contains(e.relatedTarget)) return;
+              saveAddress();
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur();
+              if (e.key !== "Escape") return;
+              // Esc here is for the field alone.
+              e.stopPropagation();
+              discard();
+              e.currentTarget.blur();
+            }}
+          />
+          {changed && <button className="btn sm ghost" title={t("spaces.favorites.page.address_discard_title")} onClick={discard}>{t("spaces.favorites.page.address_discard")}</button>}
+          {changed && <button className="btn sm primary" title={t("spaces.favorites.page.address_save_title")} onClick={saveAddress}>{t("common.save")}</button>}
+          </span>
+          {refused && <p className="set-hint" role="alert" style={{ color: "var(--danger)" }}>{refused}</p>}
+        </Field>
+      </Group>
+      <Group title={t("spaces.favorites.page.where")}>
+        <Field side label={t("spaces.favorites.page.shows")} hint={t("spaces.favorites.page.shows_hint")}>
+          <PickList several none={t("spaces.favorites.every_space")} options={spaceOptions(info.spaces)} chosen={picked?.spaces ?? f.only_in} label={t("spaces.favorites.shows_label", { name })} width={220} align="right" onChoose={choose} />
+        </Field>
+      </Group>
+      <Group title={t("spaces.page.profile.title")}>
+        <Field side label={t("spaces.page.profile.uses")} hint={t("spaces.favorites.page.profile_hint")}>
+          <ProfileChoice info={info} current={f.profile_id ?? main} name={name} label={t("spaces.profile_of", { name })} width={220} assign={(to) => send({ cmd: "set_tab_profile", id: f.id, profile: to === main ? null : to }).then(reload)} />
+        </Field>
+      </Group>
+      <Group>
+        <Field side label={t("spaces.favorites.page.remove")} hint={t("spaces.favorites.remove_title")}>
+          <button
+            className="btn"
+            data-danger={armed === f.id || undefined}
+            onClick={() => arm(f.id, () => void removeFavorite(info, f.id).then(reload).then(() => open("favorites")))}
+          >
+            {armed === f.id ? t("spaces.favorites.remove_confirm") : t("common.delete")}
+          </button>
+        </Field>
+      </Group>
+    </>
+  );
+}
+
+/**
+ * Settings → Favorites: the favorites as a list like that of the spaces,
+ * each with its address, to sort (inside the list of their profile, as in
+ * the sidebar), name and add by address, and a page per favorite with all
+ * that is its own (`item` names it; without one, or once it is gone, the
+ * list).
+ */
+export function FavoritesSection({ info, reload, item, open }: { info: Info; reload: () => Promise<unknown>; item?: string; open: (section: string, item?: string) => void }) {
+  const favorite = item ? info.favorites.find((f) => f.id === item) : undefined;
+  return favorite ? <FavoritePage key={favorite.id} info={info} favorite={favorite} reload={reload} open={open} /> : <FavoriteList info={info} reload={reload} open={open} />;
+}
+
+/** The list of favorites. */
+function FavoriteList({ info, reload, open }: { info: Info; reload: () => Promise<unknown>; open: (section: string, item?: string) => void }) {
   const { armed, arm } = useArmed(4000);
   const main = info.profiles.find((p) => p.is_default)?.id ?? "";
   const profileOf = (f: Favorite) => f.profile_id ?? main;
-  // Where a removed favorite goes on its way to the archive: the space in
-  // front, but never the private one (it is not among `info.spaces`),
-  // which takes no tab of another profile.
-  const leaveTo = (info.spaces.find((sp) => sp.id === info.active_space) ?? info.spaces[0])?.id ?? info.active_space;
   const listOf = (f: Favorite) => info.favorites.filter((x) => profileOf(x) === profileOf(f));
   const move = (id: string, index: number) => send({ cmd: "move_favorite", id, index }).then(reload);
-  // Dragging by the handle sorts: the line shows where the favorite would land.
+  // Dragging a row sorts: the other rows make room where the favorite would land.
   /** Where the dragged favorite ends up in its list when dropped on `target`; null: nowhere new, or another profile's list. */
   const landing = (dragged: string, targetId: string, below: boolean) => {
     const from = info.favorites.find((f) => f.id === dragged);
@@ -478,18 +687,6 @@ export function FavoritesSection({ info, reload }: { info: Info; reload: () => P
   // As in the sidebar: one list per profile, in the order of the profiles,
   // which is how the app keeps them (`normalise_favorites`).
   const lists = new Set(info.favorites.map(profileOf)).size;
-  // The spaces just chosen for a favorite, until its save is done and the
-  // page has read the answer: two quick clicks both count, the second on
-  // top of the first. Each choice has a number, so the answer to an older
-  // one does not end a newer one.
-  const [picked, setPicked] = useState<Record<string, { spaces: string[]; turn: number }>>({});
-  const turns = useRef(0);
-  const choose = (id: string, spaces: string[]) => {
-    const turn = ++turns.current;
-    setPicked((p) => ({ ...p, [id]: { spaces, turn } }));
-    const done = () => setPicked((p) => (p[id]?.turn === turn ? Object.fromEntries(Object.entries(p).filter(([key]) => key !== id)) : p));
-    void send({ cmd: "set_favorite_spaces", id, spaces }).then(reload).then(done, done);
-  };
   const [url, setUrl] = useState("");
   const [failed, setFailed] = useState<string>();
   // The profile the new favorite gets; it stays chosen for the next one. One
@@ -525,37 +722,38 @@ export function FavoritesSection({ info, reload }: { info: Info; reload: () => P
   };
   return (
     <Group title={t("spaces.favorites.title")} hint={t("spaces.favorites.hint")}>
+      {/* What the two columns of a row are, as the list of profiles heads its own. */}
       {info.favorites.length > 0 && (
-        <div className="set-row set-fav set-fav-cols" aria-hidden="true">
-          <span />
-          <span />
-          <span>{t("spaces.favorites.columns.name")}</span>
-          <span>{t("spaces.favorites.columns.shows")}</span>
-          <span>{t("spaces.favorites.columns.profile")}</span>
-          <span />
+        <div className="set-row set-fav-cols" aria-hidden="true">
+          <span className="set-fav-cols-lead" />
+          <span className="set-space-name">{t("spaces.favorites.columns.name")}</span>
+          <span className="min-w-0 flex-1">{t("spaces.favorites.columns.address")}</span>
         </div>
       )}
       {info.favorites.map((f, i) => {
-        const name = f.title || hostOf(f.url);
+        const name = favoriteName(f);
+        const address = addressOf(f);
         const list = listOf(f);
         const place = list.indexOf(f);
-        const shows = picked[f.id]?.spaces ?? f.only_in;
+        const only = f.only_in.map((id) => info.spaces.find((sp) => sp.id === id)?.title).filter(Boolean);
         // The first of a profile's list is headed by the profile, once there is more than one list.
         const heads = lists > 1 && (i === 0 || profileOf(info.favorites[i - 1]!) !== profileOf(f));
         return (
           <Fragment key={f.id}>
           {heads && <div className="set-row set-fav-head">{profileName(info.profiles.find((p) => p.id === profileOf(f)))}</div>}
           <div
-            className="set-row set-fav"
+            className="set-row set-space"
             data-search-row
+            data-sortable={list.length > 1 || undefined}
             {...sorting.row(f.id)}
+            {...sorting.handle(f.id, list.length > 1)}
           >
+            {/* The whole row is dragged by; the handle shows that, and takes the keys. */}
             <span
               className="set-grip"
               role="button"
               tabIndex={list.length > 1 ? 0 : -1}
               aria-disabled={list.length < 2 || undefined}
-              {...sorting.handle(f.id, list.length > 1)}
               title={list.length > 1 ? t("spaces.sort.title") : t("spaces.sort.favorite_alone")}
               aria-label={t("spaces.sort.favorite", { name, position: place + 1, total: list.length })}
               onKeyDown={(e) => {
@@ -567,14 +765,13 @@ export function FavoritesSection({ info, reload }: { info: Info; reload: () => P
             >
               <Grip />
             </span>
-            <Favicon url={f.url} />
-            <span className="sr-only" data-search-name>{name} {hostOf(f.url)}</span>
+            <span className="set-space-icon"><Favicon url={f.url} /></span>
+            <span className="sr-only" data-search-name>{name} {hostOf(address)}</span>
             <input
               key={f.title}
-              className="field min-w-0"
+              className="field set-space-name"
               defaultValue={f.title}
-              placeholder={hostOf(f.url)}
-              title={f.url}
+              placeholder={hostOf(address)}
               aria-label={t("spaces.favorites.name_label", { name })}
               onBlur={(e) => {
                 const to = e.target.value.trim();
@@ -582,17 +779,24 @@ export function FavoritesSection({ info, reload }: { info: Info; reload: () => P
               }}
               onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
             />
-            <PickList several none={t("spaces.favorites.every_space")} options={spaceOptions(info.spaces)} chosen={shows} label={t("spaces.favorites.shows_label", { name })} onChoose={(spaces) => choose(f.id, spaces)} />
-            <span>
-              <ProfileChoice info={info} current={profileOf(f)} name={name} label={t("spaces.profile_of", { name })} assign={(to) => send({ cmd: "set_tab_profile", id: f.id, profile: to === main ? null : to }).then(reload)} />
-            </span>
+            {/* The rest of the row is its address, as much of it as fits, and opens the favorite's page; the keyboard has the arrow for that. */}
+            <button className="set-space-open" tabIndex={-1} aria-hidden="true" onClick={() => open("favorites", f.id)} title={t("spaces.everything_about", { name })}>
+              <span className="set-hint block truncate" style={{ marginTop: 0 }}>
+                {shortAddress(address)}
+                {only.length > 0 && ` · ${t("spaces.favorites.only_in", { spaces: only.join(", ") })}`}
+              </span>
+            </button>
+            {/* Removing is common enough to need no page: a first click arms it, as everywhere. */}
             <button
               className="btn"
               data-danger={armed === f.id || undefined}
               title={t("spaces.favorites.remove_title")}
-              onClick={() => arm(f.id, () => void send({ cmd: "move_tab", id: f.id, space: leaveTo, section: "today", index: 0 }).then(() => send({ cmd: "close_tab", id: f.id })).then(reload))}
+              onClick={() => arm(f.id, () => void removeFavorite(info, f.id).then(reload))}
             >
-              {armed === f.id ? t("spaces.favorites.remove_confirm") : t("common.remove")}
+              {armed === f.id ? t("spaces.favorites.remove_confirm") : t("common.delete")}
+            </button>
+            <button className="set-space-go" onClick={() => open("favorites", f.id)} title={t("spaces.everything_about", { name })} aria-label={t("spaces.everything_about", { name })}>
+              <Forward width={15} height={15} />
             </button>
           </div>
           </Fragment>
