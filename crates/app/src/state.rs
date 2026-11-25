@@ -36,8 +36,8 @@ pub use history::{History, Visit};
 pub use private::ShowIn;
 pub use profiles::ChosenProfile;
 pub use settings::{
-    AdblockSettings, Appearance, NewTabLinks, NewTabPlace, PROTECTED_VIDEO_SITES, Settings,
-    SidebarEffect, SiteSearch, SyncSettings, SystemEngine, TabOrder, typed_site,
+    AdblockSettings, Appearance, LibraryView, NewTabLinks, NewTabPlace, PROTECTED_VIDEO_SITES,
+    Settings, SidebarEffect, SiteSearch, SyncSettings, SystemEngine, TabOrder, typed_site,
 };
 pub use share::read_link as read_shared;
 pub use tabs::TabSwitch;

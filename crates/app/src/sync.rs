@@ -157,7 +157,9 @@ fn server_base(url: &str) -> Result<String, String> {
 /// `shortcuts` is left out while no shortcut has other keys, so a version
 /// from before them writes the same bytes; such a version writes without
 /// them, which reads as "all on their default keys" here. The same goes
-/// for `shortcut_priority` and `shortcut_sites`.
+/// for `shortcut_priority` and `shortcut_sites`, and for the options below
+/// them: each is sent only while it differs from its default, so devices of
+/// different versions agree on the bytes and do not write in turn.
 #[derive(Serialize, Deserialize)]
 struct SyncedSettings {
     auto_archive_hours: u32,
@@ -172,10 +174,36 @@ struct SyncedSettings {
     shortcut_priority: magnetite_engine::Priorities,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     shortcut_sites: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    archive_days: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    history_days: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    chrome_toolbar: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    auto_pip: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    strip_trackers: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    panel_autoclose: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    load_pinned_at_start: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    devtools_dock: Option<magnetite_engine::DevToolsDock>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    check_updates: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    library_opens: Option<crate::state::LibraryView>,
+}
+
+/// `value` unless it is `default`: what `SyncedSettings` sends of an option.
+fn unless_default<T: PartialEq>(value: T, default: &T) -> Option<T> {
+    (value != *default).then_some(value)
 }
 
 impl SyncedSettings {
     fn from(s: &Settings) -> Self {
+        let d = Settings::default();
         Self {
             auto_archive_hours: s.auto_archive_hours,
             unload_minutes: s.unload_minutes,
@@ -183,6 +211,16 @@ impl SyncedSettings {
             shortcuts: s.shortcuts.clone(),
             shortcut_priority: s.shortcut_priority.clone(),
             shortcut_sites: s.shortcut_sites.clone(),
+            archive_days: unless_default(s.archive_days, &d.archive_days),
+            history_days: unless_default(s.history_days, &d.history_days),
+            chrome_toolbar: unless_default(s.chrome_toolbar, &d.chrome_toolbar),
+            auto_pip: unless_default(s.auto_pip, &d.auto_pip),
+            strip_trackers: unless_default(s.strip_trackers, &d.strip_trackers),
+            panel_autoclose: unless_default(s.panel_autoclose, &d.panel_autoclose),
+            load_pinned_at_start: unless_default(s.load_pinned_at_start, &d.load_pinned_at_start),
+            devtools_dock: unless_default(s.devtools_dock, &d.devtools_dock),
+            check_updates: unless_default(s.check_updates, &d.check_updates),
+            library_opens: unless_default(s.library_opens, &d.library_opens),
         }
     }
     fn apply(self, s: &mut Settings) {
@@ -192,6 +230,17 @@ impl SyncedSettings {
         s.shortcuts = self.shortcuts;
         s.shortcut_priority = self.shortcut_priority;
         s.shortcut_sites = self.shortcut_sites;
+        let d = Settings::default();
+        s.archive_days = self.archive_days.unwrap_or(d.archive_days);
+        s.history_days = self.history_days.unwrap_or(d.history_days);
+        s.chrome_toolbar = self.chrome_toolbar.unwrap_or(d.chrome_toolbar);
+        s.auto_pip = self.auto_pip.unwrap_or(d.auto_pip);
+        s.strip_trackers = self.strip_trackers.unwrap_or(d.strip_trackers);
+        s.panel_autoclose = self.panel_autoclose.unwrap_or(d.panel_autoclose);
+        s.load_pinned_at_start = self.load_pinned_at_start.unwrap_or(d.load_pinned_at_start);
+        s.devtools_dock = self.devtools_dock.unwrap_or(d.devtools_dock);
+        s.check_updates = self.check_updates.unwrap_or(d.check_updates);
+        s.library_opens = self.library_opens.unwrap_or(d.library_opens);
     }
 }
 
@@ -1002,6 +1051,79 @@ mod tests {
             serde_json::from_str(&sent(&Settings::default())).unwrap();
         older.apply(&mut settings);
         assert!(settings.shortcuts.is_empty());
+    }
+
+    /// What one device sends, as another device reads it.
+    fn received(from: &Settings) -> super::SyncedSettingsPublic {
+        let bytes = serde_json::to_vec(&super::SyncedSettings::from(from)).unwrap();
+        super::SyncedSettingsPublic(serde_json::from_slice(&bytes).unwrap())
+    }
+
+    #[test]
+    fn options_on_their_defaults_are_sent_as_an_older_version_writes_them() {
+        // An older version knows only these three (and the shortcuts, left
+        // out on their default keys). Other bytes would have the two
+        // versions write in turn.
+        let d = Settings::default();
+        let older = format!(
+            r#"{{"auto_archive_hours":{},"unload_minutes":{},"external_links":{}}}"#,
+            d.auto_archive_hours,
+            d.unload_minutes,
+            serde_json::to_string(&d.external_links).unwrap()
+        );
+        let sent = serde_json::to_string(&super::SyncedSettings::from(&d)).unwrap();
+        assert_eq!(sent, older);
+    }
+
+    #[test]
+    fn options_changed_on_another_device_are_taken_here() {
+        let a = Settings {
+            load_pinned_at_start: true,
+            history_days: 30,
+            devtools_dock: magnetite_engine::DevToolsDock::Bottom,
+            library_opens: crate::state::LibraryView::History,
+            ..Settings::default()
+        };
+        let mut b = Settings::default();
+        received(&a).apply(&mut b);
+        assert!(b.load_pinned_at_start);
+        assert_eq!(b.history_days, 30);
+        assert_eq!(b.devtools_dock, magnetite_engine::DevToolsDock::Bottom);
+        assert_eq!(b.library_opens, crate::state::LibraryView::History);
+    }
+
+    #[test]
+    fn an_option_another_device_does_not_send_goes_back_to_its_default() {
+        // This device changed them; the other one has them on their
+        // defaults, or is a version that does not know them.
+        let mut b = Settings {
+            strip_trackers: false,
+            archive_days: 30,
+            devtools_dock: magnetite_engine::DevToolsDock::Window,
+            ..Settings::default()
+        };
+        received(&Settings::default()).apply(&mut b);
+        let d = Settings::default();
+        assert_eq!(b.strip_trackers, d.strip_trackers);
+        assert_eq!(b.archive_days, d.archive_days);
+        assert_eq!(b.devtools_dock, d.devtools_dock);
+    }
+
+    #[test]
+    fn a_shorter_history_period_from_another_device_deletes_older_visits_at_once() {
+        let mut s = crate::state::testing::state();
+        let now = crate::state::now();
+        s.history
+            .record("https://old.example/", "Old", now - 10 * 86_400);
+        s.history
+            .record("https://new.example/", "New", now - 86_400);
+        let other = Settings {
+            history_days: 3,
+            ..Settings::default()
+        };
+        s.adopt_pull(None, Some(received(&other)), vec![]);
+        let left: Vec<&str> = s.history.newest().map(|v| v.url.as_str()).collect();
+        assert_eq!(left, ["https://new.example/"]);
     }
 
     use super::*;

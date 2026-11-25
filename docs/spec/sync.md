@@ -79,7 +79,7 @@ the web for the words.
 | Collection | Content |
 |---|---|
 | `sidebar` | profiles, favorites, spaces (name, glyph or own icon, colour) with their pinned trees (folders, smart folder definitions), Today tabs and bookmarks |
-| `settings` | when Today tabs are archived, when inactive tabs are suspended, where links from other apps open (a tab, a peek or a mini window; a version that does not know a choice uses a new tab), the shortcuts with other keys or none, who gets their keys first, and the sites that get them all first (`shortcuts.md`) |
+| `settings` | when Today tabs are archived, when inactive tabs are suspended, where links from other apps open (a tab, a peek or a mini window; a version that does not know a choice uses a new tab), the shortcuts with other keys or none, who gets their keys first, and the sites that get them all first (`shortcuts.md`), how long archived tabs and history are kept, Chrome's toolbar row, picture-in-picture when leaving a tab, removing trackers from copied links, web panels closing by themselves, loading favorites and pinned tabs at start, where DevTools open, looking for updates, and what the archive and downloads button opens. Each of the options after the shortcuts is sent only while it differs from its default; a device that gets none takes the default, so devices of different versions agree on what the collection holds |
 | `devices` | per device: the tabs open on it that it lists for the others (phones do), which tabs of other devices it took over, a phone's changes to the sidebar, and which of those a desktop made |
 
 The server never sees these names, only ids derived from the sync code.

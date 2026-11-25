@@ -91,7 +91,8 @@ With "Forever" there is no period, and records only leave by hand.
 
 A typed number is saved on Enter or when the field is left. A shorter period
 deletes older records within a minute, and they cannot be brought back. The
-period is this device's and does not sync.
+period syncs (`sync.md`), so a shorter one set on another device deletes
+older records here too. The archive itself does not sync.
 
 Code: `crates/app/src/state/tabs.rs` (`archive_tab`, `delete_space`,
 `prune_archive`), `crates/app/src/app/tabs.rs` (`close_tab`, `housekeeping`,

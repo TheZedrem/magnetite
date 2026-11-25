@@ -135,8 +135,13 @@ impl MagnetiteApp {
                 for c in contents {
                     engine.close_content(c);
                 }
-                // Another device may have changed a shortcut's keys.
+                // Another device may have changed a shortcut's keys, or
+                // settings the engine holds a copy of.
                 self.apply_shortcut_keys(engine);
+                let (toolbar, dock) =
+                    self.with_state(|s| (s.settings.chrome_toolbar, s.settings.devtools_dock));
+                engine.set_chrome_toolbar(toolbar || engine.config().chrome_toolbar);
+                Self::apply_devtools_dock(engine, dock);
                 // Shows what is open already; nothing new loads (`adopt_pull`).
                 self.present(engine);
                 self.push_state(engine);

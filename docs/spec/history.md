@@ -53,7 +53,8 @@ deletes older visits; a shorter period, or "Don't keep
 history", takes effect at once and deletes what is older for good. With
 "Don't keep history" nothing is recorded. Settings → Data and privacy shows
 the number of visits and has "Clear history" (after a second click). The
-period is this device's and does not sync.
+period syncs (`sync.md`): a shorter one set on another device deletes
+older visits here too. The visits themselves never sync.
 
 ## Data
 

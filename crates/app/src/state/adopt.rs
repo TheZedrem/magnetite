@@ -208,6 +208,10 @@ impl AppState {
         }
         if let Some(st) = settings {
             st.apply(&mut self.settings);
+            // A shorter history period counts at once, as on the Settings page.
+            if self.history.prune(self.settings.history_days, now()) {
+                self.history.save();
+            }
         }
         for (name, v) in versions {
             if refused && name == crate::sync::SIDEBAR {
