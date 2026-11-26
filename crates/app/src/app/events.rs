@@ -61,12 +61,19 @@ impl EngineDelegate for MagnetiteApp {
                         self.data_dir.display()
                     );
                 }
-                engine.create_frame();
+                // Where the first window was at the last run.
+                engine.create_frame(self.with_state(|s| s.placement));
                 self.reopen_windows(engine);
             }
             EngineEvent::WindowClosed { win } => self.window_closed(engine, win),
-            EngineEvent::FrameCreated { .. }
-            | EngineEvent::FrameBoundsChanged
+            // Not for a window that closed in the meantime: its event
+            // reaches the current one (`Engine::emit`).
+            EngineEvent::FramePlaced { win, placement } if win == engine.current_window() => {
+                self.with_state(|s| s.placement = Some(placement));
+                self.save_soon();
+            }
+            EngineEvent::FramePlaced { .. }
+            | EngineEvent::FrameCreated { .. }
             | EngineEvent::ContentCreated { .. } => {}
             EngineEvent::SidebarLoaded => self.push_state(engine),
             EngineEvent::ContentClosed { id } => {
