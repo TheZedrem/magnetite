@@ -699,7 +699,7 @@ export type Command =
   /** `dev_bar`: asked by the developer bar, and placed below it. */
   | { cmd: "top_bar_popup"; popup: TopBarPopupKind; id?: string; x: number; y: number; width: number; height: number; dev_bar?: boolean }
   | { cmd: "focus_sidebar" }
-  | { cmd: "float_sidebar"; show: boolean }
+  | { cmd: "float_sidebar"; show: boolean; touch?: boolean }
   | { cmd: "set_space_color"; id: Id; color: Color | null }
   | { cmd: "set_space_icon_image"; id: Id; data: string | null }
   | { cmd: "set_folder_icon"; id: Id; icon: string | null }
@@ -1331,6 +1331,9 @@ export const IS_MAC = navigator.userAgent.includes("Mac");
 
 /** The app runs on Windows (Explorer, the Recycle Bin). */
 export const IS_WINDOWS = navigator.userAgent.includes("Windows");
+
+/** The app runs on Linux. */
+export const IS_LINUX = !IS_MAC && !IS_WINDOWS && navigator.userAgent.includes("Linux");
 
 /**
  * A shortcut as this system writes it. On macOS `mac` as it is ("⇧⌘T");

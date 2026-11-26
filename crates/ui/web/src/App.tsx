@@ -16,7 +16,7 @@ import { NewMenu } from "./NewMenu";
 import { ExtensionBar, PinnedExtensions } from "./PinnedExtensions";
 import { DeviceTabRow, FavoriteLists, NodeList, RenameInput, SplitRow, TabRow, countTabs, dropAmongPinned, movedUnder, profileColor, type RowContext } from "./Rows";
 import { windowBackground } from "./backgrounds";
-import { IS_MAC, accentCss, applyAppearance, dockedSide, favoriteShows, keyLabel, lookOf, findTab, findTabInSpace, hostOf, onNotice, onOpenArchive, onOpenBookmarks, onOpenDownloads, onOpenHistory, onRecord, send, splitIds, subscribe, type LibraryView, type SidebarNode, type Space, type SplitNode, type TabItem, type UiState } from "./bridge";
+import { IS_LINUX, IS_MAC, accentCss, applyAppearance, dockedSide, favoriteShows, keyLabel, lookOf, findTab, findTabInSpace, hostOf, onNotice, onOpenArchive, onOpenBookmarks, onOpenDownloads, onOpenHistory, onRecord, send, splitIds, subscribe, type LibraryView, type SidebarNode, type Space, type SplitNode, type TabItem, type UiState } from "./bridge";
 import { IconPicker, SpaceIcon } from "./Glyphs";
 import { SpaceSwitcher } from "./SpaceSwitcher";
 import { dragging, endDrag, indexAfterTaking, movedIds } from "./dnd";
@@ -397,7 +397,12 @@ function useFloatLifecycle(): number {
       enter();
       timer = window.setTimeout(() => send({ cmd: "float_sidebar", show: false }), 280);
     };
-    const visible = () => document.visibilityState === "visible" && setShownAt(Date.now());
+    // On Linux, shown again within half a second is no new appearance: under Wayland it is hidden and shown to stay above a page just shown.
+    let hiddenAt = 0;
+    const visible = () => {
+      if (document.visibilityState === "hidden") hiddenAt = Date.now();
+      else if (!IS_LINUX || Date.now() - hiddenAt > 500) setShownAt(Date.now());
+    };
     root.addEventListener("mouseleave", leave);
     root.addEventListener("mouseenter", enter);
     document.addEventListener("visibilitychange", visible);
