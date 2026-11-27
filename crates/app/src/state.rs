@@ -30,7 +30,7 @@ mod tabs;
 pub(crate) mod testing;
 mod windows;
 
-pub use adopt::icon_image_ok;
+pub use adopt::{carry_private_tabs, icon_image_ok};
 pub(crate) use folders::folder_in_tree_mut;
 pub use history::{History, Visit};
 pub use private::ShowIn;
@@ -279,9 +279,12 @@ pub struct AppState {
     pub accounts: crate::smart::Accounts,
     pub smart_status: HashMap<Id, SmartStatus>,
     pub downloads: crate::downloads::Downloads,
-    /// The sidebar as this device would have sent it right after it last
-    /// took one from sync: while what it would send now is still this, the
-    /// device has changed nothing and writes nothing. Not saved.
+    /// The sidebar this device and its sync chain last agreed on: as the
+    /// device would have sent it right after it took one from the chain, or
+    /// as it wrote it. While what it would send now is still this, the
+    /// device has changed nothing and writes nothing; what differs is what
+    /// it changed since, and is merged into a sidebar that arrives
+    /// (`adopt_pull`). Saved, so changes made before a restart count too.
     pub synced_sidebar: Option<SidebarSnapshot>,
     /// The tabs open on the chain's other devices, as of the last sync.
     /// Not saved.
