@@ -75,6 +75,7 @@ impl AppState {
             None => lists.push(magnetite_core::FavoriteSet {
                 profile_id: profile_id.clone(),
                 items: vec![favorite],
+                other: magnetite_core::Other::new(),
             }),
         }
         self.normalise_favorites();
@@ -142,9 +143,14 @@ impl AppState {
             .map(|id| magnetite_core::FavoriteSet {
                 profile_id: id.clone(),
                 items: vec![],
+                other: magnetite_core::Other::new(),
             })
             .collect();
         for set in std::mem::take(&mut self.sidebar.favorites) {
+            // What a newer version wrote on the list stays with it.
+            if let Some(list) = lists.iter_mut().find(|l| l.profile_id == set.profile_id) {
+                list.other.extend(set.other);
+            }
             for mut tab in set.items {
                 let own = tab.profile_id.clone();
                 let wanted = match &own {
@@ -234,6 +240,7 @@ impl AppState {
             is_default: false,
             ephemeral,
             color: None,
+            other: magnetite_core::Other::new(),
         });
         self.sidebar.color_profiles();
         id
@@ -365,6 +372,7 @@ mod tests {
             is_default: false,
             ephemeral: false,
             color: None,
+            other: magnetite_core::Other::new(),
         });
         s.sidebar.favorites[0].items.push(TabItem {
             profile_id: Some("work".into()),
@@ -433,6 +441,7 @@ mod tests {
             is_default: false,
             ephemeral: true,
             color: None,
+            other: magnetite_core::Other::new(),
         });
         s.sidebar.spaces[0].today[0].profile_id = Some("private".into());
         let lasting = s.lasting_sidebar();
@@ -492,6 +501,7 @@ mod tests {
             is_default: false,
             ephemeral: true,
             color: None,
+            other: magnetite_core::Other::new(),
         };
         s.sidebar.profiles.push(private("used"));
         s.sidebar.profiles.push(private("orphan"));
@@ -527,6 +537,7 @@ mod tests {
             is_default: false,
             ephemeral: true,
             color: None,
+            other: magnetite_core::Other::new(),
         });
         // A tab opened from a private favorite keeps its profile.
         s.find_tab_mut("a").unwrap().profile_id = Some("secret".into());
@@ -549,6 +560,7 @@ mod tests {
             is_default: false,
             ephemeral,
             color: None,
+            other: magnetite_core::Other::new(),
         };
         // A private profile dropped after its last use counts as deleted.
         s.sidebar.profiles.push(profile("secret", true));
@@ -593,6 +605,7 @@ mod tests {
             is_default: false,
             ephemeral: false,
             color: None,
+            other: magnetite_core::Other::new(),
         });
         s.sidebar.profiles.retain(|p| p.id != work);
         s.normalise_favorites();
@@ -610,6 +623,7 @@ mod tests {
             is_default: false,
             ephemeral: false,
             color: None,
+            other: magnetite_core::Other::new(),
         });
         // Saved by an earlier version: one list, a favorite naming its own
         // profile, and a second list for a profile that is gone.
@@ -623,8 +637,12 @@ mod tests {
         s.sidebar.favorites.push(magnetite_core::FavoriteSet {
             profile_id: "gone".into(),
             items: vec![tab("news")],
+            other: magnetite_core::Other::new(),
         });
+        // Written by a newer version.
+        (s.sidebar.favorites[0].other).insert("shelf".into(), 2.into());
         s.normalise_favorites();
+        assert_eq!(s.sidebar.favorites[0].other["shelf"], 2);
         let lists: Vec<(&str, Vec<&str>)> = s
             .sidebar
             .favorites
@@ -659,6 +677,7 @@ mod tests {
             is_default: false,
             ephemeral,
             color: None,
+            other: magnetite_core::Other::new(),
         };
         s.sidebar.profiles.push(profile("secret", true));
         s.sidebar.profiles.push(profile("work", false));
@@ -701,6 +720,7 @@ mod tests {
             is_default: false,
             ephemeral: false,
             color: None,
+            other: magnetite_core::Other::new(),
         });
         s.sidebar.spaces[0].profile_id = "work".into();
         s.sidebar.favorites[0].items.push(tab("fav"));

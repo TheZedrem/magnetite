@@ -860,6 +860,7 @@ impl AppState {
             pinned: vec![],
             today: vec![],
             bookmarks: vec![],
+            other: magnetite_core::Other::new(),
         };
         let spaces = &self.sidebar.spaces;
         let at = spaces.iter().position(|sp| self.is_private_space(&sp.id));
@@ -947,6 +948,7 @@ mod tests {
                 },
                 TabItem::new("l", "file:///home/me/notes.html", "l"),
             ],
+            other: magnetite_core::Other::new(),
         }];
         assert_eq!(s.tabs_to_load_at_start(), Vec::<Id>::new());
         s.settings.load_pinned_at_start = true;
@@ -979,6 +981,7 @@ mod tests {
                 icon: None,
                 children,
                 smart: None,
+                other: magnetite_core::Other::new(),
             })
         };
         // Rows: p, open o [x, closed n [y]], closed f [z, open g [w]], then a, b, c.
@@ -1702,6 +1705,7 @@ mod tests {
             is_default: false,
             ephemeral: false,
             color: None,
+            other: magnetite_core::Other::new(),
         });
         s.find_tab_mut("c").unwrap().profile_id = Some("work".into());
         let page = |shared, sharing| TabRuntime {

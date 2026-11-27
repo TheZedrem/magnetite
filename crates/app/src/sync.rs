@@ -758,6 +758,12 @@ impl Worker {
                                         Ok(s) if s.spaces.is_empty() => {
                                             Err(t!("app.sync.no_spaces").to_string())
                                         }
+                                        // A format this version must not
+                                        // write over: it would write it back
+                                        // as its own, older one.
+                                        Ok(s) if s.version > SidebarSnapshot::VERSION => {
+                                            Err(t!("app.sync.newer_format").to_string())
+                                        }
                                         Ok(s) => {
                                             pulled_sidebar = Some(s);
                                             Ok(())
@@ -788,9 +794,10 @@ impl Worker {
                     }
                     // Compared by content, not by a count of local changes:
                     // the app's state changes all the time (a page's title,
-                    // a download) without the synced data changing, and a
-                    // device that writes the same data again makes every
-                    // other device take it over its own newer changes.
+                    // a download) without the synced data changing. Writing
+                    // the same data again costs a request and a version, and
+                    // every other device would take it, or merge its own
+                    // changes into it, for nothing.
                     let data = keys.open(&id, remote.version, &remote.sealed()).ok();
                     // What the chain holds in profiles private here stays
                     // as it is there (`carried`).
@@ -853,7 +860,9 @@ impl Worker {
                 versions,
                 agreed,
             });
-        } else if errors.is_empty() || !versions.is_empty() {
+        } else if errors.is_empty() || !versions.is_empty() || agreed.is_some() {
+            // Also when only the sidebar went through, there already: a
+            // later merge starts from it.
             outcomes.push(Outcome::Pushed { versions, agreed });
         }
         // Last: a collection that went through must not hide the other's
@@ -1080,6 +1089,7 @@ mod tests {
             is_default: true,
             ephemeral: false,
             color: None,
+            other: magnetite_core::Other::new(),
         });
         s.spaces.push(Space {
             id: "s1".into(),
@@ -1092,6 +1102,7 @@ mod tests {
             pinned: vec![],
             today: vec![],
             bookmarks: Vec::new(),
+            other: magnetite_core::Other::new(),
         });
         s
     }
@@ -1246,6 +1257,7 @@ mod tests {
             is_default: false,
             ephemeral: true,
             color: None,
+            other: magnetite_core::Other::new(),
         });
         // The chain's: the same, with another device's tab in that profile.
         let mut chain = mine.clone();
@@ -1339,6 +1351,35 @@ mod tests {
             panic!("{:?}", out.iter().map(describe).collect::<Vec<_>>())
         };
         assert_eq!(agreed.as_deref(), Some(&snapshot("New")));
+    }
+
+    #[test]
+    fn a_sidebar_the_server_holds_is_agreed_on_while_the_settings_fail() {
+        let code = SyncCode::generate();
+        let server = {
+            let keys = code.keys();
+            let sidebar = keys.collection_id(SIDEBAR);
+            fake_server(move |_, path| {
+                if !path.ends_with(sidebar.as_str()) {
+                    return (500, "{}".into());
+                }
+                let plain = serde_json::to_vec(&snapshot("Same")).unwrap();
+                let body = CollectionResponse::new(3, keys.seal(&sidebar, 3, &plain).unwrap());
+                (200, serde_json::to_string(&body).unwrap())
+            })
+        };
+        let dir = data_dir("held-settings-failed");
+        save_code(&dir, &code).unwrap();
+        let mut w = Worker::new(dir, SyncSettings::default());
+        let mut settings = sync_settings(3);
+        settings.sync.server_url = server;
+        let out = w.sync(&snapshot("Same"), &settings, false);
+        assert!(
+            matches!(out.as_slice(), [Outcome::Pushed { versions, agreed: Some(agreed) }, Outcome::Error(_)]
+                if versions.is_empty() && **agreed == snapshot("Same")),
+            "{:?}",
+            out.iter().map(describe).collect::<Vec<_>>()
+        );
     }
 
     /// A worker whose server holds a phone's sent tab in `devices`, at the
@@ -1571,7 +1612,7 @@ mod tests {
 
         // A sidebar that differs only by what this device keeps of its own
         // since it took the chain's (`sidebar_unchanged`) is not written
-        // either: the other device would take it and answer in kind.
+        // either: it holds nothing new for the other devices.
         let out = w.sync(&snapshot("Kept here"), &settings, true);
         assert!(
             matches!(out.as_slice(), [Outcome::Pushed { versions, agreed: None }] if versions.is_empty())
@@ -1700,6 +1741,57 @@ mod tests {
             out.iter().map(describe).collect::<Vec<_>>()
         );
         assert!(load_pending_delete(&dir).is_none());
+    }
+
+    #[test]
+    fn a_sidebar_in_a_newer_format_is_neither_taken_nor_written_over() {
+        let code = SyncCode::generate();
+        let keys = code.keys();
+        let puts = Arc::new(AtomicUsize::new(0));
+        let counted = puts.clone();
+        let ids = [keys.collection_id(SIDEBAR), keys.collection_id(SETTINGS)];
+        let server = fake_server(move |method, path| {
+            if method == "PUT" {
+                counted.fetch_add(1, Ordering::SeqCst);
+                return (200, r#"{"version":4}"#.into());
+            }
+            let Some(id) = ids.iter().find(|id| path.ends_with(id.as_str())) else {
+                return (404, "{}".into());
+            };
+            let mut newer = snapshot("Newer");
+            newer.version = SidebarSnapshot::VERSION + 1;
+            let plain = if *id == ids[0] {
+                serde_json::to_vec(&newer).unwrap()
+            } else {
+                serde_json::to_vec(&SyncedSettings::from(&Settings::default())).unwrap()
+            };
+            let body = CollectionResponse::new(3, keys.seal(id, 3, &plain).unwrap());
+            (200, serde_json::to_string(&body).unwrap())
+        });
+        let dir = data_dir("newer-format");
+        save_code(&dir, &code).unwrap();
+        let mut w = Worker::new(dir, SyncSettings::default());
+        let mut settings = sync_settings(2);
+        settings.sync.server_url.clone_from(&server);
+        // Round after round: the user is told, and nothing of the sidebar
+        // is taken or written.
+        for _ in 0..2 {
+            let out = w.sync(&snapshot("Local"), &settings, false);
+            assert!(
+                out.iter()
+                    .any(|o| matches!(o, Outcome::Error(e) if e.contains("newer version"))),
+                "{:?}",
+                out.iter().map(describe).collect::<Vec<_>>()
+            );
+            assert!(!out.iter().any(|o| matches!(
+                o,
+                Outcome::Pulled {
+                    sidebar: Some(_),
+                    ..
+                }
+            )));
+        }
+        assert_eq!(puts.load(Ordering::SeqCst), 0);
     }
 
     #[test]
