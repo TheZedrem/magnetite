@@ -6,7 +6,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use magnetite_core::split::SplitNode;
-use magnetite_core::{Id, SidebarSnapshot, Space, TabItem, UnixSeconds};
+use magnetite_core::{Id, SidebarSnapshot, Space, UnixSeconds};
 use magnetite_engine::{ContentId, WindowId, WindowPlacement};
 use serde::{Deserialize, Serialize};
 
@@ -209,12 +209,7 @@ impl TabRuntime {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ArchivedTab {
-    pub tab: TabItem,
-    pub space_id: Id,
-    pub archived_at: UnixSeconds,
-}
+pub use magnetite_core::archive::ArchivedTab;
 
 /// What a start does about other browsers' data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -245,6 +240,11 @@ pub struct AppState {
     pub runtime: HashMap<Id, TabRuntime>,
     pub content_to_tab: HashMap<ContentId, Id>,
     pub archive: Vec<ArchivedTab>,
+    /// The records this device archived (`archive::Key`), oldest first,
+    /// the last `CLOSED_HERE_KEPT`: "Reopen closed tab" takes one of them,
+    /// not a tab closed on another device that synced in later
+    /// (`reopen_closed_here`). Saved.
+    pub closed_here: Vec<magnetite_core::archive::Key>,
     /// Pages visited on this device (`history.json`, saved apart).
     pub history: History,
     /// Split views: which tabs tile the page area together, and how. A tab
@@ -286,6 +286,10 @@ pub struct AppState {
     /// it changed since, and is merged into a sidebar that arrives
     /// (`adopt_pull`). Saved, so changes made before a restart count too.
     pub synced_sidebar: Option<SidebarSnapshot>,
+    /// The archive's records this device and its sync chain last agreed
+    /// on (`magnetite_core::archive::Key`): what was added or removed here
+    /// since is what differs from them (`adopt_archive`). Saved.
+    pub synced_archive: Option<Vec<magnetite_core::archive::Key>>,
     /// The tabs open on the chain's other devices, as of the last sync.
     /// Not saved.
     pub device_tabs: Vec<crate::devices::RemoteTab>,
@@ -295,7 +299,9 @@ pub struct AppState {
     /// device's own choice, never synced: such a space is not sent
     /// (`sidebar_for_sync`), and a sidebar that arrives leaves it as it is
     /// (`adopt_sidebar`). A profile that only such spaces use stays with
-    /// them (`unsynced_profiles`).
+    /// them (`unsynced_profiles`). A deleted one stays listed while the
+    /// archive holds tabs of it, so they do not sync either
+    /// (`delete_space`).
     pub unsynced_spaces: BTreeSet<Id>,
     /// Profiles deleted on this device, oldest first. The device's own
     /// memory, never synced: a deleted profile is not taken back from

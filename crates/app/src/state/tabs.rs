@@ -58,6 +58,10 @@ pub struct TabSwitch {
     pub round: u64,
 }
 
+/// How many of the tabs it archived a device remembers for "Reopen closed
+/// tab" (`AppState::closed_here`).
+pub(super) const CLOSED_HERE_KEPT: usize = 100;
+
 impl AppState {
     /// The tab to show on switching to space `id`: the one last used there if
     /// it is still in that space or a favorite, else the space's first tab.
@@ -731,13 +735,32 @@ impl AppState {
             tab.home_url = None;
             tab.keep_active = false;
             tab.end_panel();
+            let archived_at = now();
             self.archive.push(ArchivedTab {
                 tab,
                 space_id: space.unwrap_or_else(|| self.active_space.clone()),
-                archived_at: now(),
+                archived_at,
+                other: magnetite_core::Other::new(),
             });
+            self.closed_here.push((id.to_string(), archived_at));
+            let over = self.closed_here.len().saturating_sub(CLOSED_HERE_KEPT);
+            self.closed_here.drain(..over);
         }
         self.forget_tab(id)
+    }
+
+    /// "Reopen closed tab": restore the record this device archived last
+    /// that is still in the archive (`closed_here`). A tab closed on another
+    /// device comes back from the archive view or the command bar only,
+    /// also when this device closed it once before. Returns its id.
+    pub fn reopen_closed_here(&mut self) -> Option<Id> {
+        while let Some((id, at)) = self.closed_here.pop() {
+            let record = |a: &ArchivedTab| a.tab.id == id && a.archived_at == at;
+            if let Some(pos) = self.archive.iter().rposition(record) {
+                return self.restore_archived(pos);
+            }
+        }
+        None
     }
 
     /// Archive pinned tab `id` (`remove_pinned`) at the page it was pinned
@@ -890,7 +913,11 @@ impl AppState {
             .collect();
         let contents = tabs.iter().filter_map(|t| self.archive_tab(t)).collect();
         self.sidebar.spaces.retain(|sp| sp.id != id);
-        self.unsynced_spaces.remove(id);
+        // A space kept on this device stays so for its tabs in the archive:
+        // they must not sync now that it is gone (`archived_here_only`).
+        if !self.archive.iter().any(|a| a.space_id == id) {
+            self.unsynced_spaces.remove(id);
+        }
         self.active_tab.remove(id);
         if self.active_space == id {
             self.active_space = self.sidebar.spaces[0].id.clone();
@@ -1516,6 +1543,29 @@ mod tests {
     }
 
     #[test]
+    fn reopen_closed_takes_the_tab_closed_here_not_one_closed_elsewhere() {
+        let mut s = state();
+        s.archive_tab("a");
+        s.archive_tab("b");
+        // `b` came back from the archive view; then records of another
+        // device synced in and sort last: one of its own, and `b` closed
+        // there.
+        let pos = s.archive.iter().position(|e| e.tab.id == "b").unwrap();
+        s.restore_archived(pos);
+        for id in ["elsewhere", "b"] {
+            s.archive.push(ArchivedTab {
+                tab: tab(id),
+                space_id: s.active_space.clone(),
+                archived_at: now() + 60,
+                other: magnetite_core::Other::new(),
+            });
+        }
+        assert_eq!(s.reopen_closed_here().as_deref(), Some("a"));
+        assert_eq!(s.reopen_closed_here(), None, "nothing else closed here");
+        assert_eq!(s.archive.len(), 2);
+    }
+
+    #[test]
     fn a_restored_tab_is_never_in_the_sidebar_twice() {
         let mut s = state();
         s.archive_tab("a");
@@ -1524,7 +1574,7 @@ mod tests {
         assert_eq!(s.restore_archived(0).as_deref(), Some("a"));
         let today = &s.sidebar.spaces[0].today;
         assert_eq!(today.iter().filter(|t| t.id == "a").count(), 1);
-        assert!(s.archive.is_empty());
+        assert_eq!(s.archive, []);
         assert_eq!(s.restore_archived(0), None, "nothing left to restore");
     }
 
@@ -1538,6 +1588,7 @@ mod tests {
                 tab: tab(id),
                 space_id: s.active_space.clone(),
                 archived_at: 100 * day - age_days * day,
+                other: magnetite_core::Other::new(),
             });
         }
         assert!(s.prune_archive(100 * day));

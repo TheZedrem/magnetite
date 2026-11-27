@@ -23,6 +23,10 @@ pub(super) struct Persisted {
     active_tab: HashMap<Id, Id>,
     #[serde(default)]
     archive: Vec<ArchivedTab>,
+    /// `AppState::closed_here`. Missing in a file from before the archive
+    /// synced, whose archive this device closed all of.
+    #[serde(default)]
+    closed_here: Option<Vec<magnetite_core::archive::Key>>,
     #[serde(default)]
     favicons: HashMap<Id, String>,
     #[serde(default, deserialize_with = "splits_compat")]
@@ -38,6 +42,9 @@ pub(super) struct Persisted {
     /// `AppState::synced_sidebar`, as it may be saved (`lasting_copy`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     synced_sidebar: Option<SidebarSnapshot>,
+    /// `AppState::synced_archive`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    synced_archive: Option<Vec<magnetite_core::archive::Key>>,
     /// Where the window was that `active_space` and `active_tab` are of.
     #[serde(default)]
     placement: Option<magnetite_engine::WindowPlacement>,
@@ -135,6 +142,21 @@ impl AppState {
             .as_ref()
             .filter(|p| p.settings.sync.enabled)
             .and_then(|p| p.synced_sidebar.clone());
+        let synced_archive = persisted
+            .as_ref()
+            .filter(|p| p.settings.sync.enabled)
+            .and_then(|p| p.synced_archive.clone());
+        let closed_here = (persisted.as_ref())
+            .map(|p| {
+                p.closed_here.clone().unwrap_or_else(|| {
+                    let from = p
+                        .archive
+                        .len()
+                        .saturating_sub(super::tabs::CLOSED_HERE_KEPT);
+                    p.archive[from..].iter().map(ArchivedTab::key).collect()
+                })
+            })
+            .unwrap_or_default();
         // `--import-arc`: Arc's sidebar takes the place of the saved one. The
         // archive, settings and downloads stay, and without a sidebar file
         // of Arc nothing changes.
@@ -218,6 +240,7 @@ impl AppState {
             runtime,
             content_to_tab: HashMap::new(),
             archive,
+            closed_here,
             history: super::History::load(data_dir),
             splits,
             peeks: HashMap::new(),
@@ -245,6 +268,7 @@ impl AppState {
             closed_folders: std::collections::HashSet::new(),
             switcher: None,
             synced_sidebar,
+            synced_archive,
             device_tabs: Vec::new(),
             saver: Saver::new(path.clone()),
             path,
@@ -254,11 +278,12 @@ impl AppState {
         for archived in &mut state.archive {
             magnetite_core::unread::strip_count(&mut archived.tab);
         }
-        // Only a space that exists can be kept on this device.
-        let spaces = &state.sidebar.spaces;
-        state
-            .unsynced_spaces
-            .retain(|id| spaces.iter().any(|sp| &sp.id == id));
+        // Only a space that exists can be kept on this device, or one
+        // deleted whose tabs are still in the archive (`delete_space`).
+        let (spaces, archive) = (&state.sidebar.spaces, &state.archive);
+        state.unsynced_spaces.retain(|id| {
+            spaces.iter().any(|sp| &sp.id == id) || archive.iter().any(|a| &a.space_id == id)
+        });
         if !state
             .sidebar
             .spaces
@@ -379,6 +404,7 @@ impl AppState {
             active_tab: first.active_tab,
             placement: first.placement,
             archive: self.archive.clone(),
+            closed_here: Some(self.closed_here.clone()),
             favicons,
             splits: self.splits.clone(),
             settings: self.settings.clone(),
@@ -386,6 +412,7 @@ impl AppState {
             deleted_profiles: self.deleted_profiles.clone(),
             unsynced_spaces: self.unsynced_spaces.clone(),
             synced_sidebar: self.synced_sidebar.as_ref().map(|s| self.lasting_copy(s)),
+            synced_archive: self.synced_archive.clone(),
             windows,
         }
     }
@@ -517,7 +544,7 @@ impl Drop for Saver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::testing::state;
+    use crate::state::testing::{state, tab};
     use crate::state::windows::SavedWindow;
     use magnetite_engine::WindowPlacement;
 
@@ -605,9 +632,16 @@ mod tests {
         });
         s.find_tab_mut("b").unwrap().profile_id = Some("secret".into());
         s.deleted_profiles.push("old".into());
-        // Kept on this device: the space that exists, not one that is gone.
+        // Kept on this device: the space that exists, and one deleted whose
+        // tabs are in the archive, not one that is gone altogether.
         let space = s.active_space.clone();
-        s.unsynced_spaces = [space.clone(), "gone".to_string()].into();
+        s.unsynced_spaces = [space.clone(), "gone".into(), "deleted".into()].into();
+        s.archive.push(ArchivedTab {
+            tab: tab("x"),
+            space_id: "deleted".into(),
+            archived_at: 1,
+            other: magnetite_core::Other::new(),
+        });
         s.persist();
         let dir = s.data_dir().to_path_buf();
         let loaded = AppState::load_or_default(&dir, ArcImport::Never);
@@ -618,7 +652,7 @@ mod tests {
             "the unsaved tab is not active"
         );
         assert_eq!(loaded.deleted_profiles, ["old"]);
-        assert_eq!(loaded.unsynced_spaces, [space].into());
+        assert_eq!(loaded.unsynced_spaces, [space, "deleted".into()].into());
         let _ = std::fs::remove_dir_all(dir);
     }
 
