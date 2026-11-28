@@ -58,6 +58,8 @@ mod menubar;
 mod mini;
 mod notifications;
 mod overlay;
+#[cfg(target_os = "linux")]
+mod page_keyboard;
 mod panel_close;
 #[cfg(target_os = "linux")]
 mod panel_stack;

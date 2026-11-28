@@ -1401,6 +1401,8 @@ wrap_window_delegate! {
                 engine.lock().frame_hidden = false;
                 engine.enter(self.win);
                 engine.notifications_follow();
+                #[cfg(target_os = "linux")]
+                Engine::frame_got_keyboard(self.win);
             }
         }
 

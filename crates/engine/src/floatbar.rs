@@ -160,17 +160,7 @@ impl Engine {
         if !quiet {
             return;
         }
-        let had = self.lock().win.last_focused;
-        let page = [had, self.top_page_id()]
-            .into_iter()
-            .flatten()
-            .find_map(|id| {
-                self.content_handles(id)
-                    .filter(|(w, _)| w.is_visible() != 0)
-            });
-        if let Some((_, view)) = page {
-            view.request_focus();
-        }
+        self.keyboard_to_page(None);
     }
 
     /// The hover zone exists exactly while the docked sidebar is hidden, at

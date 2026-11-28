@@ -1848,6 +1848,18 @@ wrap_window_delegate! {
                 }));
             }
         }
+        // A tab's page that loses the keyboard may get it back by itself
+        // (`page_keyboard.rs`). Posted: the frame is activated in this turn
+        // if the keyboard only moves to the sidebar.
+        fn on_window_activation_changed(&self, _window: Option<&mut Window>, active: ::std::os::raw::c_int) {
+            #[cfg(target_os = "linux")]
+            if active == 0 && self.mini.is_none() {
+                let id = self.id;
+                Engine::post(Box::new(move || Engine::global().page_lost_keyboard(id)));
+            }
+            #[cfg(not(target_os = "linux"))]
+            let _ = active;
+        }
         fn can_minimize(&self, _window: Option<&mut Window>) -> ::std::os::raw::c_int { self.mini.is_some().into() }
         fn is_frameless(&self, _window: Option<&mut Window>) -> ::std::os::raw::c_int { 1 }
         fn with_standard_window_buttons(&self, _window: Option<&mut Window>) -> ::std::os::raw::c_int { 0 }

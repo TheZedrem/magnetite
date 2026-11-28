@@ -488,6 +488,11 @@ unpin the active tab", print and find go to the page first, which may use
 the key itself. The six shortcuts above "Pin or unpin" are taken before the
 page sees the key.
 
+On Linux under Wayland the page keeps the keyboard for its own keys (space
+to play a video): a click on a top bar button leaves it with the page, and
+a window that comes back from another program gives it to whichever had
+it, the page or the sidebar.
+
 `Ctrl+Tab` goes to the tab used before this one, and pressed again, back:
 the tabs are taken by last use, the favorites and the tabs of the current
 space together. With Ctrl held, each further Tab goes one tab further back

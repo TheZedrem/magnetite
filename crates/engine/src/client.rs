@@ -69,7 +69,7 @@ wrap_client! {
             Some(MagnetiteCommandHandler::new(self.kind))
         }
         fn focus_handler(&self) -> Option<FocusHandler> {
-            matches!(self.kind, Kind::Content | Kind::DevTools).then(MagnetiteFocusHandler::new)
+            Some(MagnetiteFocusHandler::new(self.kind))
         }
         fn permission_handler(&self) -> Option<PermissionHandler> {
             (self.kind == Kind::Content).then(MagnetitePermissionHandler::new)
@@ -395,10 +395,21 @@ wrap_life_span_handler! {
 // page becomes the active tab. Docked DevTools count as their page, so keys
 // typed there act on it and not on the pane focused before.
 wrap_focus_handler! {
-    struct MagnetiteFocusHandler {}
+    struct MagnetiteFocusHandler {
+        kind: Kind,
+    }
     impl FocusHandler {
         fn on_got_focus(&self, browser: Option<&mut Browser>) {
             let engine = Engine::global();
+            // The top bar has nothing to type in: the page keeps the keyboard
+            // (`page_keyboard.rs`).
+            #[cfg(target_os = "linux")]
+            if self.kind == Kind::TopBar
+                && let Some(win) = browser.as_deref().and_then(|b| engine.window_of_browser(b.identifier()))
+            {
+                Engine::top_bar_took_keyboard(win);
+            }
+            if !matches!(self.kind, Kind::Content | Kind::DevTools) { return; }
             let page = engine
                 .content_id_for(browser.as_deref())
                 .or_else(|| engine.devtools_owner(browser.as_deref()));

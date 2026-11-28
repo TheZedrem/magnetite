@@ -67,6 +67,10 @@ pub(crate) struct WindowState {
     /// The page or panel that had the keyboard last, on Linux.
     #[cfg(target_os = "linux")]
     pub last_focused: Option<ContentId>,
+    /// The page or panel that had the keyboard when another program took
+    /// it, until the frame gets it back (`page_keyboard.rs`).
+    #[cfg(target_os = "linux")]
+    pub keyboard_left: Option<ContentId>,
     /// When the keyboard last went to another page or panel by itself (a
     /// click into it), and where it was before (`panel_strip_pressed`).
     #[cfg(target_os = "linux")]
@@ -124,6 +128,8 @@ impl WindowState {
             last_focused: None,
             #[cfg(target_os = "linux")]
             keyboard_before: None,
+            #[cfg(target_os = "linux")]
+            keyboard_left: None,
             shown: None,
             sidebar_drag: Vec::new(),
             top_bar_drag: Vec::new(),
